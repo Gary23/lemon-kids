@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">柠檬小管家</string>
+    <string name="accessibility_service_description">检测受限制应用并在达到限制时返回桌面。</string>
+</resources>

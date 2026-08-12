@@ -1,0 +1,3 @@
+#!/bin/bash
+# 腾讯云 SCF Web 函数启动入口。上传 ZIP 前必须保留此文件的可执行权限。
+exec node server.js

@@ -1,0 +1,13 @@
+{
+  "name": "lemon-literacy-evaluate-reading",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "tencentcloud-sdk-nodejs-scf": "^4.1.168",
+    "tencentcloud-sdk-nodejs-sts": "^4.1.15"
+  }
+}
