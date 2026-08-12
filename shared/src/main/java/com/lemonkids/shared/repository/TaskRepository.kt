@@ -11,6 +11,8 @@ interface TaskRepository {
     suspend fun getMonthTasks(childId: String, year: Int, month: Int): List<Task>
     suspend fun createTask(task: Task): Result<String>
     suspend fun updateTask(task: Task): Result<Unit>
+    /** 更新同一重复系列中尚未完成的未来任务。 */
+    suspend fun updateFutureTasksInSeries(seriesId: String, fromDate: String, task: Task): Result<Unit>
     /** 软删除：标记 deleted_at */
     suspend fun deleteTask(taskId: String): Result<Unit>
     /** 彻底删除 */

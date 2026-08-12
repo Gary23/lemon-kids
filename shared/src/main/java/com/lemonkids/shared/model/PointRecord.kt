@@ -21,6 +21,7 @@ data class PointRecord(
 enum class PointRecordType {
     @SerialName("task_complete") TASK_COMPLETE,
     @SerialName("task_expired") TASK_EXPIRED,
+    @SerialName("task_rejected") TASK_REJECTED,
     @SerialName("reward_redeem") REWARD_REDEEM,
     @SerialName("manual") MANUAL
 }

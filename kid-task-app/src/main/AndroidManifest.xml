@@ -14,6 +14,10 @@
         android:theme="@style/Theme.LemonKids"
         android:usesCleartextTraffic="true">
 
+        <receiver
+            android:name=".reminder.TaskReminderReceiver"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

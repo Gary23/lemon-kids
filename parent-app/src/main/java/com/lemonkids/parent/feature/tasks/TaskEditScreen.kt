@@ -24,6 +24,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.lemonkids.shared.model.Category
+import com.lemonkids.shared.model.TaskRecurrenceType
 import com.lemonkids.shared.repository.ChildUserInfo
 import java.time.Instant
 import java.time.LocalDate
@@ -77,6 +79,8 @@ fun TaskEditScreen(
     var endDate by remember { mutableStateOf(LocalDate.now().toString()) }
     var dueTime by remember { mutableStateOf("") }
     var selectedChildId by remember { mutableStateOf("") }
+    var recurrenceType by remember { mutableStateOf(TaskRecurrenceType.NONE) }
+    var recurrenceWeekdays by remember { mutableStateOf(emptySet<Int>()) }
 
     var pickingDateField by remember { mutableStateOf<String?>(null) }
     var showTimePicker by remember { mutableStateOf(false) }
@@ -104,6 +108,8 @@ fun TaskEditScreen(
             endDate = data.endDate.ifEmpty { data.dueDate.ifEmpty { LocalDate.now().toString() } }
             dueTime = data.dueTime ?: ""
             selectedChildId = data.childId
+            recurrenceType = data.recurrenceType
+            recurrenceWeekdays = data.recurrenceWeekdays
         }
     }
 
@@ -190,9 +196,13 @@ fun TaskEditScreen(
                 DateField(label = if (isNew) "开始日期" else "任务日期", dateStr = dueDate, onClick = { pickingDateField = "start" })
                 Spacer(Modifier.height(12.dp))
 
-                // 仅新建任务时显示结束日期（区间选择）
+                // 单次任务可一次创建多个独立日期；重复任务则在日期范围内生成日程。
                 if (isNew) {
-                    DateField(label = "结束日期", dateStr = endDate, onClick = { pickingDateField = "end" })
+                    DateField(
+                        label = if (recurrenceType == TaskRecurrenceType.NONE) "结束日期（可选）" else "重复至",
+                        dateStr = endDate,
+                        onClick = { pickingDateField = "end" }
+                    )
                     Spacer(Modifier.height(12.dp))
                 }
 
@@ -202,6 +212,25 @@ fun TaskEditScreen(
                     onClear = { dueTime = "" }
                 )
                 Spacer(Modifier.height(12.dp))
+
+                if (isNew) {
+                    RecurrenceSelector(
+                        recurrenceType = recurrenceType,
+                        weekdays = recurrenceWeekdays,
+                        onTypeChanged = { type ->
+                            recurrenceType = type
+                            if (type != TaskRecurrenceType.WEEKLY) recurrenceWeekdays = emptySet()
+                            if (type != TaskRecurrenceType.NONE && endDate == dueDate) {
+                                endDate = runCatching { LocalDate.parse(dueDate).plusMonths(3).toString() }.getOrDefault(endDate)
+                            }
+                        },
+                        onWeekdaysChanged = { recurrenceWeekdays = it }
+                    )
+                    Spacer(Modifier.height(12.dp))
+                } else if (recurrenceType != TaskRecurrenceType.NONE) {
+                    Text("保存后将更新该重复日程中尚未完成的未来任务", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(12.dp))
+                }
 
                 uiState.errorMessage?.let { msg ->
                     Text(msg, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
@@ -224,6 +253,8 @@ fun TaskEditScreen(
                                     dueTime = dueTime.ifEmpty { null },
                                     childId = selectedChildId,
                                     categoryName = selectedCategoryName,
+                                    recurrenceType = recurrenceType,
+                                    recurrenceWeekdays = recurrenceWeekdays,
                                     onDone = { onBack() }
                                 )
                             } else {
@@ -238,13 +269,16 @@ fun TaskEditScreen(
                                     dueTime = dueTime.ifEmpty { null },
                                     childId = selectedChildId,
                                     categoryName = selectedCategoryName,
+                                    recurrenceType = recurrenceType,
+                                    recurrenceWeekdays = recurrenceWeekdays,
                                     onDone = { onBack() }
                                 )
                             }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = title.isNotBlank() && selectedChildId.isNotBlank() && points > 0 && !uiState.isLoading
+                    enabled = title.isNotBlank() && selectedChildId.isNotBlank() && points > 0 &&
+                        (recurrenceType != TaskRecurrenceType.WEEKLY || recurrenceWeekdays.isNotEmpty()) && !uiState.isLoading
                 ) {
                     if (uiState.isLoading) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -341,6 +375,46 @@ fun TaskEditScreen(
                     TextButton(onClick = { showAddCategoryDialog = false }) { Text("取消") }
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun RecurrenceSelector(
+    recurrenceType: TaskRecurrenceType,
+    weekdays: Set<Int>,
+    onTypeChanged: (TaskRecurrenceType) -> Unit,
+    onWeekdaysChanged: (Set<Int>) -> Unit
+) {
+    Column {
+        Text("重复", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+            listOf(
+                TaskRecurrenceType.NONE to "不重复",
+                TaskRecurrenceType.DAILY to "每天",
+                TaskRecurrenceType.WEEKDAYS to "工作日",
+                TaskRecurrenceType.WEEKLY to "每周"
+            ).forEach { (type, label) ->
+                FilterChip(selected = recurrenceType == type, onClick = { onTypeChanged(type) }, label = { Text(label) })
+            }
+        }
+        if (recurrenceType == TaskRecurrenceType.WEEKLY) {
+            Spacer(Modifier.height(8.dp))
+            Text("选择星期", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+                listOf("一", "二", "三", "四", "五", "六", "日").forEachIndexed { index, label ->
+                    val weekday = index + 1
+                    FilterChip(
+                        selected = weekday in weekdays,
+                        onClick = {
+                            onWeekdaysChanged(if (weekday in weekdays) weekdays - weekday else weekdays + weekday)
+                        },
+                        label = { Text(label) }
+                    )
+                }
+            }
         }
     }
 }

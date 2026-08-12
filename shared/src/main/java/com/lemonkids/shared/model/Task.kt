@@ -18,6 +18,12 @@ data class Task(
     @SerialName("due_time") val dueTime: String? = null,    @SerialName("reward_points") val rewardPoints: Int = 5,
     @SerialName("penalty_points") val penaltyPoints: Int = 2,
     @SerialName("require_photo") val requirePhoto: Boolean = false,
+    /** 重复任务所属系列；空值表示一次性任务。系列中的每一天仍是独立任务，保留完成历史。 */
+    @SerialName("recurrence_series_id") val recurrenceSeriesId: String? = null,
+    @SerialName("recurrence_type") val recurrenceType: TaskRecurrenceType = TaskRecurrenceType.NONE,
+    /** 每周重复时的星期，1=周一…7=周日；其它重复类型为空。 */
+    @SerialName("recurrence_weekdays") val recurrenceWeekdays: List<Int> = emptyList(),
+    @SerialName("recurrence_end_date") val recurrenceEndDate: String? = null,
     @SerialName("completed_at") val completedAt: String? = null,
     @SerialName("verified_at") val verifiedAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
@@ -31,6 +37,14 @@ enum class TaskStatus {
     @SerialName("verified") VERIFIED,
     @SerialName("expired") EXPIRED,
     @SerialName("rejected") REJECTED
+}
+
+@Serializable
+enum class TaskRecurrenceType {
+    @SerialName("none") NONE,
+    @SerialName("daily") DAILY,
+    @SerialName("weekdays") WEEKDAYS,
+    @SerialName("weekly") WEEKLY
 }
 
 // @Serializable

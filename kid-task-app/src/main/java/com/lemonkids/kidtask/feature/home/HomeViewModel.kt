@@ -1,5 +1,6 @@
 package com.lemonkids.kidtask.feature.home
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.Task
@@ -8,6 +9,8 @@ import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.RewardRepository
 import com.lemonkids.shared.repository.TaskRepository
 import com.lemonkids.kidtask.ui.components.TaskUiItem
+import com.lemonkids.kidtask.reminder.TaskReminderScheduler
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,7 +47,8 @@ data class HomeUiState(
 class HomeViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val authRepository: AuthRepository,
-    private val rewardRepository: RewardRepository
+    private val rewardRepository: RewardRepository,
+    @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState(isLoading = true))
@@ -68,6 +72,7 @@ class HomeViewModel @Inject constructor(
             launch {
                 // 观察所有任务（非删除），在内存中分类过滤
                 taskRepository.observeChildTasks(userId).collect { tasks ->
+                    TaskReminderScheduler.schedule(appContext, tasks)
                     val todayStr = today.toString()
 
                     val todayTasks = tasks

@@ -190,7 +190,8 @@ fun TasksScreen(
                                             isSelected = uiState.selectedTaskIds.contains(task.id),
                                             onToggleSelect = { viewModel.toggleTaskSelection(task.id) },
                                             onEdit = { onEditTask(task.id) },
-                                            onDelete = { viewModel.deleteTask(task.id) }
+                                            onDelete = { viewModel.deleteTask(task.id) },
+                                            onReject = { viewModel.rejectTask(task.id) }
                                         )
                                     }
                                 }
@@ -267,7 +268,8 @@ private fun TaskRow(
     isSelected: Boolean = false,
     onToggleSelect: () -> Unit = {},
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onReject: () -> Unit
 ) {
     val statusColor = when (task.status) {
         "DONE", "VERIFIED" -> Color(0xFF4CAF50)
@@ -278,7 +280,7 @@ private fun TaskRow(
     val statusText = when (task.status) {
         "PENDING" -> "待完成"
         "DONE" -> "已完成"
-        "VERIFIED" -> "已验证"
+        "VERIFIED" -> "已通过"
         "EXPIRED" -> "已过期"
         "REJECTED" -> "已驳回"
         else -> task.status
@@ -335,6 +337,11 @@ private fun TaskRow(
                             }
                             IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
                                 Text("🗑", fontSize = 16.sp)
+                            }
+                            if (task.status == "DONE" || task.status == "VERIFIED") {
+                                TextButton(onClick = onReject, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)) {
+                                    Text("驳回", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                }
                             }
                         }
                     } else {

@@ -141,31 +141,15 @@ fun HomeScreen(
                             CelebrationCard()
                         }
 
-                        // 今日任务
+                        // 今日时间轴：任务按上午、下午、晚上呈现，无时间任务放入上午以避免遗漏。
                         if (uiState.todayTasks.isNotEmpty()) {
-                            TaskSection(
-                                emoji = "🌸",
-                                title = "今日任务",
-                                countLabel = "还有 ${uiState.todayTasks.count { it.status == "PENDING" }} 个",
-                                isExpanded = uiState.todayExpanded,
-                                barColor = Pink,
-                                softColor = PinkSoft.copy(alpha = 0.25f),
-                                chipBg = PinkSoft.copy(alpha = 0.4f),
-                                chipText = Pink,
-                                onToggle = { viewModel.toggleTodayExpand() }
-                            ) {
-                                uiState.todayTasks.forEach { task ->
-                                    TaskCard(
-                                        task = task,
-                                        isPlaying = playingTaskId == task.id,
-                                        sectionColor = Pink,
-                                        softColor = PinkSoft.copy(alpha = 0.15f),
-                                        onSpeak = { ttsManager.speak(task.id, task.title, task.description) },
-                                        onMarkDone = { viewModel.markTaskDone(it) },
-                                        onUndo = { viewModel.markTaskUndo(it) }
-                                    )
-                                }
-                            }
+                            TodayTimeline(
+                                tasks = uiState.todayTasks,
+                                playingTaskId = playingTaskId,
+                                onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
+                                onMarkDone = { viewModel.markTaskDone(it) },
+                                onUndo = { viewModel.markTaskUndo(it) }
+                            )
                         }
 
                         // 忘记做的任务
@@ -259,6 +243,61 @@ fun HomeScreen(
             if (uiState.isLoading && hasAnyTask(uiState)) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Pink, modifier = Modifier.size(40.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodayTimeline(
+    tasks: List<com.lemonkids.kidtask.ui.components.TaskUiItem>,
+    playingTaskId: String?,
+    onSpeak: (com.lemonkids.kidtask.ui.components.TaskUiItem) -> Unit,
+    onMarkDone: (String) -> Unit,
+    onUndo: (String) -> Unit
+) {
+    val periods = listOf(
+        "上午" to "☀️",
+        "下午" to "🌤️",
+        "晚上" to "🌙"
+    )
+    val grouped = tasks.groupBy { task ->
+        val hour = task.dueTime?.substringBefore(":")?.toIntOrNull()
+        when {
+            hour == null || hour < 12 -> "上午"
+            hour < 18 -> "下午"
+            else -> "晚上"
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("今天的时间表", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
+            Spacer(Modifier.width(8.dp))
+            Text("还有 ${tasks.count { it.status == "PENDING" }} 个", color = Pink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+        periods.forEach { (period, emoji) ->
+            val periodTasks = grouped[period].orEmpty()
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White, shadowElevation = 3.dp) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("$emoji  $period", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
+                    Spacer(Modifier.height(8.dp))
+                    if (periodTasks.isEmpty()) {
+                        Text("这一段先自由安排吧～", fontSize = 14.sp, color = MutedGray, modifier = Modifier.padding(vertical = 8.dp))
+                    } else {
+                        periodTasks.forEachIndexed { index, task ->
+                            TaskCard(
+                                task = task,
+                                isPlaying = playingTaskId == task.id,
+                                sectionColor = Pink,
+                                softColor = PinkSoft.copy(alpha = 0.15f),
+                                onSpeak = { onSpeak(task) },
+                                onMarkDone = onMarkDone,
+                                onUndo = onUndo
+                            )
+                            if (index != periodTasks.lastIndex) Spacer(Modifier.height(8.dp))
+                        }
+                    }
                 }
             }
         }

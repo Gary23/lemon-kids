@@ -93,6 +93,28 @@ class SupabaseTaskRepository @Inject constructor(
         postgrest.from("tasks").update(task) { filter { eq("id", task.id) } }
     }
 
+    override suspend fun updateFutureTasksInSeries(seriesId: String, fromDate: String, task: Task): Result<Unit> = runCatching {
+        postgrest.from("tasks").update(
+            mapOf(
+                "title" to task.title,
+                "description" to task.description,
+                "category" to task.category,
+                "reward_points" to task.rewardPoints,
+                "penalty_points" to task.penaltyPoints,
+                "due_time" to task.dueTime,
+                "recurrence_type" to task.recurrenceType.name.lowercase(),
+                "recurrence_weekdays" to task.recurrenceWeekdays,
+                "recurrence_end_date" to task.recurrenceEndDate
+            )
+        ) {
+            filter {
+                eq("recurrence_series_id", seriesId)
+                gte("due_date", fromDate)
+                eq("status", "pending")
+            }
+        }
+    }
+
     override suspend fun deleteTask(taskId: String): Result<Unit> = runCatching {
         postgrest.from("tasks").update(mapOf("deleted_at" to Instant.now().toString())) {
             filter { eq("id", taskId) }
@@ -161,9 +183,7 @@ class SupabaseTaskRepository @Inject constructor(
     }
 
     override suspend fun rejectTask(taskId: String): Result<Unit> = runCatching {
-        postgrest.from("tasks").update(mapOf("status" to "rejected")) {
-            filter { eq("id", taskId) }
-        }
+        postgrest.rpc(function = "reject_task", parameters = mapOf("p_task_id" to taskId))
     }
 
     override suspend fun getTaskById(taskId: String): Result<Task> = runCatching {

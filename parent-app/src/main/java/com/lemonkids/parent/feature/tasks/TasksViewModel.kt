@@ -2,13 +2,16 @@ package com.lemonkids.parent.feature.tasks
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.content.Context
 import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.Task
+import com.lemonkids.shared.model.TaskRecurrenceType
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.CategoryRepository
 import com.lemonkids.shared.repository.ChildUserInfo
 import com.lemonkids.shared.repository.TaskRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.YearMonth
+import java.util.UUID
 import javax.inject.Inject
 
 data class TasksUiState(
@@ -63,14 +67,19 @@ data class TaskEditData(
     val endDate: String = LocalDate.now().toString(),
     val dueTime: String? = null,
     val childId: String = "",
-    val categoryName: String = "默认"
+    val categoryName: String = "默认",
+    val recurrenceType: TaskRecurrenceType = TaskRecurrenceType.NONE,
+    val recurrenceWeekdays: Set<Int> = emptySet(),
+    val recurrenceEndDate: String? = null,
+    val recurrenceSeriesId: String? = null
 )
 
 @HiltViewModel
 class TasksViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val authRepository: AuthRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TasksUiState(isLoading = true))
@@ -118,12 +127,23 @@ class TasksViewModel @Inject constructor(
 
     private var currentObservingChildId: String = ""
     private var observeJob: kotlinx.coroutines.Job? = null
+    private var observedCompletedTaskIds = emptySet<String>()
 
     private fun observeTasks(childId: String) {
         observeJob?.cancel()
         observeJob = viewModelScope.launch {
             currentObservingChildId = childId
             taskRepository.observeChildTasks(childId).collect { tasks ->
+                val completedIds = tasks.filter { it.status == com.lemonkids.shared.model.TaskStatus.DONE || it.status == com.lemonkids.shared.model.TaskStatus.VERIFIED }
+                    .map { it.id }.toSet()
+                if (hasLoadedOnce) {
+                    (completedIds - observedCompletedTaskIds).forEach { completedId ->
+                        tasks.find { it.id == completedId }?.let { task ->
+                            TaskCompletionNotifier.notify(appContext, getChildName(task.childId), task.title, task.id.hashCode())
+                        }
+                    }
+                }
+                observedCompletedTaskIds = completedIds
                 // 首次加载必更新；后续轮询时如果返回空则跳过（保留旧数据，防止断网闪现空白）
                 val shouldUpdate = !hasLoadedOnce || tasks.isNotEmpty()
                 if (shouldUpdate) {
@@ -222,7 +242,11 @@ class TasksViewModel @Inject constructor(
                             endDate = task.endDate ?: task.dueDate,
                             dueTime = task.dueTime,
                             childId = task.childId,
-                            categoryName = task.category
+                            categoryName = task.category,
+                            recurrenceType = task.recurrenceType,
+                            recurrenceWeekdays = task.recurrenceWeekdays.toSet(),
+                            recurrenceEndDate = task.recurrenceEndDate,
+                            recurrenceSeriesId = task.recurrenceSeriesId
                         )
                     )
                 },
@@ -250,10 +274,7 @@ class TasksViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(editingTask = null)
     }
 
-    /**
-     * 创建任务：如果选择日期区间（endDate != dueDate），
-     * 则为每一天分别创建一个独立任务，删除互不影响
-     */
+    /** 创建单次或重复任务。重复日程展开为独立日任务，以保留逐日完成历史。 */
     fun createTask(
         title: String,
         description: String,
@@ -264,6 +285,8 @@ class TasksViewModel @Inject constructor(
         dueTime: String?,
         childId: String,
         categoryName: String,
+        recurrenceType: TaskRecurrenceType,
+        recurrenceWeekdays: Set<Int>,
         onDone: () -> Unit
     ) {
         viewModelScope.launch {
@@ -276,11 +299,18 @@ class TasksViewModel @Inject constructor(
                 ?: return@launch
             val end = endDate.takeIf { it.isNotEmpty() }
                 ?.let { try { LocalDate.parse(it) } catch (_: Exception) { null } }
-            val dates = if (end != null && end != start) {
+            val recurrenceEnd = if (recurrenceType == TaskRecurrenceType.NONE) end else (end ?: start.plusMonths(3))
+            val dates = if (recurrenceType != TaskRecurrenceType.NONE) {
+                generateSequence(start) { it.plusDays(1) }
+                    .takeWhile { !it.isAfter(recurrenceEnd) }
+                    .filter { date -> shouldCreateOn(date, recurrenceType, recurrenceWeekdays) }
+                    .toList()
+            } else if (end != null && end != start) {
                 generateSequence(start) { it.plusDays(1) }.takeWhile { !it.isAfter(end) }.toList()
             } else {
                 listOf(start)
             }
+            val seriesId = if (recurrenceType == TaskRecurrenceType.NONE) null else UUID.randomUUID().toString()
 
             var hasError = false
             for (date in dates) {
@@ -295,7 +325,11 @@ class TasksViewModel @Inject constructor(
                     penaltyPoints = penaltyPoints,
                     dueDate = date.toString(),
                     endDate = null,
-                    dueTime = dueTime
+                    dueTime = dueTime,
+                    recurrenceSeriesId = seriesId,
+                    recurrenceType = recurrenceType,
+                    recurrenceWeekdays = recurrenceWeekdays.sorted(),
+                    recurrenceEndDate = recurrenceEnd.toString()
                 )
                 taskRepository.createTask(task).onFailure { hasError = true }
             }
@@ -325,6 +359,8 @@ class TasksViewModel @Inject constructor(
         dueTime: String?,
         childId: String,
         categoryName: String,
+        recurrenceType: TaskRecurrenceType,
+        recurrenceWeekdays: Set<Int>,
         onDone: () -> Unit
     ) {
         viewModelScope.launch {
@@ -344,9 +380,18 @@ class TasksViewModel @Inject constructor(
                 penaltyPoints = penaltyPoints,
                 dueDate = dueDate,
                 endDate = null,
-                dueTime = dueTime
+                dueTime = dueTime,
+                recurrenceType = recurrenceType,
+                recurrenceWeekdays = recurrenceWeekdays.sorted(),
+                recurrenceEndDate = endDate.takeIf { recurrenceType != TaskRecurrenceType.NONE }
             )
-            taskRepository.updateTask(task).fold(
+            val existing = _uiState.value.editingTask
+            val update = if (existing?.recurrenceSeriesId != null) {
+                taskRepository.updateFutureTasksInSeries(existing.recurrenceSeriesId, dueDate, task)
+            } else {
+                taskRepository.updateTask(task)
+            }
+            update.fold(
                 onSuccess = {
                     if (_uiState.value.viewMode == ViewMode.CALENDAR) {
                         loadMonthData(YearMonth.from(_uiState.value.selectedDate))
@@ -378,6 +423,17 @@ class TasksViewModel @Inject constructor(
                     // LIST 模式：不关 loading，等 observe 流 emit 时关闭
                 },
                 onFailure = { _uiState.value = _uiState.value.copy(isLoading = false) }
+            )
+        }
+    }
+
+    /** 默认完成即通过；仅允许家长把已完成任务驳回，并自动回退对应积分。 */
+    fun rejectTask(taskId: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+            taskRepository.rejectTask(taskId).fold(
+                onSuccess = { _uiState.value = _uiState.value.copy(isLoading = false) },
+                onFailure = { _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "驳回失败，请稍后重试") }
             )
         }
     }
@@ -453,4 +509,15 @@ class TasksViewModel @Inject constructor(
         childId = childId, childName = childName,
         categoryName = category
     )
+
+    private fun shouldCreateOn(
+        date: LocalDate,
+        recurrenceType: TaskRecurrenceType,
+        weekdays: Set<Int>
+    ): Boolean = when (recurrenceType) {
+        TaskRecurrenceType.DAILY -> true
+        TaskRecurrenceType.WEEKDAYS -> date.dayOfWeek.value in 1..5
+        TaskRecurrenceType.WEEKLY -> date.dayOfWeek.value in weekdays
+        TaskRecurrenceType.NONE -> true
+    }
 }

@@ -11,9 +11,15 @@
 | 应用与启动页 | `LemonParentsApp.kt`、`MainActivity.kt` |
 | 认证/家庭创建 | `feature/auth/` |
 | 路由 | `navigation/ParentNavGraph.kt` |
-| 任务和日历 | `feature/tasks/TasksScreen.kt`、`TaskEditScreen.kt`、`CalendarView.kt` |
+| 任务和日历 | `feature/tasks/TasksScreen.kt`、`TaskEditScreen.kt`、`CalendarView.kt`、`TaskCompletionNotifier.kt` |
 | 使用监管 | `feature/monitor/MonitorScreen.kt`、`MonitorViewModel.kt` |
 | 家庭、分类、回收站、日志 | `feature/profile/` |
+
+## 任务约束
+
+- 创建任务支持单次日期区间和重复日程（每天、工作日、每周指定日）；重复日程生成独立日任务，以保留逐日完成历史。
+- 孩子完成任务默认即“已通过”并到账；家长仅可对已完成/已通过任务执行驳回，驳回由数据库事务回退积分。
+- 家长端在应用运行时收到新完成任务会显示系统通知；离线远程推送未接入。
 
 ## 路由与跨端约束
 
