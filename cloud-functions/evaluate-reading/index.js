@@ -253,6 +253,21 @@ function outOfLibraryChineseCharacters(text, allowedCharacters) {
   );
 }
 
+function pinyinForExample(rawExample, label) {
+  if (!rawExample || typeof rawExample !== 'object' || Array.isArray(rawExample)) {
+    throw new Error(`${label}必须包含 text 和 pinyins`);
+  }
+  const text = typeof rawExample.text === 'string' ? rawExample.text.trim() : '';
+  const pinyins = Array.isArray(rawExample.pinyins)
+    ? rawExample.pinyins.map((pinyin) => typeof pinyin === 'string' ? pinyin.trim().toLowerCase() : '')
+    : [];
+  const chineseCount = chineseCharacters(text).length;
+  if (!text || pinyins.length !== chineseCount || pinyins.some((pinyin) => !/^[a-züv]+$/.test(pinyin))) {
+    throw new Error(`${label}的拼音必须与每个汉字一一对应，且不带声调`);
+  }
+  return { text, pinyins };
+}
+
 function validateGeneratedTasks(payload, requestedCharacters, allowedCharacters, options = {}) {
   const { allowOutOfLibraryWords = false } = options;
   if (!payload || !Array.isArray(payload.items)) throw new Error('返回中缺少 items 数组');
@@ -270,32 +285,30 @@ function validateGeneratedTasks(payload, requestedCharacters, allowedCharacters,
     // 包含对应目标字，避免把不相关的内容写入该字的学习任务。
     // 仅保留可显示的字符串；空词不写入任务。
     const words = Array.isArray(item.words) ? item.words : [];
-    const sentence = typeof item.sentence === 'string' ? item.sentence.trim() : '';
+    const sentence = pinyinForExample(item.sentence, `“${character}”的句子`);
     const normalizedWords = words
-      .filter((word) => typeof word === 'string')
-      .map((word) => word.trim())
-      .filter(Boolean);
+      .map((word) => pinyinForExample(word, `“${character}”的词语`));
     for (const word of normalizedWords) {
-      if (!word.includes(character)) {
-        throw new Error(`“${character}”的词语“${word}”必须包含该字`);
+      if (!word.text.includes(character)) {
+        throw new Error(`“${character}”的词语“${word.text}”必须包含该字`);
       }
-      if (!hasOnlyPermittedCharacters(word)) {
-        throw new Error(`“${character}”的词语“${word}”含有不支持的字符`);
+      if (!hasOnlyPermittedCharacters(word.text)) {
+        throw new Error(`“${character}”的词语“${word.text}”含有不支持的字符`);
       }
-      const outOfLibraryCharacters = outOfLibraryChineseCharacters(word, allowedCharacters);
+      const outOfLibraryCharacters = outOfLibraryChineseCharacters(word.text, allowedCharacters);
       if (!allowOutOfLibraryWords && outOfLibraryCharacters.length) {
-        throw new Error(`“${character}”的词语“${word}”含有字库外汉字“${outOfLibraryCharacters.join('')}”`);
+        throw new Error(`“${character}”的词语“${word.text}”含有字库外汉字“${outOfLibraryCharacters.join('')}”`);
       }
     }
-    if (!sentence.includes(character)) {
+    if (!sentence.text.includes(character)) {
       throw new Error(`“${character}”的句子必须包含该字`);
     }
-    if (!hasOnlyPermittedCharacters(sentence)) {
-      throw new Error(`“${character}”的句子“${sentence}”含有不支持的字符`);
+    if (!hasOnlyPermittedCharacters(sentence.text)) {
+      throw new Error(`“${character}”的句子“${sentence.text}”含有不支持的字符`);
     }
-    const sentenceOutOfLibraryCharacters = outOfLibraryChineseCharacters(sentence, allowedCharacters);
+    const sentenceOutOfLibraryCharacters = outOfLibraryChineseCharacters(sentence.text, allowedCharacters);
     if (sentenceOutOfLibraryCharacters.length > 2) {
-      throw new Error(`“${character}”的句子“${sentence}”含有 ${sentenceOutOfLibraryCharacters.length} 个字库外汉字，最多允许 2 个（${sentenceOutOfLibraryCharacters.join('')}）`);
+      throw new Error(`“${character}”的句子“${sentence.text}”含有 ${sentenceOutOfLibraryCharacters.length} 个字库外汉字，最多允许 2 个（${sentenceOutOfLibraryCharacters.join('')}）`);
     }
     itemsByCharacter.set(character, { character, words: normalizedWords, sentence });
   }
@@ -308,9 +321,9 @@ function literacyTaskQualitySummary(tasks) {
   return (tasks || []).map((task) => ({
     character: task.character,
     wordCount: Array.isArray(task.words) ? task.words.length : 0,
-    targetOnlyWordCount: (task.words || []).filter((word) => word === task.character).length,
-    sentenceChineseLength: chineseCharacters(task.sentence || '').length,
-    targetOnlySentence: task.sentence === task.character
+    targetOnlyWordCount: (task.words || []).filter((word) => word.text === task.character).length,
+    sentenceChineseLength: chineseCharacters(task.sentence?.text || '').length,
+    targetOnlySentence: task.sentence?.text === task.character
   }));
 }
 
@@ -358,7 +371,7 @@ function collectWordFallbackTasks(payload, requestedCharacters, allowedCharacter
         allowedCharacters,
         { allowOutOfLibraryWords: true }
       );
-      if (task.words.some((word) => outOfLibraryChineseCharacters(word, allowedCharacters).length)) {
+      if (task.words.some((word) => outOfLibraryChineseCharacters(word.text, allowedCharacters).length)) {
         fallbackTasks.set(character, task);
       }
     } catch (_) {
@@ -371,9 +384,9 @@ function collectWordFallbackTasks(payload, requestedCharacters, allowedCharacter
 function literacyGenerationPrompt(requestedCharacters, allowedCharacters, previousError, previousContent) {
   return [
     '你是儿童识字教材编辑。只输出一个 JSON 对象，不要 Markdown、解释或额外字段。',
-    '请为每个目标汉字生成一条识字任务。JSON 格式必须为：{"items":[{"character":"字","words":["词语"],"sentence":"句子"}]}。',
+    '请为每个目标汉字生成一条识字任务。JSON 格式必须为：{"items":[{"character":"字","words":[{"text":"词语","pinyins":["ci","yu"]}],"sentence":{"text":"句子","pinyins":["ju","zi"]}}]}。',
     '每个目标字必须恰好出现一次。每个 words 提供 1 到 3 个词语即可，不要求凑满 3 个；优先提供至少两个汉字的、有学习意义的词语，不要只返回目标字本身。',
-    '每个词语和句子都必须包含对应目标字。这是硬性要求。句子不限制长度，但应是可供儿童朗读的完整短句，不要只返回目标字本身。',
+    '每个词语和句子都必须包含对应目标字。这是硬性要求。句子不限制长度，但应是可供儿童朗读的完整短句，不要只返回目标字本身。每个词和句都必须提供 pinyins，按其中汉字出现顺序逐字填写；拼音只用小写字母或 ü/v，不写声调和数字。例如“组长”的拼音为 ["zu","zhang"]，“妈妈”为 ["ma","ma"]。',
     '词语中的汉字应全部取自“允许汉字”；句子最多可出现 2 个“允许汉字”之外的汉字。不得使用英文、数字、空格或任何其他符号。句中只可使用中文逗号、句号、问号、叹号、顿号，标点可省略。',
     '输出前请逐项自检：items 数量等于目标字数量；每个词语和句子均包含对应目标字；词语不含字库外汉字，句子最多含 2 个字库外汉字。不要输出自检过程。',
     `目标汉字：${requestedCharacters.join('')}`,
@@ -491,7 +504,8 @@ async function generateWithDeepSeek(requestedCharacters, allowedCharacters) {
       if (wordFallbackTask) {
         completedTasks.set(character, wordFallbackTask);
         const outOfLibraryWords = wordFallbackTask.words
-          .filter((word) => outOfLibraryChineseCharacters(word, allowedCharacters).length)
+          .filter((word) => outOfLibraryChineseCharacters(word.text, allowedCharacters).length)
+          .map((word) => word.text)
           .join('、');
         console.warn(`DeepSeek “${character}”已完成 ${DEEPSEEK_PER_CHARACTER_RETRY_COUNT + 1} 次生成尝试；词语“${outOfLibraryWords}”仍含字库外汉字，按规则采用最后一版结果`);
       } else {
@@ -562,8 +576,8 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
     family_id: familyId,
     child_id: childId,
     character: task.character,
-    words: task.words.map((text) => ({ text })),
-    sentences: [{ text: task.sentence }],
+    words: task.words,
+    sentences: [task.sentence],
     sort_order: nextSortOrder + index
   }));
   const created = await supabase('child_literacy_characters', {

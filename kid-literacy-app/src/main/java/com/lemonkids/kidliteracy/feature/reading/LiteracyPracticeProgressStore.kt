@@ -24,11 +24,17 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
             .associate { (key, value) -> decodeKey(key.removePrefix(entryPrefix())) to (value as Int) }
     }
 
-    /** 只有本次评测完全读对时才调用；达到上限后不再累加。 */
-    fun recordCorrectReading(target: ReadingTarget): Int {
+    /**
+     * 记录本轮读对的次数；达到上限后不再累加。
+     *
+     * 字的单轮朗读可包含多个重复字，例如“花花”，因此一次评测最多会增加多颗星；
+     * 词和句仍传入 1，保持原有计数方式。
+     */
+    fun recordCorrectReadings(target: ReadingTarget, correctReadings: Int = 1): Int {
         clearExpiredEntries()
         val progressKey = target.practiceProgressKey()
-        val nextCount = ((snapshot()[progressKey] ?: 0) + 1).coerceAtMost(target.requiredCorrectReadings())
+        val nextCount = ((snapshot()[progressKey] ?: 0) + correctReadings.coerceAtLeast(0))
+            .coerceAtMost(target.requiredCorrectReadings())
         preferences.edit().putInt(entryPrefix() + encodeKey(progressKey), nextCount).apply()
         return nextCount
     }

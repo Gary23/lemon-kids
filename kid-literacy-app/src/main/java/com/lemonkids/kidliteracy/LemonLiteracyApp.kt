@@ -140,6 +140,7 @@ import com.lemonkids.kidliteracy.feature.reading.ReadingEvaluationViewModel
 import com.lemonkids.kidliteracy.feature.reading.ReadingContentSource
 import com.lemonkids.kidliteracy.feature.reading.ReadingTarget
 import com.lemonkids.kidliteracy.feature.reading.GeneratedLiteracyTask
+import com.lemonkids.kidliteracy.feature.reading.GeneratedLiteracyExample
 import com.lemonkids.kidliteracy.feature.reading.LiteracyTasksPreview
 import com.lemonkids.kidliteracy.feature.reading.SavedLiteracyTasks
 import com.lemonkids.kidliteracy.feature.reading.TencentEvaluationCredentials
@@ -329,20 +330,20 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
         }
     }
 
-    fun recordCorrectReading(target: ReadingTarget): Int {
+    fun recordCorrectReadings(target: ReadingTarget, correctReadings: Int = 1): Int {
         // 当天快照中已经完成的字保留在学习纸上供回看，但不再重新累计本地星星
         // 或重复请求服务端完成接口。
         if (target.contentSource == ReadingContentSource.TASK && isTaskCharacterCompleted(target.literacyCharacterId)) {
             return target.requiredCorrectReadings()
         }
-        val correctReadings = practiceProgressStore.recordCorrectReading(target)
+        val updatedCorrectReadings = practiceProgressStore.recordCorrectReadings(target, correctReadings)
         practiceProgress = practiceProgressStore.snapshot()
         if (target.contentSource == ReadingContentSource.TASK) {
             selectedCharacterGroup?.learningCharacters
                 ?.firstOrNull { it.id == target.literacyCharacterId }
                 ?.let(::completeCharacterIfReady)
         }
-        return correctReadings
+        return updatedCorrectReadings
     }
     val microphonePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val target = pendingRecordingTarget
@@ -541,7 +542,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                     practiceProgressStore.markCharacterAudioPointRead(pointReadTarget.literacyCharacterId)
                 }
             },
-            onCorrectReading = ::recordCorrectReading
+            onCorrectReadings = ::recordCorrectReadings
         )
     }
     selectedRecognizedCharacter?.let { character ->
@@ -911,12 +912,12 @@ private fun ChildLiteracyCharacter.toLiteracyCard(
     ),
     terms = words.mapIndexedNotNull { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            learningContent(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text), practiceProgress, completed)
+            learningContent(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, pinyins = example.pinyins), practiceProgress, completed)
         }
     },
     sentences = sentences.mapIndexedNotNull { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            learningContent(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text), practiceProgress, completed)
+            learningContent(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text, pinyins = example.pinyins), practiceProgress, completed)
         }
     }
 )
@@ -933,7 +934,7 @@ private fun RecognizedCharacter.toLiteracyCard(practiceProgress: Map<String, Int
     terms = words.mapIndexedNotNull { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
             learningContent(
-                ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, contentSource = ReadingContentSource.RECOGNIZED),
+                ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, pinyins = example.pinyins, contentSource = ReadingContentSource.RECOGNIZED),
                 practiceProgress,
                 completed = false
             )
@@ -966,12 +967,12 @@ private fun ChildLiteracyCharacter.practiceTargets(): List<ReadingTarget> = buil
     add(ReadingTarget(id, "character", character, audioUrl = characterAudioUrl, audioVersion = characterAudioVersion))
     words.forEachIndexed { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            add(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text))
+            add(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, pinyins = example.pinyins))
         }
     }
     sentences.forEachIndexed { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            add(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text))
+            add(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text, pinyins = example.pinyins))
         }
     }
 }
@@ -1097,7 +1098,7 @@ private fun ReadingDialog(
     onSpeak: (ReadingTarget, String) -> Unit,
     onStopPlayback: () -> Unit,
     onCharacterAudioPointRead: (ReadingTarget) -> Unit,
-    onCorrectReading: (ReadingTarget) -> Int
+    onCorrectReadings: (ReadingTarget, Int) -> Int
 ) {
     val context = LocalContext.current
     val evaluationViewModel: ReadingEvaluationViewModel = hiltViewModel()
@@ -1134,6 +1135,42 @@ private fun ReadingDialog(
         displayedCorrectReadingCount = correctReadingCount
     }
 
+    fun characterReadingsNeeded(): Int =
+        (target.requiredCorrectReadings() - displayedCorrectReadingCount).coerceAtLeast(1)
+
+    fun evaluationTextFor(readingTarget: ReadingTarget): String =
+        if (readingTarget.targetType == "character") {
+            readingTarget.displayText.repeat(characterReadingsNeeded())
+        } else {
+            readingTarget.displayText
+        }
+
+    fun evaluationReferenceFor(readingTarget: ReadingTarget, evaluationText: String): EvaluationReference {
+        // 认字题继续沿用原规则。只有词、句且拼音数量与汉字一一对应时，才切换到
+        // 腾讯的指定发音模式；历史内容没有拼音不会被误判为配置异常。
+        val pinyins = readingTarget.pinyins
+        val characters = evaluationText.filter { it.isChineseCharacter() }
+        if (
+            readingTarget.targetType == "character" ||
+            pinyins.size != characters.length ||
+            pinyins.any { !it.matches(Regex("[a-züv]+")) }
+        ) return EvaluationReference(evaluationText, 0)
+
+        var pinyinIndex = 0
+        val phoneticText = buildString {
+            evaluationText.forEach { character ->
+                if (character.isChineseCharacter()) {
+                    // 业务数据不维护声调；腾讯的发音描述格式仍要求一个调号，临时补
+                    // 一级调，并明确关闭 F_TDET，因此调号不会参与孩子的通过判定。
+                    append(character).append("{::pron{").append(pinyins[pinyinIndex++]).append("1}}")
+                } else {
+                    append(character)
+                }
+            }
+        }
+        return EvaluationReference(phoneticText, 1)
+    }
+
     fun cancelRecording() {
         evaluationAttemptId++
         controller?.cancelOralEvaluation()
@@ -1164,19 +1201,25 @@ private fun ReadingDialog(
         val attemptId = ++evaluationAttemptId
         // 评测统一使用腾讯内置词典；在云函数发布前客户端也强制使用完整教学文本，
         // 避免旧会话中遗留的 JSON 拼音参考文本继续触发 4113。
-        val evaluationRefText = readingTarget.displayText
+        // 字的本轮参考文本按未点亮星数动态重复：初次为“花花花”，已完成两次后为“花”。
+        // 题库和本地进度始终只保存原始目标字“花”。词、句仍使用原始文本评测。
+        val evaluationText = evaluationTextFor(readingTarget)
+        val evaluationReference = evaluationReferenceFor(readingTarget, evaluationText)
+        val evaluationRefText = evaluationReference.refText
         // 仅记录教学文本与参考文本，不记录短期凭证，便于定位腾讯返回的 RefText 错误。
         android.util.Log.d(
             "ReadingEvaluation",
-            "start targetType=${readingTarget.targetType}, text=${readingTarget.displayText}, refText=$evaluationRefText"
+            "start targetType=${readingTarget.targetType}, text=${readingTarget.displayText}, refText=$evaluationRefText, textMode=${evaluationReference.textMode}"
         )
         val apiParams = java.util.TreeMap<String, Any>().apply {
             put(HttpParameterKey.SERVER_ENGINE_TYPE, "16k_zh")
             put(HttpParameterKey.EVAL_MODE, 1)
-            put(HttpParameterKey.TEXT_MODE, 0)
+            put(HttpParameterKey.TEXT_MODE, evaluationReference.textMode)
             put(HttpParameterKey.SCORE_COEFF, 1.0)
             put(HttpParameterKey.SENTENCE_INFO_ENABLED, 1)
             put(HttpParameterKey.REF_TEXT, evaluationRefText)
+            // 发音描述中的临时调号只为满足腾讯格式要求；不检测声调，兼容轻声。
+            if (evaluationReference.textMode == 1) put("F_TDET", false)
         }
         val listener = object : TAIListener {
             override fun onMessage(msg: String) = Unit
@@ -1188,11 +1231,19 @@ private fun ReadingDialog(
                     if (state != RecordingState.RECORDING && state != RecordingState.EVALUATING) return@post
                     controller?.release()
                     controller = null
-                    val summary = parseTencentEvaluationSummary(msg, readingTarget.displayText, readingTarget.targetType)
+                    val summary = parseTencentEvaluationSummary(msg, evaluationText, readingTarget.targetType)
                     wordSummaries[wordIndex] = summary
                     state = RecordingState.FINISHED
-                    if (summary.wrongCharacterCount == 0) {
-                        displayedCorrectReadingCount = onCorrectReading(readingTarget)
+                    val correctReadingsThisAttempt = if (readingTarget.targetType == "character") {
+                        (evaluationText.count { it.isChineseCharacter() } - summary.wrongCharacterCount)
+                            .coerceAtLeast(0)
+                    } else if (summary.wrongCharacterCount == 0) {
+                        1
+                    } else {
+                        0
+                    }
+                    if (correctReadingsThisAttempt > 0) {
+                        displayedCorrectReadingCount = onCorrectReadings(readingTarget, correctReadingsThisAttempt)
                     }
                     if (isWordGroup && wordIndex == wordTargets.lastIndex) {
                         evaluationSummary = EvaluationSummary(
@@ -1204,9 +1255,11 @@ private fun ReadingDialog(
                         message = "“${readingTarget.displayText}”完成，点击下一词继续"
                     } else {
                         evaluationSummary = summary
-                        message = if (summary.wrongCharacterCount == 0) {
+                        message = if (correctReadingsThisAttempt > 0) {
                             if (displayedCorrectReadingCount >= target.requiredCorrectReadings()) {
                                 "太棒啦，这一项读完了！"
+                            } else if (target.targetType == "character") {
+                                "读对啦！"
                             } else {
                                 "读对啦！再读 ${target.requiredCorrectReadings() - displayedCorrectReadingCount} 次就完成。"
                             }
@@ -1361,7 +1414,8 @@ private fun ReadingDialog(
                 PracticeProgressRating(
                     correctReadingCount = displayedCorrectReadingCount,
                     requiredReadingCount = target.requiredCorrectReadings(),
-                    evaluationSummary = evaluationSummary
+                    evaluationSummary = evaluationSummary,
+                    hideRemainingReadingHint = target.targetType == "character"
                 )
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -1435,13 +1489,13 @@ private fun ReadingDialog(
                 ) {
                     Text(
                         when {
-                            state == RecordingState.RECORDING -> "结束"
+                            state == RecordingState.RECORDING -> if (target.targetType == "character") "我读完了" else "结束"
                             state == RecordingState.FINISHED && hasCompletedCurrentTarget -> "完成"
                             state == RecordingState.FINISHED && isWordGroup && currentWordIndex < wordTargets.lastIndex -> "下一词"
                             state == RecordingState.FINISHED && isWordGroup -> "再读一遍"
-                            state == RecordingState.FINISHED -> "再读一次"
-                            state == RecordingState.ERROR -> "重试"
-                            else -> "开始"
+                            state == RecordingState.FINISHED -> if (target.targetType == "character") "开始朗读" else "再读一次"
+                            state == RecordingState.ERROR -> if (target.targetType == "character") "开始朗读" else "重试"
+                            else -> if (target.targetType == "character") "开始朗读" else "开始"
                         }
                     )
                 }
@@ -1488,19 +1542,22 @@ private fun RecordingAnimation(color: Color) {
 private fun PracticeProgressRating(
     correctReadingCount: Int,
     requiredReadingCount: Int,
-    evaluationSummary: EvaluationSummary?
+    evaluationSummary: EvaluationSummary?,
+    hideRemainingReadingHint: Boolean = false
 ) {
     val stars = "★".repeat(correctReadingCount) + "☆".repeat(requiredReadingCount - correctReadingCount)
     Text(stars, color = Wheat, fontSize = 32.sp, letterSpacing = 3.sp)
     Text(
         when (evaluationSummary?.wrongCharacterCount) {
-            null -> "读对 $requiredReadingCount 次，就能点亮全部星星"
+            null -> if (hideRemainingReadingHint) "请连续朗读三次" else "读对 $requiredReadingCount 次，就能点亮全部星星"
             0 -> if (correctReadingCount >= requiredReadingCount) {
                 "全部星星点亮啦！"
+            } else if (hideRemainingReadingHint) {
+                "读对啦！"
             } else {
                 "读对啦！还差 ${requiredReadingCount - correctReadingCount} 次"
             }
-            else -> "读错 ${evaluationSummary.wrongCharacterCount} 个字，这次不点亮星星"
+            else -> if (hideRemainingReadingHint) "再试一次吧。" else "读错 ${evaluationSummary.wrongCharacterCount} 个字，这次不点亮星星"
         },
         color = Color(0xFF7F8B8D),
         style = MaterialTheme.typography.bodyMedium,
@@ -1711,6 +1768,11 @@ private fun DialogCharacterText(
 
 private fun Char.isChineseCharacter(): Boolean = this in '\u4E00'..'\u9FFF'
 
+private data class EvaluationReference(
+    val refText: String,
+    val textMode: Int
+)
+
 /**
  * SDK 回调的内容只保留在当前弹层。当前 TEXT_MODE=0 的实际回调中，错读时 MatchTag
  * 仍可能为 0，不能作为正误依据；优先按逐字 PronAccuracy 判定，缺少分数时才回退 MatchTag。
@@ -1760,6 +1822,9 @@ private fun List<JsonObject>.toWrongCharacterIndexes(
             expectedCursor = (characterStart + returnedCharacters.length).coerceAtMost(expectedCharacterIndexes.size)
             if (resultWord.isPronunciationWrong()) addAll(mappedIndexes)
         }
+        // 对重复字朗读，“花花”不能通过参考文本“花花花”的第三次。腾讯未返回的
+        // 参考字同样视为未读对；这也会让词、句漏读时维持原有的“不加星”行为。
+        addAll(expectedCharacterIndexes.drop(expectedCursor))
     }
 }
 
@@ -1987,9 +2052,21 @@ private fun GenerateLiteracyTasksDialog(
                                         }
                                         errorMessage = null
                                     },
+                                    onWordsPinyinsChange = { pinyins ->
+                                        editableTasks = editableTasks.map {
+                                            if (it.character == task.character) it.copy(wordsPinyinsText = pinyins) else it
+                                        }
+                                        errorMessage = null
+                                    },
                                     onSentenceChange = { sentence ->
                                         editableTasks = editableTasks.map {
                                             if (it.character == task.character) it.copy(sentence = sentence) else it
+                                        }
+                                        errorMessage = null
+                                    },
+                                    onSentencePinyinsChange = { pinyins ->
+                                        editableTasks = editableTasks.map {
+                                            if (it.character == task.character) it.copy(sentencePinyinsText = pinyins) else it
                                         }
                                         errorMessage = null
                                     },
@@ -2018,7 +2095,13 @@ private fun GenerateLiteracyTasksDialog(
                                 if (result.isSuccess) {
                                     preview = result.getOrThrow()
                                     editableTasks = preview!!.tasks.map {
-                                        EditableLiteracyTask(it.character, it.words.joinToString("、"), it.sentence)
+                                        EditableLiteracyTask(
+                                            character = it.character,
+                                            wordsText = it.words.joinToString("、") { example -> example.text },
+                                            wordsPinyinsText = it.words.joinToString("、") { example -> example.pinyins.joinToString(" ") },
+                                            sentence = it.sentence.text,
+                                            sentencePinyinsText = it.sentence.pinyins.joinToString(" ")
+                                        )
                                     }
                                 } else {
                                     errorMessage = result.exceptionOrNull()?.message ?: "生成识字内容失败，请稍后重试"
@@ -2028,8 +2111,17 @@ private fun GenerateLiteracyTasksDialog(
                                 val tasks = editableTasks.map {
                                     GeneratedLiteracyTask(
                                         character = it.character,
-                                        words = it.wordsText.split(Regex("[、，,\\s]+")).filter(String::isNotBlank),
-                                        sentence = it.sentence.trim()
+                                        words = it.wordsText.split(Regex("[、，,\\s]+")).filter(String::isNotBlank).mapIndexed { index, text ->
+                                            GeneratedLiteracyExample(
+                                                text = text,
+                                                pinyins = it.wordsPinyinsText.split(Regex("[、，,]+"))
+                                                    .getOrNull(index).orEmpty().trim().split(Regex("\\s+")).filter(String::isNotBlank)
+                                            )
+                                        },
+                                        sentence = GeneratedLiteracyExample(
+                                            text = it.sentence.trim(),
+                                            pinyins = it.sentencePinyinsText.trim().split(Regex("\\s+")).filter(String::isNotBlank)
+                                        )
                                     )
                                 }
                                 validateEditedLiteracyTasks(tasks)?.let {
@@ -2067,7 +2159,9 @@ private fun GenerateLiteracyTasksDialog(
 private data class EditableLiteracyTask(
     val character: String,
     val wordsText: String,
-    val sentence: String
+    val wordsPinyinsText: String,
+    val sentence: String,
+    val sentencePinyinsText: String
 )
 
 @Composable
@@ -2075,7 +2169,9 @@ private fun EditableLiteracyTaskCard(
     task: EditableLiteracyTask,
     isKnownCharacter: Boolean,
     onWordsChange: (String) -> Unit,
+    onWordsPinyinsChange: (String) -> Unit,
     onSentenceChange: (String) -> Unit,
+    onSentencePinyinsChange: (String) -> Unit,
     onDelete: () -> Unit
 ) {
     Surface(shape = RoundedCornerShape(18.dp), color = Background, modifier = Modifier.fillMaxWidth()) {
@@ -2120,11 +2216,40 @@ private fun EditableLiteracyTaskCard(
                 )
             )
             OutlinedTextField(
+                value = task.wordsPinyinsText,
+                onValueChange = onWordsPinyinsChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("词语拼音（可编辑）") },
+                supportingText = { Text("不标声调；每个字一个拼音，词语之间用顿号分隔，例如：zu zhang") },
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Sky,
+                    unfocusedBorderColor = Line,
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White
+                )
+            )
+            OutlinedTextField(
                 value = task.sentence,
                 onValueChange = onSentenceChange,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("句子（可编辑）") },
                 supportingText = { Text("不限制句子字数") },
+                minLines = 2,
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Sky,
+                    unfocusedBorderColor = Line,
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White
+                )
+            )
+            OutlinedTextField(
+                value = task.sentencePinyinsText,
+                onValueChange = onSentencePinyinsChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("句子拼音（可编辑）") },
+                supportingText = { Text("不标声调；按句中汉字顺序逐个填写") },
                 minLines = 2,
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -2146,12 +2271,21 @@ private fun EditableLiteracyTaskCard(
 /** 词数、词长和句长不作本地限制；词句归属到某个识字任务时必须包含该目标字。 */
 private fun validateEditedLiteracyTasks(tasks: List<GeneratedLiteracyTask>): String? {
     tasks.forEach { task ->
-        val invalidWord = task.words.firstOrNull { !it.contains(task.character) }
+        val invalidWord = task.words.firstOrNull { !it.text.contains(task.character) }
         if (invalidWord != null) {
-            return "“${task.character}”的词语“$invalidWord”必须包含该字"
+            return "“${task.character}”的词语“${invalidWord.text}”必须包含该字"
         }
-        if (!task.sentence.contains(task.character)) {
+        if (!task.sentence.text.contains(task.character)) {
             return "“${task.character}”的句子必须包含该字"
+        }
+        (task.words + task.sentence).forEach { example ->
+            val characterCount = example.text.count { it.isChineseCharacter() }
+            if (example.pinyins.size != characterCount) {
+                return "“${example.text}”的拼音数量需与汉字数量一致"
+            }
+            if (example.pinyins.any { !it.matches(Regex("[a-züv]+")) }) {
+                return "拼音请使用不带声调的字母，例如 zhang"
+            }
         }
     }
     return null

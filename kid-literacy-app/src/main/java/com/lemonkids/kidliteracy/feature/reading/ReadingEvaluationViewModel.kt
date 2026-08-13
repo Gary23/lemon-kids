@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -39,6 +40,8 @@ data class ReadingTarget(
     val sentenceText: String? = null,
     // 词组朗读时指定本轮要评测的一个词；云端会校验它确实属于该识字任务。
     val wordText: String? = null,
+    /** 词、句每个汉字的指定读音；不含声调。为空时兼容历史内容。 */
+    val pinyins: List<String> = emptyList(),
     /** 内容来自认字任务或独立的已认识字表。 */
     val contentSource: ReadingContentSource = ReadingContentSource.TASK
 )
@@ -60,8 +63,14 @@ data class HelpPronunciation(
 
 data class GeneratedLiteracyTask(
     val character: String,
-    val words: List<String>,
-    val sentence: String
+    val words: List<GeneratedLiteracyExample>,
+    val sentence: GeneratedLiteracyExample
+)
+
+/** 智能生成和人工确认阶段使用的词、句及其逐字拼音。 */
+data class GeneratedLiteracyExample(
+    val text: String,
+    val pinyins: List<String>
 )
 
 data class LiteracyTasksPreview(
@@ -182,8 +191,10 @@ class ReadingEvaluationViewModel @Inject constructor(
                 val task = item.jsonObject
                 GeneratedLiteracyTask(
                     character = task.requiredString("character"),
-                    words = task["words"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(),
-                    sentence = task.requiredString("sentence")
+                    words = task["words"]?.jsonArray?.mapNotNull { item ->
+                        item.jsonObjectOrNull()?.toGeneratedLiteracyExample()
+                    }.orEmpty(),
+                    sentence = task.requiredObject("sentence").toGeneratedLiteracyExample()
                 )
             }
             .orEmpty()
@@ -205,9 +216,9 @@ class ReadingEvaluationViewModel @Inject constructor(
     ): Result<SavedLiteracyTasks> = runCatching {
         val serializedTasks = tasks.joinToString(prefix = "[", postfix = "]") { task ->
             val words = task.words.joinToString(prefix = "[", postfix = "]") { word ->
-                "\"${word.jsonEscape()}\""
+                word.toRequestJson()
             }
-            """{"character":"${task.character.jsonEscape()}","words":$words,"sentence":"${task.sentence.jsonEscape()}"}"""
+            """{"character":"${task.character.jsonEscape()}","words":$words,"sentence":${task.sentence.toRequestJson()}}"""
         }
         val response = request(
             """{"action":"save_literacy_tasks","characters":"${characters.jsonEscape()}","items":$serializedTasks}"""
@@ -263,6 +274,18 @@ class ReadingEvaluationViewModel @Inject constructor(
         // SCF 的执行上限为 90 秒；额外保留 10 秒给网络传输和响应回传。
         const val LITERACY_GENERATION_READ_TIMEOUT_MILLIS = 100_000
     }
+}
+
+private fun JsonElement.jsonObjectOrNull(): JsonObject? = this as? JsonObject
+
+private fun JsonObject.toGeneratedLiteracyExample() = GeneratedLiteracyExample(
+    text = this["text"]?.jsonPrimitive?.content ?: error("生成内容缺少 text"),
+    pinyins = this["pinyins"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
+)
+
+private fun GeneratedLiteracyExample.toRequestJson(): String {
+    val serializedPinyins = pinyins.joinToString(prefix = "[", postfix = "]") { "\"${it.jsonEscape()}\"" }
+    return """{"text":"${text.jsonEscape()}","pinyins":$serializedPinyins}"""
 }
 
 private fun String.jsonEscape(): String = buildString {
