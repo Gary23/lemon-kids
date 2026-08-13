@@ -27,3 +27,6 @@
 - [架构记录](shared/docs/ARCHITECTURE.md)：技术选型和历史设计；须与代码核对。
 - [跨端 UI 参考](shared/docs/UI-SPEC.md)：视觉与交互参考；不替代实际 Compose 页面。
 
+## 开发分支
+
+- [开发分支台账](BRANCHES.md)：当前各开发分支的功能范围、状态与建议合并顺序。
