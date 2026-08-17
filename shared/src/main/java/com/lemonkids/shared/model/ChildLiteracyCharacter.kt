@@ -29,6 +29,11 @@ data class ChildLiteracyCharacter(
 @Serializable
 data class LiteracyExample(
     @SerialName("text") val text: String = "",
+    /**
+     * 与 text 中汉字顺序一一对应的不带声调拼音，例如“组长”是 ["zu", "zhang"]。
+     * 旧数据没有此字段时保持空列表，客户端会兼容使用腾讯内置词典评测。
+     */
+    @SerialName("pinyins") val pinyins: List<String> = emptyList(),
     @SerialName("audio_url") val audioUrl: String = "",
     @SerialName("audio_version") val audioVersion: String? = null,
     @SerialName("audio_hash") val audioHash: String? = null
