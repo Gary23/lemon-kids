@@ -714,7 +714,10 @@ private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) 
     known = isKnown,
     characters = characters,
     completedCharacterIds = if (isKnown) {
-        recognizedCharacters.filter { it.isPracticeComplete(practiceProgress) }.map { it.id }.toSet()
+        recognizedCharacters
+            .filter { it.isPracticeComplete(practiceProgress, recognizedCharacterRequiredReadings) }
+            .map { it.id }
+            .toSet()
     } else {
         completedCharacterIds
     },
@@ -805,7 +808,12 @@ private fun LearnScreen(
     completedTaskCharacterIds: Set<String>
 ) {
     val cards = if (group.isKnown) {
-        group.recognizedCharacters.map { it.toLiteracyCard(practiceProgress) }
+        group.recognizedCharacters.map {
+            it.toLiteracyCard(
+                practiceProgress = practiceProgress,
+                characterRequiredReadings = group.recognizedCharacterRequiredReadings
+            )
+        }
     } else {
         group.learningCharacters.map { it.toLiteracyCard(practiceProgress, it.id in completedTaskCharacterIds) }
     }
@@ -922,12 +930,23 @@ private fun ChildLiteracyCharacter.toLiteracyCard(
     }
 )
 
-private fun RecognizedCharacter.toLiteracyCard(practiceProgress: Map<String, Int>) = LiteracyCard(
+private fun RecognizedCharacter.toLiteracyCard(
+    practiceProgress: Map<String, Int>,
+    characterRequiredReadings: Int = 3
+) = LiteracyCard(
     literacyCharacterId = id,
     word = character,
     contentSource = ReadingContentSource.RECOGNIZED,
     character = learningContent(
-        ReadingTarget(id, "character", character, audioUrl = characterAudioUrl, audioVersion = characterAudioVersion, contentSource = ReadingContentSource.RECOGNIZED),
+        ReadingTarget(
+            id,
+            "character",
+            character,
+            audioUrl = characterAudioUrl,
+            audioVersion = characterAudioVersion,
+            contentSource = ReadingContentSource.RECOGNIZED,
+            characterRequiredReadings = characterRequiredReadings
+        ),
         practiceProgress,
         completed = false
     ),
@@ -945,8 +964,10 @@ private fun RecognizedCharacter.toLiteracyCard(practiceProgress: Map<String, Int
 )
 
 /** 已认识字复习只要求主字和词语满星，且使用其自身的一星词语规则。 */
-private fun RecognizedCharacter.isPracticeComplete(practiceProgress: Map<String, Int>): Boolean =
-    toLiteracyCard(practiceProgress).completed
+private fun RecognizedCharacter.isPracticeComplete(
+    practiceProgress: Map<String, Int>,
+    characterRequiredReadings: Int = 3
+): Boolean = toLiteracyCard(practiceProgress, characterRequiredReadings).completed
 
 private fun learningContent(
     target: ReadingTarget,
@@ -1201,7 +1222,8 @@ private fun ReadingDialog(
         val attemptId = ++evaluationAttemptId
         // 评测统一使用腾讯内置词典；在云函数发布前客户端也强制使用完整教学文本，
         // 避免旧会话中遗留的 JSON 拼音参考文本继续触发 4113。
-        // 字的本轮参考文本按未点亮星数动态重复：初次为“花花花”，已完成两次后为“花”。
+        // 字的本轮参考文本按未点亮星数动态重复：例如三次任务初次为“花花花”，
+        // 已完成两次后为“花”；一、二次复习任务也按同一规则处理。
         // 题库和本地进度始终只保存原始目标字“花”。词、句仍使用原始文本评测。
         val evaluationText = evaluationTextFor(readingTarget)
         val evaluationReference = evaluationReferenceFor(readingTarget, evaluationText)
@@ -1549,7 +1571,7 @@ private fun PracticeProgressRating(
     Text(stars, color = Wheat, fontSize = 32.sp, letterSpacing = 3.sp)
     Text(
         when (evaluationSummary?.wrongCharacterCount) {
-            null -> if (hideRemainingReadingHint) "请连续朗读三次" else "读对 $requiredReadingCount 次，就能点亮全部星星"
+            null -> if (hideRemainingReadingHint) "请连续朗读 ${requiredReadingCount} 次" else "读对 $requiredReadingCount 次，就能点亮全部星星"
             0 -> if (correctReadingCount >= requiredReadingCount) {
                 "全部星星点亮啦！"
             } else if (hideRemainingReadingHint) {

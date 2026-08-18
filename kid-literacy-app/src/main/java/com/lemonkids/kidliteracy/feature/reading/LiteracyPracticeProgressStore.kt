@@ -98,9 +98,12 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
 
 /**
  * 待认识任务：主字三次、每个词两次、句子一次。
- * 已认识字复习时主字三次、每个词一次；复习页不展示句子。
+ * 已认识字复习时主字按入库日期的分组读三、二或一次，每个词一次；复习页不展示句子。
  */
 fun ReadingTarget.requiredCorrectReadings(): Int = when {
+    contentSource == ReadingContentSource.RECOGNIZED &&
+        targetType == "character" &&
+        characterRequiredReadings != null -> characterRequiredReadings
     contentSource == ReadingContentSource.RECOGNIZED && targetType == "word" -> 1
     targetType == "sentence" -> 1
     contentSource == ReadingContentSource.TASK && targetType == "word" -> 2

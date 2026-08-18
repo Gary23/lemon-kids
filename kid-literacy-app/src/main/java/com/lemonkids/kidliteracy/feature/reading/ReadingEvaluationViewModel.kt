@@ -43,7 +43,12 @@ data class ReadingTarget(
     /** 词、句每个汉字的指定读音；不含声调。为空时兼容历史内容。 */
     val pinyins: List<String> = emptyList(),
     /** 内容来自认字任务或独立的已认识字表。 */
-    val contentSource: ReadingContentSource = ReadingContentSource.TASK
+    val contentSource: ReadingContentSource = ReadingContentSource.TASK,
+    /**
+     * 已认识字按入库日期分组后的主字朗读次数；词语仍使用既定的一次规则。
+     * null 表示使用默认规则，避免影响待认识字和其他已有调用方。
+     */
+    val characterRequiredReadings: Int? = null
 )
 
 /** 一份凭证可在有效期内用于多个字、词、句的腾讯实时评测。 */
