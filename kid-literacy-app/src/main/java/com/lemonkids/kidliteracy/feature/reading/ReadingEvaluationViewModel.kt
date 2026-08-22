@@ -2,6 +2,7 @@ package com.lemonkids.kidliteracy.feature.reading
 
 import androidx.lifecycle.ViewModel
 import android.util.Log
+import com.lemonkids.shared.auth.SessionRecoveryCoordinator
 import com.lemonkids.shared.model.ChildLiteracyCharacter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.jan.supabase.SupabaseClient
@@ -92,7 +93,8 @@ data class SavedLiteracyTasks(
 
 @HiltViewModel
 class ReadingEvaluationViewModel @Inject constructor(
-    private val supabase: SupabaseClient
+    private val supabase: SupabaseClient,
+    private val sessionRecoveryCoordinator: SessionRecoveryCoordinator
 ) : ViewModel() {
     private val auth get() = supabase.pluginManager.getPlugin(Auth)
     private val json = Json { ignoreUnknownKeys = true }
@@ -249,7 +251,10 @@ class ReadingEvaluationViewModel @Inject constructor(
         readTimeoutMillis: Int = DEFAULT_READ_TIMEOUT_MILLIS
     ): JsonObject = withContext(Dispatchers.IO) {
         val accessToken = auth.currentSessionOrNull()?.accessToken
-            ?: error("登录已失效，请重新进入认字应用")
+            ?: run {
+                sessionRecoveryCoordinator.requireRecovery()
+                error("登录凭证需要恢复")
+            }
         val connection = (URL(FUNCTION_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 10_000

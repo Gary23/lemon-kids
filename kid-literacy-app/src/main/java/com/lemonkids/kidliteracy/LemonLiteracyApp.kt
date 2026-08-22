@@ -74,6 +74,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -242,6 +243,14 @@ fun LemonLiteracyApp(authViewModel: AuthViewModel = hiltViewModel()) {
 
     if (!authState.isFirstCheckComplete) {
         BindingLoadingScreen()
+        if (authState.requiresSessionRecovery) {
+            SessionRecoveryDialog(
+                isRecovering = authState.isRecoveringSession,
+                message = authState.sessionRecoveryMessage,
+                onRetryRefresh = authViewModel::retrySessionRefresh,
+                onRestoreWithBinding = authViewModel::restoreLiteracyBindingFromDialog
+            )
+        }
         return
     }
 
@@ -262,6 +271,89 @@ fun LemonLiteracyApp(authViewModel: AuthViewModel = hiltViewModel()) {
         avatarUrl = authState.currentUser?.avatarUrl,
         userId = authState.currentUser?.uid.orEmpty()
     )
+
+    // 放在应用根层且最后组合。Dialog 是独立窗口，能覆盖“智能添加识字”、朗读等
+    // 所有业务弹层，避免用户在会话不可用时继续提交其他请求。
+    if (authState.requiresSessionRecovery) {
+        SessionRecoveryDialog(
+            isRecovering = authState.isRecoveringSession,
+            message = authState.sessionRecoveryMessage,
+            onRetryRefresh = authViewModel::retrySessionRefresh,
+            onRestoreWithBinding = authViewModel::restoreLiteracyBindingFromDialog
+        )
+    }
+}
+
+@Composable
+private fun SessionRecoveryDialog(
+    isRecovering: Boolean,
+    message: String?,
+    onRetryRefresh: () -> Unit,
+    onRestoreWithBinding: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            shadowElevation = 20.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    "登录连接需要恢复",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Ink,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    "当前登录凭证未能刷新。请先重试；如果仍无法恢复，可使用本机已保存的绑定码静默重新登录。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF5E6A6E)
+                )
+                message?.let {
+                    Text(it, color = EvaluationErrorRed, fontSize = 13.sp)
+                }
+                if (isRecovering) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Sky)
+                        Text("正在恢复登录…", color = Ink, fontSize = 14.sp)
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onRetryRefresh,
+                        enabled = !isRecovering,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("重试刷新")
+                    }
+                    Button(
+                        onClick = onRestoreWithBinding,
+                        enabled = !isRecovering,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Sky)
+                    ) {
+                        Text("使用绑定码登录")
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
