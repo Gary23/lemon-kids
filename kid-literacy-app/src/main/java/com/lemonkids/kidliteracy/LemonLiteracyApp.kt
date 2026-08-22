@@ -145,6 +145,7 @@ import com.lemonkids.kidliteracy.feature.reading.GeneratedLiteracyExample
 import com.lemonkids.kidliteracy.feature.reading.LiteracyTasksPreview
 import com.lemonkids.kidliteracy.feature.reading.SavedLiteracyTasks
 import com.lemonkids.kidliteracy.feature.reading.TencentEvaluationCredentials
+import com.lemonkids.kidliteracy.feature.reading.PreparedEvaluation
 import com.lemonkids.kidliteracy.feature.reading.LiteracyPracticeProgressStore
 import com.lemonkids.kidliteracy.feature.reading.LiteracyAudioPlayer
 import com.lemonkids.kidliteracy.feature.reading.practiceProgressKey
@@ -1012,12 +1013,12 @@ private fun ChildLiteracyCharacter.toLiteracyCard(
     ),
     terms = words.mapIndexedNotNull { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            learningContent(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, pinyins = example.pinyins), practiceProgress, completed)
+            learningContent(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text), practiceProgress, completed)
         }
     },
     sentences = sentences.mapIndexedNotNull { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            learningContent(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text, pinyins = example.pinyins), practiceProgress, completed)
+            learningContent(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text), practiceProgress, completed)
         }
     }
 )
@@ -1045,7 +1046,7 @@ private fun RecognizedCharacter.toLiteracyCard(
     terms = words.mapIndexedNotNull { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
             learningContent(
-                ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, pinyins = example.pinyins, contentSource = ReadingContentSource.RECOGNIZED),
+                ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, contentSource = ReadingContentSource.RECOGNIZED),
                 practiceProgress,
                 completed = false
             )
@@ -1080,12 +1081,12 @@ private fun ChildLiteracyCharacter.practiceTargets(): List<ReadingTarget> = buil
     add(ReadingTarget(id, "character", character, audioUrl = characterAudioUrl, audioVersion = characterAudioVersion))
     words.forEachIndexed { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            add(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, pinyins = example.pinyins))
+            add(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text))
         }
     }
     sentences.forEachIndexed { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            add(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text, pinyins = example.pinyins))
+            add(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text))
         }
     }
 }
@@ -1258,32 +1259,6 @@ private fun ReadingDialog(
             readingTarget.displayText
         }
 
-    fun evaluationReferenceFor(readingTarget: ReadingTarget, evaluationText: String): EvaluationReference {
-        // 认字题继续沿用原规则。只有词、句且拼音数量与汉字一一对应时，才切换到
-        // 腾讯的指定发音模式；历史内容没有拼音不会被误判为配置异常。
-        val pinyins = readingTarget.pinyins
-        val characters = evaluationText.filter { it.isChineseCharacter() }
-        if (
-            readingTarget.targetType == "character" ||
-            pinyins.size != characters.length ||
-            pinyins.any { !it.matches(Regex("[a-züv]+")) }
-        ) return EvaluationReference(evaluationText, 0)
-
-        var pinyinIndex = 0
-        val phoneticText = buildString {
-            evaluationText.forEach { character ->
-                if (character.isChineseCharacter()) {
-                    // 业务数据不维护声调；腾讯的发音描述格式仍要求一个调号，临时补
-                    // 一级调，并明确关闭 F_TDET，因此调号不会参与孩子的通过判定。
-                    append(character).append("{::pron{").append(pinyins[pinyinIndex++]).append("1}}")
-                } else {
-                    append(character)
-                }
-            }
-        }
-        return EvaluationReference(phoneticText, 1)
-    }
-
     fun cancelRecording() {
         evaluationAttemptId++
         controller?.cancelOralEvaluation()
@@ -1310,15 +1285,14 @@ private fun ReadingDialog(
 
     DisposableEffect(target) { onDispose { cancelRecording() } }
 
-    fun startSdkEvaluation(preparedSession: TencentEvaluationCredentials, readingTarget: ReadingTarget, wordIndex: Int) {
+    fun startSdkEvaluation(
+        preparedSession: TencentEvaluationCredentials,
+        readingTarget: ReadingTarget,
+        wordIndex: Int,
+        evaluationReference: PreparedEvaluation
+    ) {
         val attemptId = ++evaluationAttemptId
-        // 评测统一使用腾讯内置词典；在云函数发布前客户端也强制使用完整教学文本，
-        // 避免旧会话中遗留的 JSON 拼音参考文本继续触发 4113。
-        // 字的本轮参考文本按未点亮星数动态重复：例如三次任务初次为“花花花”，
-        // 已完成两次后为“花”；一、二次复习任务也按同一规则处理。
-        // 题库和本地进度始终只保存原始目标字“花”。词、句仍使用原始文本评测。
         val evaluationText = evaluationTextFor(readingTarget)
-        val evaluationReference = evaluationReferenceFor(readingTarget, evaluationText)
         val evaluationRefText = evaluationReference.refText
         // 仅记录教学文本与参考文本，不记录短期凭证，便于定位腾讯返回的 RefText 错误。
         android.util.Log.d(
@@ -1332,8 +1306,6 @@ private fun ReadingDialog(
             put(HttpParameterKey.SCORE_COEFF, 1.0)
             put(HttpParameterKey.SENTENCE_INFO_ENABLED, 1)
             put(HttpParameterKey.REF_TEXT, evaluationRefText)
-            // 发音描述中的临时调号只为满足腾讯格式要求；不检测声调，兼容轻声。
-            if (evaluationReference.textMode == 1) put("F_TDET", false)
         }
         val listener = object : TAIListener {
             override fun onMessage(msg: String) = Unit
@@ -1427,14 +1399,21 @@ private fun ReadingDialog(
         state = RecordingState.PREPARING
         message = "正在准备朗读…"
         scope.launch {
-            evaluationViewModel.credentialsForEvaluation()
-                .onSuccess { credentials ->
-                    sessions[currentWordIndex] = credentials
-                    startSdkEvaluation(credentials, wordTargets[currentWordIndex], currentWordIndex)
+            val readingTarget = wordTargets[currentWordIndex]
+            val credentials = evaluationViewModel.credentialsForEvaluation().getOrElse { error ->
+                state = RecordingState.ERROR
+                message = error.message ?: "评测准备失败，请重新开始"
+                return@launch
+            }
+            sessions[currentWordIndex] = credentials
+            val repeatCount = if (readingTarget.targetType == "character") characterReadingsNeeded() else 1
+            evaluationViewModel.prepareEvaluation(readingTarget, repeatCount)
+                .onSuccess { reference ->
+                    startSdkEvaluation(credentials, readingTarget, currentWordIndex, reference)
                 }
                 .onFailure { error ->
                     state = RecordingState.ERROR
-                    message = error.message ?: "评测准备失败，请重新开始"
+                    message = error.message ?: "正在准备发音，请稍后再试"
                 }
         }
     }
@@ -1882,11 +1861,6 @@ private fun DialogCharacterText(
 
 private fun Char.isChineseCharacter(): Boolean = this in '\u4E00'..'\u9FFF'
 
-private data class EvaluationReference(
-    val refText: String,
-    val textMode: Int
-)
-
 /**
  * SDK 回调的内容只保留在当前弹层。当前 TEXT_MODE=0 的实际回调中，错读时 MatchTag
  * 仍可能为 0，不能作为正误依据；优先按逐字 PronAccuracy 判定，缺少分数时才回退 MatchTag。
@@ -2166,21 +2140,9 @@ private fun GenerateLiteracyTasksDialog(
                                         }
                                         errorMessage = null
                                     },
-                                    onWordsPinyinsChange = { pinyins ->
-                                        editableTasks = editableTasks.map {
-                                            if (it.character == task.character) it.copy(wordsPinyinsText = pinyins) else it
-                                        }
-                                        errorMessage = null
-                                    },
                                     onSentenceChange = { sentence ->
                                         editableTasks = editableTasks.map {
                                             if (it.character == task.character) it.copy(sentence = sentence) else it
-                                        }
-                                        errorMessage = null
-                                    },
-                                    onSentencePinyinsChange = { pinyins ->
-                                        editableTasks = editableTasks.map {
-                                            if (it.character == task.character) it.copy(sentencePinyinsText = pinyins) else it
                                         }
                                         errorMessage = null
                                     },
@@ -2212,9 +2174,7 @@ private fun GenerateLiteracyTasksDialog(
                                         EditableLiteracyTask(
                                             character = it.character,
                                             wordsText = it.words.joinToString("、") { example -> example.text },
-                                            wordsPinyinsText = it.words.joinToString("、") { example -> example.pinyins.joinToString(" ") },
-                                            sentence = it.sentence.text,
-                                            sentencePinyinsText = it.sentence.pinyins.joinToString(" ")
+                                            sentence = it.sentence.text
                                         )
                                     }
                                 } else {
@@ -2226,16 +2186,9 @@ private fun GenerateLiteracyTasksDialog(
                                     GeneratedLiteracyTask(
                                         character = it.character,
                                         words = it.wordsText.split(Regex("[、，,\\s]+")).filter(String::isNotBlank).mapIndexed { index, text ->
-                                            GeneratedLiteracyExample(
-                                                text = text,
-                                                pinyins = it.wordsPinyinsText.split(Regex("[、，,]+"))
-                                                    .getOrNull(index).orEmpty().trim().split(Regex("\\s+")).filter(String::isNotBlank)
-                                            )
+                                            GeneratedLiteracyExample(text = text)
                                         },
-                                        sentence = GeneratedLiteracyExample(
-                                            text = it.sentence.trim(),
-                                            pinyins = it.sentencePinyinsText.trim().split(Regex("\\s+")).filter(String::isNotBlank)
-                                        )
+                                        sentence = GeneratedLiteracyExample(text = it.sentence.trim())
                                     )
                                 }
                                 validateEditedLiteracyTasks(tasks)?.let {
@@ -2273,9 +2226,7 @@ private fun GenerateLiteracyTasksDialog(
 private data class EditableLiteracyTask(
     val character: String,
     val wordsText: String,
-    val wordsPinyinsText: String,
-    val sentence: String,
-    val sentencePinyinsText: String
+    val sentence: String
 )
 
 @Composable
@@ -2283,9 +2234,7 @@ private fun EditableLiteracyTaskCard(
     task: EditableLiteracyTask,
     isKnownCharacter: Boolean,
     onWordsChange: (String) -> Unit,
-    onWordsPinyinsChange: (String) -> Unit,
     onSentenceChange: (String) -> Unit,
-    onSentencePinyinsChange: (String) -> Unit,
     onDelete: () -> Unit
 ) {
     Surface(shape = RoundedCornerShape(18.dp), color = Background, modifier = Modifier.fillMaxWidth()) {
@@ -2330,40 +2279,11 @@ private fun EditableLiteracyTaskCard(
                 )
             )
             OutlinedTextField(
-                value = task.wordsPinyinsText,
-                onValueChange = onWordsPinyinsChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("词语拼音（可编辑）") },
-                supportingText = { Text("不标声调；每个字一个拼音，词语之间用顿号分隔，例如：zu zhang") },
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Sky,
-                    unfocusedBorderColor = Line,
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color.White
-                )
-            )
-            OutlinedTextField(
                 value = task.sentence,
                 onValueChange = onSentenceChange,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("句子（可编辑）") },
                 supportingText = { Text("不限制句子字数") },
-                minLines = 2,
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Sky,
-                    unfocusedBorderColor = Line,
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color.White
-                )
-            )
-            OutlinedTextField(
-                value = task.sentencePinyinsText,
-                onValueChange = onSentencePinyinsChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("句子拼音（可编辑）") },
-                supportingText = { Text("不标声调；按句中汉字顺序逐个填写") },
                 minLines = 2,
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -2391,15 +2311,6 @@ private fun validateEditedLiteracyTasks(tasks: List<GeneratedLiteracyTask>): Str
         }
         if (!task.sentence.text.contains(task.character)) {
             return "“${task.character}”的句子必须包含该字"
-        }
-        (task.words + task.sentence).forEach { example ->
-            val characterCount = example.text.count { it.isChineseCharacter() }
-            if (example.pinyins.size != characterCount) {
-                return "“${example.text}”的拼音数量需与汉字数量一致"
-            }
-            if (example.pinyins.any { !it.matches(Regex("[a-züv]+")) }) {
-                return "拼音请使用不带声调的字母，例如 zhang"
-            }
         }
     }
     return null

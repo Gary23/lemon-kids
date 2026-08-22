@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "main": "index.js",
+  "scripts": {
+    "test": "node --test"
+  },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "pinyin-pro": "^3.27.0",
     "tencentcloud-sdk-nodejs-scf": "^4.1.168",
     "tencentcloud-sdk-nodejs-sts": "^4.1.15"
   }
