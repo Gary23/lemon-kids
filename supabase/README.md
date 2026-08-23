@@ -27,7 +27,9 @@
 | `sql/20260807_literacy_tts_cleanup.sql` | 已认识字存库后的原子投递、可重试对象删除和最终移除已认识记录 RPC | 已执行 TTS 资产、生成器 RPC 与对象路径约束脚本 |
 | `sql/20260809_literacy_tts_purge_deleted_assets.sql` | 清理成功后自动物理删除已删除资产记录 | 已执行 `20260807_literacy_tts_cleanup.sql` |
 | `sql/20260811_backfill_recognized_character_audio.sql` | 回填旧版自动收录时遗漏的主字音频元数据 | 已执行 TTS 音频元数据迁移；仅需对受影响历史数据执行一次 |
-| `sql/20260823_literacy_phonetic_assets.sql` | 创建词句腾讯数字拼音资产队列、领取/完成/失败 RPC，并回填历史待认识/已认识内容 | 已执行认字任务与已认识字迁移；执行前审查，不向客户端授予资产权限 |
+| `sql/20260823_literacy_phonetic_assets.sql` | 创建词句腾讯数字拼音资产队列、领取/完成/失败 RPC，并回填历史待认识/已认识内容 | 已执行认字任务与已认识字迁移及本迁移；不向客户端授予资产权限 |
+| `sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql` | 将待认识完成、已认识存库与音素资产迁移/清理合并为原子 RPC | 已执行 `20260823_literacy_phonetic_assets.sql`、`20260807_literacy_tts_cleanup.sql` 及本迁移 |
+| `sql/20260823_literacy_purge_legacy_example_pinyins.sql` | 从待认识、已认识词句 JSON 中物理删除已废弃的 `pinyins` 键 | 已在旧客户端淘汰、音素资产回填完成后执行；脚本末尾四项计数均为 0 |
 
 ## AI 必须遵守的规则
 

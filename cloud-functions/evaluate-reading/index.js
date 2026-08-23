@@ -20,6 +20,7 @@ const StsClient = tencentcloud.sts.v20180813.Client;
 const scf = require('tencentcloud-sdk-nodejs-scf');
 const ScfClient = scf.scf.v20180416.Client;
 const { pinyin } = require('pinyin-pro');
+const crypto = require('crypto');
 
 const SUPABASE_URL = requiredEnv('SUPABASE_URL').replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
@@ -77,6 +78,23 @@ function bearer(event) {
     throw new HttpError(401, '缺少登录凭证');
   }
   return authorization.slice('Bearer '.length).trim();
+}
+
+/**
+ * 历史音素回填不应依赖某个孩子的短期登录态。该入口只接受部署时单独配置的密钥，
+ * 便于安全地由运维脚本或定时 HTTP 调用持续处理队列；未配置密钥时入口默认关闭。
+ */
+function requirePhoneticBackfillKey(event) {
+  const expected = process.env.LITERACY_PHONETIC_BACKFILL_KEY;
+  if (!expected) throw new HttpError(503, '未配置音素回填密钥，后台回填入口未启用');
+  const headers = event.headers || {};
+  const received = headers['x-phonetic-backfill-key'] || headers['X-Phonetic-Backfill-Key'];
+  if (typeof received !== 'string') throw new HttpError(401, '缺少音素回填密钥');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  const receivedBuffer = Buffer.from(received, 'utf8');
+  if (expectedBuffer.length !== receivedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, receivedBuffer)) {
+    throw new HttpError(401, '音素回填密钥不正确');
+  }
 }
 
 class HttpError extends Error {
@@ -608,6 +626,13 @@ function normalizePhonemeTokens(value, itemText) {
   });
 }
 
+function wordListForPhonemeTokens(itemText, tokens) {
+  const normalized = normalizePhonemeTokens(tokens, itemText);
+  return chineseCharacters(itemText).map((word, index) =>
+    normalized[index] === null ? { word } : { word, pron: [[normalized[index]]] }
+  );
+}
+
 function phonemesForText(text) {
   const sourceCharacters = [...text];
   const generated = pinyin(text, { toneType: 'num', type: 'array', v: true });
@@ -786,11 +811,7 @@ async function prepareEvaluation(childId, body) {
   if (!asset || asset.item_text !== item.text || !Array.isArray(asset.phoneme_tokens)) {
     throw new HttpError(409, '正在准备发音，请稍后再试');
   }
-  const tokens = normalizePhonemeTokens(asset.phoneme_tokens, item.text);
-  const characters = chineseCharacters(item.text);
-  const wordList = characters.map((word, index) =>
-    tokens[index] === null ? { word } : { word, pron: [[tokens[index]]] }
-  );
+  const wordList = wordListForPhonemeTokens(item.text, asset.phoneme_tokens);
   return { refText: JSON.stringify({ wordList }), textMode: 1, targetText: item.text };
 }
 
@@ -872,75 +893,20 @@ async function completeLiteracyCharacter(childId, literacyCharacterId, hasCharac
   if (hasCharacterAudioPointRead !== undefined && typeof hasCharacterAudioPointRead !== 'boolean') {
     throw new HttpError(400, 'hasCharacterAudioPointRead 必须是布尔值');
   }
-  const tasks = await supabase(
-    `child_literacy_characters?id=eq.${encodeURIComponent(literacyCharacterId)}&child_id=eq.${encodeURIComponent(childId)}&select=id,family_id,child_id,character,character_audio_url,character_audio_version,character_audio_hash,words,sentences`
-  );
-  const task = tasks[0];
-  if (!task) throw new HttpError(404, '未找到该识字任务');
-
   // 旧版客户端没有该字段，为避免它们在函数先发布时改变既有行为，仍按“点读过”处理。
   const shouldRecognize = hasCharacterAudioPointRead !== false;
-  if (shouldRecognize) {
-    // 由服务端复制教学内容，客户端不能篡改已认识字的字、词、句。
-    await supabase(
-      'recognized_characters?on_conflict=child_id,character',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' },
-        body: JSON.stringify({
-          child_id: childId,
-          family_id: task.family_id,
-          character: task.character,
-          // 主字音频独立存列，必须与 words / sentences 内的音频元数据一起转入复习卡。
-          character_audio_url: task.character_audio_url,
-          character_audio_version: task.character_audio_version,
-          character_audio_hash: task.character_audio_hash,
-          words: task.words,
-          sentences: task.sentences,
-          source: 'system',
-          // 归档时据此精确清理原任务的字、词、句音频，不能按文字全局匹配。
-          source_literacy_character_id: task.id
-        })
-      }
-    );
-    const recognized = await supabase(
-      `recognized_characters?child_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(task.character)}&select=id&limit=1`
-    );
-    if (recognized?.[0]?.id) {
-      await supabase('rpc/migrate_literacy_phonetic_assets', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ p_pending_character_id: task.id, p_recognized_character_id: recognized[0].id })
-      });
-    }
-  } else {
-    // 未点读主字时不创建复习卡，整字完成后直接幂等写入孩子的字库。
-    await supabase(
-      'known_characters?on_conflict=user_id,character',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' },
-        body: JSON.stringify({ user_id: childId, character: task.character, learned_at: new Date().toISOString() })
-      }
-    );
-    await supabase('rpc/delete_literacy_phonetic_assets', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ p_content_source: 'pending', p_literacy_character_id: task.id })
-    });
-  }
-  // 仅首次完成时记录学会时间。星星和“已读/未读”均只保存在孩子端当天本地，
-  // 不再写入主表的 read_status/read_date 字段。
-  const completedAt = new Date();
-  await supabase(
-    `child_literacy_characters?id=eq.${encodeURIComponent(task.id)}&child_id=eq.${encodeURIComponent(childId)}&learned_at=is.null`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-      body: JSON.stringify({
-        learned_at: completedAt.toISOString()
-      })
-    }
-  );
-  return { character: task.character, recognized: shouldRecognize };
+  // 主表更新及 pending 资产的迁移/清理都由一个数据库 RPC 提交，网络失败时不会
+  // 出现“已认识记录已创建但音素仍留在待认识任务”的中间状态。
+  const completed = await supabase('rpc/complete_literacy_character_with_phonetic_assets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      p_child_id: childId,
+      p_literacy_character_id: literacyCharacterId,
+      p_has_character_audio_point_read: shouldRecognize
+    })
+  });
+  return completed || { recognized: shouldRecognize };
 }
 
 /**
@@ -951,7 +917,7 @@ async function archiveRecognizedCharacter(childId, recognizedCharacterId) {
   if (typeof recognizedCharacterId !== 'string' || !recognizedCharacterId.trim()) {
     throw new HttpError(400, 'recognizedCharacterId 必填');
   }
-  const result = await supabase('rpc/archive_recognized_character', {
+  const result = await supabase('rpc/archive_recognized_character_with_phonetic_assets', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -959,18 +925,20 @@ async function archiveRecognizedCharacter(childId, recognizedCharacterId) {
       p_recognized_character_id: recognizedCharacterId
     })
   });
-  // 音频对象仍由独立清理器删除，但字库不需要朗读评测资产，必须在存库链路中
-  // 立即清空。重复调用时 DELETE 是幂等的。
-  await supabase('rpc/delete_literacy_phonetic_assets', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ p_content_source: 'recognized', p_literacy_character_id: recognizedCharacterId })
-  });
   return result || { archived: true };
 }
 
 async function handler(event) {
-  const childId = await authenticatedChild(event);
   const body = requestBody(event);
+  // 后台回填只访问内部 service_role 队列，不读取或修改任何单个孩子的业务数据。
+  // 必须先匹配独立密钥；不要将此分支放到普通 JWT 鉴权之后，否则定时任务仍无法调用。
+  if (body.action === 'run_phonetic_backfill') {
+    requirePhoneticBackfillKey(event);
+    const generated = await generatePhoneticAssets(body.limit);
+    console.info('音素资产后台回填完成一批', generated);
+    return response(200, { generated });
+  }
+  const childId = await authenticatedChild(event);
   if (body.action === 'issue_credentials') {
     const sts = await issueStsCredentials();
     return response(200, {
@@ -1087,5 +1055,7 @@ exports.main_handler = async (event) => {
 exports._private = {
   triggerNewLiteracyTaskAudio,
   phonemesForText,
-  normalizePhonemeTokens
+  normalizePhonemeTokens,
+  wordListForPhonemeTokens,
+  requirePhoneticBackfillKey
 };

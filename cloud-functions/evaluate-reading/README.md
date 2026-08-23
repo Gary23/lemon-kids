@@ -35,7 +35,10 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-本次部署包为 `evaluate-reading-web-20260823-phonetic-assets.zip`。部署前需在既有认字迁移之后审查并执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`；它会创建音素资产队列并为历史词句补建 `pending` 资产。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+当前部署包为 `evaluate-reading-web-20260823-phonetic-lifecycle-atomic.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`；后者将待认识完成与已认识存库的音素资产迁移/清理合并为原子 RPC。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+
+待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
+[`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
 
 部署后的验收：在认字端完成一次“智能添加识字”并提交；`evaluate-reading` 日志不应出现
 `AccessDenied` 或 `UnauthorizedOperation`，`generate-literacy-audio` 应随即收到异步调用，待其执行

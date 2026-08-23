@@ -6,10 +6,11 @@
 
 音素资产用于在腾讯 `TEXT_MODE=1` 中锁定多音字读音。例如“组长”的“长”必须按 `zhang` 评测，读成 `chang` 必须判错；不启用腾讯声调检测，因此孩子不会因声调差异被判错。
 
-## 实施状态（2026-08-23）
+## 实施状态（2026-08-24）
 
-云函数部署包 `evaluate-reading-web-20260823-phonetic-assets.zip` 与 Supabase
-迁移 `20260823_literacy_phonetic_assets.sql` 均已部署/执行。以下状态以当前代码、
+云函数部署包 `evaluate-reading-web-20260823-phonetic-lifecycle-atomic.zip` 与 Supabase
+迁移 `20260823_literacy_phonetic_assets.sql`、
+`20260823_literacy_phonetic_asset_lifecycle_atomic.sql` 均已部署/执行。以下状态以当前代码、
 部署包及迁移后的数据库核验结果为准。
 
 ### 已完成
@@ -23,7 +24,8 @@
 - [x] `prepare_evaluation` 仅从 `ready` 资产组装腾讯 `TEXT_MODE=1` 的 `wordList`；未就绪时
   返回“正在准备发音”，不会回退到 `TEXT_MODE=0`。
 - [x] Android 已删除预览、提交和本地评测中的业务 `pinyins`、本地 `RefText` 拼装、统一补一声
-  与 `F_TDET=false`；词句朗读前改为调用 `prepare_evaluation`。
+  与 `F_TDET=false`；词句朗读前改为调用 `prepare_evaluation`。Debug APK 已安装到当前连接的
+  `BZT3_AL00` 平板，待进行下列真机验收。
 - [x] 云函数单元测试已覆盖“组长/长城”多音字、轻声与人工音素格式校验；部署 ZIP 已按根目录
   结构核验，函数 README 已更新部署包名称。
 - [x] 迁移后已核验历史资产入队：待认识词 340 条、待认识句 122 条、已认识词 75 条、已认识句
@@ -31,17 +33,23 @@
 
 ### 未完成或待验收
 
-- [ ] 上述 563 条历史 `pending` 资产尚未完成回填；需通过受控 `generate_phonetic_assets` 调用或
-  定时任务持续处理，并观察 `ready`、`failed` 及腾讯 `4001`、`4111`、`4113` 日志。
-- [ ] “我的 → 待认识的字”音素详情弹层尚未实现。服务端已有 `get_phonetic_assets`、
-  `save_phonetic_asset` 接口，但 Android 尚未提供词句只读展示、数字拼音编辑和保存交互。
-- [ ] 待认识转已认识、待认识直接存入字库、已认识存入字库的资产迁移/清理目前由云函数串行调用
-  RPC；尚未与主业务写入合并为单一数据库事务。
-- [ ] 尚缺 `prepare_evaluation` 的 `wordList` 组装及资产迁移/清理的数据库 RPC 合约测试。
+- [x] 上述 563 条历史音素资产已通过受控后台回填完成：`ready=563`、`failed=0`。
+  仍需在真机验收时观察腾讯 `4001`、`4111`、`4113` 日志。
+- [x] “我的 → 待认识的字”音素详情弹层已实现：点击主字可读取词句音素资产；词句保持只读，
+  可逐字编辑并保存腾讯数字拼音，轻声位置显示“腾讯不支持指定轻声”，客户端与服务端均会校验格式。
+- [x] 待认识转已认识、待认识直接存入字库、已认识存入字库已改为原子 RPC；
+  `20260823_literacy_phonetic_asset_lifecycle_atomic.sql` 与配套云函数部署包均已执行/发布，
+  可以进入生产环境验收。
+- [x] 已补 `prepare_evaluation` 的 `wordList` 组装（含轻声省略 `pron`）及资产迁移/清理的数据库
+  RPC 合约测试。
+- [ ] 低频兜底事件函数 `generate-literacy-phonetics` 已部署并手动测试成功（当前队列为空，
+  `claimed=0`）；待确认 `literacy-phonetic-backfill-30min`（每 30 分钟）自动触发一次后，
+  `pending` 和可重试 `failed` 资产可持续自动处理。
 - [ ] 尚未完成腾讯 `TEXT_MODE=1` 真机验收，包括多音字错读、仅声调不同、轻声、已认识复习和
   存库清理资产等场景。
-- [ ] 历史词句 JSON 中的 `pinyins` 字段仍保留，需待历史资产回填、真机验收完成且旧客户端淘汰后
-  再执行物理清理迁移。
+- [x] 旧客户端已淘汰；历史词句 JSON 的 `pinyins` 已由
+  `20260823_literacy_purge_legacy_example_pinyins.sql` 物理清理并核验完成：
+  `pending_words`、`pending_sentences`、`recognized_words`、`recognized_sentences` 均为 `0`。
 
 ## 已确认的产品规则
 
@@ -98,7 +106,8 @@
 1. DeepSeek 只返回词、句文字。
 2. 家长可在预览阶段编辑词、句并提交。
 3. 服务端在同一事务内写入待认识字词句，并为每个词、句创建一条 `pending` 音素资产。
-4. 成功写库后立即异步触发音素生成器；定时任务还会扫描并领取所有 `pending` 或可重试 `failed` 资产。
+4. 成功写库后立即在服务端生成本次任务的音素；独立事件函数 `generate-literacy-phonetics` 每 30 分钟
+   扫描并领取剩余的 `pending` 或可重试 `failed` 资产，作为低频兜底。
 
 生成器使用词组级拼音词典（Node.js 纯 JavaScript 依赖，例如 `pinyin-pro`），对完整词句生成数字拼音：
 

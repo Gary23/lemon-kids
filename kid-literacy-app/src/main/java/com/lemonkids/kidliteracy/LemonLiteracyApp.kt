@@ -131,6 +131,8 @@ import com.lemonkids.kidliteracy.ui.theme.Wheat
 import com.lemonkids.kidliteracy.ui.theme.WheatLight
 import com.lemonkids.kidliteracy.feature.library.LibraryViewModel
 import com.lemonkids.kidliteracy.feature.pending.PendingCharactersViewModel
+import com.lemonkids.kidliteracy.feature.pending.PendingPhoneticDetail
+import com.lemonkids.kidliteracy.feature.pending.PhoneticAsset
 import com.lemonkids.kidliteracy.feature.home.LiteracyHomeViewModel
 import com.lemonkids.kidliteracy.feature.home.LiteracyCharacterGroup
 import com.lemonkids.kidliteracy.feature.home.DailyLiteracyTaskSnapshotStore
@@ -2655,6 +2657,41 @@ private fun PendingCharactersScreen(
 
     LaunchedEffect(userId) { viewModel.load(userId) }
 
+    if (state.isLoadingPhonetics) {
+        Dialog(onDismissRequest = viewModel::dismissPhonetics) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Sky, strokeWidth = 2.dp)
+                    Text("正在加载发音标注…", color = Ink, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+    state.phoneticDetail?.let { detail ->
+        PendingPhoneticDetailDialog(
+            detail = detail,
+            savingAssetId = state.savingAssetId,
+            errorMessage = state.phoneticErrorMessage,
+            onDismiss = viewModel::dismissPhonetics,
+            onSave = viewModel::savePhoneticAsset
+        )
+    }
+    state.phoneticErrorMessage?.takeIf { state.phoneticDetail == null && !state.isLoadingPhonetics }?.let { message ->
+        Dialog(onDismissRequest = viewModel::dismissPhonetics) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("无法加载发音标注", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text(message, color = EvaluationErrorRed)
+                    Button(onClick = viewModel::dismissPhonetics, modifier = Modifier.fillMaxWidth()) { Text("知道了") }
+                }
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
         BackHeader("待认识的字", "这些汉字正等着和你见面", onBack)
         Spacer(Modifier.height(15.dp))
@@ -2685,15 +2722,17 @@ private fun PendingCharactersScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp)
                 ) {
-                    items(state.characters, key = { it }) { character ->
+                    items(state.characters, key = { it.id }) { character ->
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = Color.White,
                             border = androidx.compose.foundation.BorderStroke(1.dp, Line),
-                            modifier = Modifier.aspectRatio(1f)
+                            modifier = Modifier
+                                .aspectRatio(1f)
+                                .clickable { viewModel.showPhonetics(character) }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Text(character, fontSize = 28.sp, color = Ink, fontWeight = FontWeight.ExtraBold)
+                                Text(character.character, fontSize = 28.sp, color = Ink, fontWeight = FontWeight.ExtraBold)
                             }
                         }
                     }
@@ -2705,6 +2744,128 @@ private fun PendingCharactersScreen(
                     textAlign = TextAlign.Center,
                     fontSize = 13.sp
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingPhoneticDetailDialog(
+    detail: PendingPhoneticDetail,
+    savingAssetId: String?,
+    errorMessage: String?,
+    onDismiss: () -> Unit,
+    onSave: (PhoneticAsset, List<String?>) -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Card(
+            modifier = Modifier.fillMaxWidth(.94f).fillMaxHeight(.9f).widthIn(max = 760.dp).padding(12.dp),
+            shape = RoundedCornerShape(28.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White)
+        ) {
+            Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${detail.character.character} 的发音标注", style = MaterialTheme.typography.titleLarge, color = Ink, fontWeight = FontWeight.ExtraBold)
+                        Text("词句内容只读；可修正腾讯使用的数字拼音", color = Color(0xFF748184), fontSize = 13.sp)
+                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "关闭") }
+                }
+                errorMessage?.let { Text(it, color = EvaluationErrorRed, fontSize = 13.sp) }
+                if (detail.assets.isEmpty()) {
+                    EmptyContent("暂时没有发音标注", "词句保存后会自动准备，请稍后再试。", "🔤")
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 4.dp)
+                    ) {
+                        items(detail.assets, key = { it.id }) { asset ->
+                            PendingPhoneticAssetCard(
+                                asset = asset,
+                                isSaving = savingAssetId == asset.id,
+                                onSave = { tokens -> onSave(asset, tokens) }
+                            )
+                        }
+                    }
+                }
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F3F2), contentColor = Ink),
+                    shape = RoundedCornerShape(17.dp)
+                ) { Text("关闭") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingPhoneticAssetCard(
+    asset: PhoneticAsset,
+    isSaving: Boolean,
+    onSave: (List<String?>) -> Unit
+) {
+    val characters = remember(asset.text) { asset.text.filter { it in '\u4E00'..'\u9FFF' }.map(Char::toString) }
+    val initialTokens = remember(asset.id, asset.tokens, characters) {
+        if (asset.tokens.size == characters.size) asset.tokens else List(characters.size) { "" }
+    }
+    val drafts = remember(asset.id, initialTokens) { mutableStateListOf<String?>().also { it.addAll(initialTokens) } }
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFFFFFEF9),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Line),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (asset.itemType == "word") "词语" else "句子", color = Leaf, fontWeight = FontWeight.ExtraBold)
+                Spacer(Modifier.width(8.dp))
+                Text(asset.text, color = Ink, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(
+                    when (asset.status) {
+                        "ready" -> "已就绪"
+                        "failed" -> "生成失败"
+                        else -> "正在准备"
+                    },
+                    color = if (asset.status == "failed") EvaluationErrorRed else Color(0xFF748184),
+                    fontSize = 12.sp
+                )
+            }
+            asset.lastError?.let { Text("自动生成：$it", color = EvaluationErrorRed, fontSize = 12.sp) }
+            if (characters.isEmpty()) {
+                Text("此内容没有可编辑的汉字", color = EvaluationErrorRed, fontSize = 13.sp)
+            } else {
+                characters.forEachIndexed { index, character ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Surface(shape = CircleShape, color = WheatLight, modifier = Modifier.size(32.dp)) {
+                            Box(contentAlignment = Alignment.Center) { Text(character, color = Ink, fontWeight = FontWeight.ExtraBold) }
+                        }
+                        if (drafts[index] == null) {
+                            Text("腾讯不支持指定轻声", color = Color(0xFF748184), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        } else {
+                            OutlinedTextField(
+                                value = drafts[index].orEmpty(),
+                                onValueChange = { drafts[index] = it.lowercase(Locale.ROOT).trim() },
+                                enabled = !isSaving,
+                                singleLine = true,
+                                label = { Text("数字拼音") },
+                                placeholder = { Text("例如 zhang3") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+                Button(
+                    onClick = { onSave(drafts.toList()) },
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Sky),
+                    shape = RoundedCornerShape(13.dp)
+                ) {
+                    if (isSaving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("保存发音标注")
+                }
             }
         }
     }
