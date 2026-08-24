@@ -18,7 +18,9 @@ import javax.inject.Inject
 
 data class LiteracyHomeUiState(
     val isLoading: Boolean = true,
-    val groups: List<LiteracyCharacterGroup> = emptyList()
+    val groups: List<LiteracyCharacterGroup> = emptyList(),
+    /** 每次成功刷新首页时递增，用于使仅内存的评测缓存准确失效。 */
+    val dataVersion: Long = 0
 )
 
 data class LiteracyCharacterGroup(
@@ -78,11 +80,10 @@ class LiteracyHomeViewModel @Inject constructor(
                 )
                 _uiState.value = LiteracyHomeUiState(
                     isLoading = false,
-                    groups = recognized
-                        .getOrNull()
-                        .orEmpty()
-                        .toKnownGroups() +
-                        todayTask?.toLearningGroup().orEmpty()
+                    dataVersion = _uiState.value.dataVersion + 1,
+                    // 新字优先：孩子进入首页后先看到当天待认识的字，再看到复习字。
+                    groups = todayTask?.toLearningGroup().orEmpty() +
+                        recognized.getOrNull().orEmpty().toKnownGroups()
                 )
             } else {
                 // 两个数据源都不可用时，保留已展示的数据，避免请求失败清空首页。

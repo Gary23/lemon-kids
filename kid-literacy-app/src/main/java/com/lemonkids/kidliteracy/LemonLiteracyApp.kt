@@ -183,7 +183,7 @@ import com.tencent.cloud.soe.listener.TAIListener
 @HiltAndroidApp
 class LemonLiteracyApplication : android.app.Application()
 
-private enum class Page { HOME, LEARN, PROFILE, KNOWN, PENDING, LIBRARY, HELPED }
+private enum class Page { HOME, PROFILE, KNOWN, PENDING, LIBRARY, HELPED }
 
 /** ISO 216 A4 纸张的宽高比：1 : √2。 */
 private const val A4_PAPER_WIDTH_TO_HEIGHT = 0.70710677f
@@ -198,6 +198,12 @@ private data class Lesson(
     val completedCharacterIds: Set<String> = emptySet(),
     /** 与 [characters] 一一对应，用于把完成状态准确映射到首页字格。 */
     val characterIds: List<String> = emptyList()
+)
+
+/** 首页中被点开的单个字；保留其所在分组以获得已认识字的朗读次数规则。 */
+private data class SelectedStudyCharacter(
+    val group: LiteracyCharacterGroup,
+    val characterId: String
 )
 
 private data class LiteracyCard(
@@ -380,7 +386,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
     var page by remember { mutableStateOf(Page.HOME) }
     var recordingTarget by remember { mutableStateOf<ReadingTarget?>(null) }
     var pendingRecordingTarget by remember { mutableStateOf<ReadingTarget?>(null) }
-    var selectedCharacterGroup by remember { mutableStateOf<LiteracyCharacterGroup?>(null) }
+    var selectedStudyCharacter by remember { mutableStateOf<SelectedStudyCharacter?>(null) }
     var selectedRecognizedCharacter by remember { mutableStateOf<RecognizedCharacter?>(null) }
     var showGenerateLiteracyTasksDialog by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -397,7 +403,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
 
     fun isTaskCharacterCompleted(literacyCharacterId: String): Boolean =
         literacyCharacterId in completedTaskCharacterIds ||
-            literacyCharacterId in selectedCharacterGroup?.completedCharacterIds.orEmpty()
+            homeState.groups.any { literacyCharacterId in it.completedCharacterIds }
 
     fun completeCharacterIfReady(character: ChildLiteracyCharacter) {
         if (!character.isPracticeComplete(practiceProgress) ||
@@ -413,6 +419,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                 .onSuccess {
                     completedTaskCharacterIds = completedTaskCharacterIds + character.id
                     completingTaskCharacterIds = completingTaskCharacterIds - character.id
+                    readingEvaluationViewModel.invalidateEvaluationCacheForCharacter(character.id)
                     dailyTaskSnapshotStore.markCompleted(userId, character.id)
                     practiceProgressStore.clearCharacter(character.id)
                     practiceProgress = practiceProgressStore.snapshot()
@@ -434,8 +441,8 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
         val updatedCorrectReadings = practiceProgressStore.recordCorrectReadings(target, correctReadings)
         practiceProgress = practiceProgressStore.snapshot()
         if (target.contentSource == ReadingContentSource.TASK) {
-            selectedCharacterGroup?.learningCharacters
-                ?.firstOrNull { it.id == target.literacyCharacterId }
+            homeState.groups.flatMap { it.learningCharacters }
+                .firstOrNull { it.id == target.literacyCharacterId }
                 ?.let(::completeCharacterIfReady)
         }
         return updatedCorrectReadings
@@ -544,8 +551,18 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
         }
     }
 
-    LaunchedEffect(page, userId) {
-        if (page == Page.HOME) homeViewModel.load(userId)
+    LaunchedEffect(userId) {
+        homeViewModel.load(userId)
+    }
+    LaunchedEffect(userId, homeState.dataVersion) {
+        val batchId = "${homeState.dataVersion}:" + homeState.groups.joinToString(separator = "#") { group ->
+            listOf(group.type.name, group.groupNumber.toString(), group.characters.joinToString("")).joinToString(":")
+        }
+        if (homeState.groups.isNotEmpty()) {
+            readingEvaluationViewModel.beginDailyEvaluationCache(userId, batchId)
+            // 首页静默预热一份可供所有项目复用的短期腾讯凭证。
+            readingEvaluationViewModel.beginPageCredentials()
+        }
     }
 
     val showNav = page == Page.HOME || page == Page.PROFILE
@@ -562,20 +579,15 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                     groups = homeState.groups,
                     isLoading = homeState.isLoading,
                     practiceProgress = practiceProgress,
-                    onLesson = {
-                        selectedCharacterGroup = it
-                        page = Page.LEARN
+                    onCharacter = { group, index ->
+                        val characterId = if (group.isKnown) {
+                            group.recognizedCharacters.getOrNull(index)?.id
+                        } else {
+                            group.learningCharacters.getOrNull(index)?.id
+                        }
+                        characterId?.let { selectedStudyCharacter = SelectedStudyCharacter(group, it) }
                     }
                 )
-                Page.LEARN -> selectedCharacterGroup?.let { group ->
-                    LearnScreen(
-                        group = group,
-                        onBack = { page = Page.HOME },
-                        onRecord = ::openReading,
-                        practiceProgress = practiceProgress,
-                        completedTaskCharacterIds = completedTaskCharacterIds + group.completedCharacterIds
-                    )
-                }
                 Page.PROFILE -> ProfileScreen(
                     childName = childName,
                     avatarUrl = avatarUrl,
@@ -639,6 +651,44 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
             },
             onCorrectReadings = ::recordCorrectReadings
         )
+    }
+    selectedStudyCharacter?.let { selection ->
+        val group = selection.group
+        val card = if (group.isKnown) {
+            group.recognizedCharacters
+                .firstOrNull { it.id == selection.characterId }
+                ?.toLiteracyCard(practiceProgress, group.recognizedCharacterRequiredReadings)
+        } else {
+            group.learningCharacters
+                .firstOrNull { it.id == selection.characterId }
+                ?.toLiteracyCard(
+                    practiceProgress,
+                    selection.characterId in (completedTaskCharacterIds + group.completedCharacterIds)
+                )
+        }
+        card?.let {
+            CharacterStudyDialog(
+                card = it,
+                onDismiss = {
+                    literacyAudioPlayer.stop()
+                    tts.stop()
+                    pendingSpeech = null
+                    selectedStudyCharacter = null
+                },
+                onSpeak = ::playPointReading,
+                onStopPlayback = {
+                    literacyAudioPlayer.stop()
+                    tts.stop()
+                    pendingSpeech = null
+                },
+                onCharacterAudioPointRead = { pointReadTarget ->
+                    if (pointReadTarget.contentSource == ReadingContentSource.TASK && pointReadTarget.targetType == "character") {
+                        practiceProgressStore.markCharacterAudioPointRead(pointReadTarget.literacyCharacterId)
+                    }
+                },
+                onCorrectReadings = ::recordCorrectReadings
+            )
+        }
     }
     selectedRecognizedCharacter?.let { character ->
         CharacterDetailDialog(
@@ -714,7 +764,7 @@ private fun HomeScreen(
     groups: List<LiteracyCharacterGroup>,
     isLoading: Boolean,
     practiceProgress: Map<String, Int>,
-    onLesson: (LiteracyCharacterGroup) -> Unit
+    onCharacter: (LiteracyCharacterGroup, Int) -> Unit
 ) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -746,7 +796,7 @@ private fun HomeScreen(
                 items(groups, key = { "${it.type}-${it.groupNumber}" }) { group ->
                     LessonCard(
                         lesson = group.toLesson(practiceProgress),
-                        onClick = { onLesson(group) }
+                        onCharacterClick = { index -> onCharacter(group, index) }
                     )
                 }
             }
@@ -820,11 +870,11 @@ private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) 
 )
 
 @Composable
-private fun LessonCard(lesson: Lesson, onClick: () -> Unit) {
+private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
     val background = if (lesson.known) LeafLight else CoralLight
     val accent = if (lesson.known) Leaf else Coral
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = background)
     ) {
@@ -847,7 +897,9 @@ private fun LessonCard(lesson: Lesson, onClick: () -> Unit) {
                                 } else {
                                     null
                                 },
-                                modifier = Modifier.size(characterCellSize)
+                                modifier = Modifier
+                                    .size(characterCellSize)
+                                    .clickable { onCharacterClick(index) }
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Text(
@@ -863,7 +915,7 @@ private fun LessonCard(lesson: Lesson, onClick: () -> Unit) {
             }
             Icon(
                 imageVector = Icons.Filled.KeyboardArrowRight,
-                contentDescription = "进入认字页",
+                contentDescription = "打开汉字学习弹层",
                 tint = accent,
                 modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
             )
@@ -1054,8 +1106,25 @@ private fun RecognizedCharacter.toLiteracyCard(
             )
         }
     },
-    // 已认识字用于复习，刻意不展示或评测句子，以缩短单次复习时间。
-    sentences = emptyList()
+    // 首页统一学习弹层始终展示字、词、句；已认识字的句子沿用一次朗读规则。
+    sentences = sentences.mapIndexedNotNull { index, example ->
+        example.text.takeIf { it.isNotBlank() }?.let { text ->
+            learningContent(
+                ReadingTarget(
+                    id,
+                    "sentence",
+                    text,
+                    audioUrl = example.audioUrl,
+                    audioVersion = example.audioVersion,
+                    itemOrder = index,
+                    sentenceText = text,
+                    contentSource = ReadingContentSource.RECOGNIZED
+                ),
+                practiceProgress,
+                completed = false
+            )
+        }
+    }
 )
 
 /** 已认识字复习只要求主字和词语满星，且使用其自身的一星词语规则。 */
@@ -1206,6 +1275,159 @@ private fun LearningSection(
     }
 }
 
+/**
+ * 首页单字学习弹层。字、词、句始终同屏纵向呈现；被点击的项目在原位置展开朗读会话，
+ * 所有其他项目会暂时锁定，确保腾讯录音 SDK 同一时间只服务一个项目。
+ */
+@Composable
+private fun CharacterStudyDialog(
+    card: LiteracyCard,
+    onDismiss: () -> Unit,
+    onSpeak: (ReadingTarget, String) -> Unit,
+    onStopPlayback: () -> Unit,
+    onCharacterAudioPointRead: (ReadingTarget) -> Unit,
+    onCorrectReadings: (ReadingTarget, Int) -> Int
+) {
+    val context = LocalContext.current
+    var activeTarget by remember(card.literacyCharacterId) { mutableStateOf<ReadingTarget?>(null) }
+    var pendingTarget by remember(card.literacyCharacterId) { mutableStateOf<ReadingTarget?>(null) }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        activeTarget = if (granted) pendingTarget else null
+        pendingTarget = null
+    }
+    val allContents = remember(card) { listOf(card.character) + card.terms + card.sentences }
+
+    fun start(content: LearningContent) {
+        if (activeTarget != null) return
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            activeTarget = content.target
+        } else {
+            pendingTarget = content.target
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    Dialog(onDismissRequest = {
+        if (activeTarget == null) onDismiss()
+    }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Card(
+            modifier = Modifier.fillMaxWidth(.9f).fillMaxHeight(.9f),
+            shape = RoundedCornerShape(30.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White)
+        ) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 16.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${card.word}的朗读练习", style = MaterialTheme.typography.titleLarge, color = Ink)
+                        Text("长按汉字可听正确读音", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF7C898D))
+                    }
+                    IconButton(onClick = { if (activeTarget == null) onDismiss() }, enabled = activeTarget == null) {
+                        Icon(Icons.Filled.Close, contentDescription = "关闭学习弹层", tint = Color(0xFF748185))
+                    }
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = Line)
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(allContents, key = { it.target.practiceProgressKey() }) { content ->
+                        val isActive = activeTarget?.practiceProgressKey() == content.target.practiceProgressKey()
+                        StudyContentRow(
+                            content = content,
+                            active = isActive,
+                            otherRecordingActive = activeTarget != null && !isActive,
+                            onStart = { start(content) }
+                        )
+                        if (isActive) {
+                            Spacer(Modifier.height(8.dp))
+                            ReadingDialog(
+                                target = content.target,
+                                correctReadingCount = content.correctReadings,
+                                onDismiss = { activeTarget = null },
+                                onSpeak = onSpeak,
+                                onStopPlayback = onStopPlayback,
+                                onCharacterAudioPointRead = onCharacterAudioPointRead,
+                                onCorrectReadings = onCorrectReadings,
+                                inline = true,
+                                startImmediately = true
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 词句音素参数可能较慢；弹层一出现就并发预取，孩子读主字时通常已准备完成。
+    val evaluationViewModel: ReadingEvaluationViewModel = hiltViewModel()
+    LaunchedEffect(card.literacyCharacterId, card.terms, card.sentences) {
+        evaluationViewModel.prefetchWordAndSentenceEvaluations(
+            (card.terms + card.sentences).map { it.target }
+        )
+    }
+}
+
+@Composable
+private fun StudyContentRow(
+    content: LearningContent,
+    active: Boolean,
+    otherRecordingActive: Boolean,
+    onStart: () -> Unit
+) {
+    val accent = when {
+        active -> Coral
+        content.learned -> Leaf
+        else -> Sky
+    }
+    val background = when {
+        active -> CoralLight
+        content.learned -> LeafLight
+        else -> SkyLight
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = background.copy(alpha = .58f),
+        border = androidx.compose.foundation.BorderStroke(if (active) 2.dp else 1.dp, accent.copy(alpha = .6f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "★".repeat(content.correctReadings) + "☆".repeat(content.requiredReadings - content.correctReadings),
+                    color = Wheat,
+                    fontSize = 23.sp
+                )
+                Text("${content.correctReadings}/${content.requiredReadings}", color = Color(0xFF7F8B8D), fontSize = 12.sp)
+            }
+            Text(
+                content.text,
+                modifier = Modifier.weight(1f),
+                color = Ink,
+                fontWeight = if (content.target.targetType == "character") FontWeight.ExtraBold else FontWeight.Medium,
+                fontSize = when (content.target.targetType) {
+                    "character" -> 38.sp
+                    "word" -> 20.sp
+                    else -> 18.sp
+                },
+                maxLines = if (content.target.targetType == "sentence") 4 else 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Button(
+                onClick = onStart,
+                enabled = !otherRecordingActive && !active,
+                colors = ButtonDefaults.buttonColors(containerColor = accent),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text(if (active) "朗读中" else if (content.learned) "再读一次" else if (content.target.targetType == "character") "开始朗读" else "开始")
+            }
+        }
+    }
+}
+
 @Composable
 private fun ReadingDialog(
     target: ReadingTarget,
@@ -1214,7 +1436,9 @@ private fun ReadingDialog(
     onSpeak: (ReadingTarget, String) -> Unit,
     onStopPlayback: () -> Unit,
     onCharacterAudioPointRead: (ReadingTarget) -> Unit,
-    onCorrectReadings: (ReadingTarget, Int) -> Int
+    onCorrectReadings: (ReadingTarget, Int) -> Int,
+    inline: Boolean = false,
+    startImmediately: Boolean = false
 ) {
     val context = LocalContext.current
     val evaluationViewModel: ReadingEvaluationViewModel = hiltViewModel()
@@ -1408,8 +1632,14 @@ private fun ReadingDialog(
                 return@launch
             }
             sessions[currentWordIndex] = credentials
-            val repeatCount = if (readingTarget.targetType == "character") characterReadingsNeeded() else 1
-            evaluationViewModel.prepareEvaluation(readingTarget, repeatCount)
+            val referenceResult = if (readingTarget.targetType == "character") {
+                // 主字是 TEXT_MODE=0，参考文本只与本轮尚需次数有关，无须等待云函数。
+                Result.success(evaluationViewModel.prepareCharacterEvaluation(readingTarget, characterReadingsNeeded()))
+            } else {
+                // 词句优先使用弹层打开时的当日内存预取；缓存未命中才正常请求。
+                evaluationViewModel.prepareCachedEvaluation(readingTarget)
+            }
+            referenceResult
                 .onSuccess { reference ->
                     startSdkEvaluation(credentials, readingTarget, currentWordIndex, reference)
                 }
@@ -1465,6 +1695,7 @@ private fun ReadingDialog(
                             } else {
                                 "准备好了，点击开始就可以朗读"
                             }
+                            if (startImmediately) startRecording()
                         }
                     }
                     .onFailure { error ->
@@ -1494,8 +1725,12 @@ private fun ReadingDialog(
     var pointReadCharacterIndex by remember(target) { mutableStateOf<Int?>(null) }
     // 手指按住内容时突出其所在的朗读区域，松手后立即还原。
     var isReadingContentPressed by remember(target) { mutableStateOf(false) }
-    Dialog(onDismissRequest = ::close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Card(modifier = Modifier.widthIn(max = 500.dp).padding(24.dp), shape = RoundedCornerShape(32.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+    ReadingDialogContainer(inline = inline, onDismissRequest = ::close) {
+        Card(
+            modifier = if (inline) Modifier.fillMaxWidth() else Modifier.widthIn(max = 500.dp).padding(24.dp),
+            shape = RoundedCornerShape(32.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White)
+        ) {
             Column(Modifier.padding(30.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     IconButton(onClick = ::close, enabled = !isWaitingForResult, colors = IconButtonDefaults.iconButtonColors(contentColor = Color(0xFF748185))) { Icon(Icons.Filled.Close, if (isWaitingForResult) "正在生成结果，请稍候" else "关闭") }
@@ -1595,6 +1830,21 @@ private fun ReadingDialog(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ReadingDialogContainer(
+    inline: Boolean,
+    onDismissRequest: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    if (inline) {
+        content()
+    } else {
+        Dialog(onDismissRequest = onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            content()
         }
     }
 }

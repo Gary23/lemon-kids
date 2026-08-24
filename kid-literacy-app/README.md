@@ -9,7 +9,7 @@ Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通
 ## AI 定位入口
 
 - 启动：`MainActivity.kt` → `LemonLiteracyApp()`。
-- 首页分组与学习页页面切换：`LemonLiteracyApp.kt`。
+- 首页分组、单字学习弹层与朗读交互：`LemonLiteracyApp.kt`。
 - 首页任务与已认识字加载：`feature/home/LiteracyHomeViewModel.kt`。
 - 待认识字全量展示：`feature/pending/PendingCharactersViewModel.kt`。
 - 字库状态与加载逻辑：`feature/library/LibraryViewModel.kt`。
@@ -22,7 +22,7 @@ Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通
 
 ## 技术边界
 
-字库已通过 `LibraryViewModel` 接入 Repository；认字首页通过 `LiteracyHomeViewModel` 读取真实任务。评测请求由 `ReadingEvaluationViewModel` 调用腾讯 SCF，APK 不保存腾讯长期密钥。`RECORD_AUDIO`、拒绝授权态与取消录音逻辑已接入；逐字评测结果解析以腾讯真机返回结构为准。
+字库已通过 `LibraryViewModel` 接入 Repository；认字首页通过 `LiteracyHomeViewModel` 读取真实任务，待认识字排在已认识字之前，点击单字打开统一的字、词、句学习弹层。评测请求由 `ReadingEvaluationViewModel` 调用腾讯 SCF，APK 不保存腾讯长期密钥：主字本地构造 `TEXT_MODE=0` 参考文本，词、句预取服务端音素参数并仅在当日内存中缓存。`RECORD_AUDIO`、拒绝授权态与取消录音逻辑已接入；逐字评测结果解析以腾讯真机返回结构为准。
 
 ## 登录会话恢复
 
