@@ -74,6 +74,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -130,6 +131,8 @@ import com.lemonkids.kidliteracy.ui.theme.Wheat
 import com.lemonkids.kidliteracy.ui.theme.WheatLight
 import com.lemonkids.kidliteracy.feature.library.LibraryViewModel
 import com.lemonkids.kidliteracy.feature.pending.PendingCharactersViewModel
+import com.lemonkids.kidliteracy.feature.pending.PendingPhoneticDetail
+import com.lemonkids.kidliteracy.feature.pending.PhoneticAsset
 import com.lemonkids.kidliteracy.feature.home.LiteracyHomeViewModel
 import com.lemonkids.kidliteracy.feature.home.LiteracyCharacterGroup
 import com.lemonkids.kidliteracy.feature.home.DailyLiteracyTaskSnapshotStore
@@ -144,6 +147,7 @@ import com.lemonkids.kidliteracy.feature.reading.GeneratedLiteracyExample
 import com.lemonkids.kidliteracy.feature.reading.LiteracyTasksPreview
 import com.lemonkids.kidliteracy.feature.reading.SavedLiteracyTasks
 import com.lemonkids.kidliteracy.feature.reading.TencentEvaluationCredentials
+import com.lemonkids.kidliteracy.feature.reading.PreparedEvaluation
 import com.lemonkids.kidliteracy.feature.reading.LiteracyPracticeProgressStore
 import com.lemonkids.kidliteracy.feature.reading.LiteracyAudioPlayer
 import com.lemonkids.kidliteracy.feature.reading.practiceProgressKey
@@ -242,6 +246,14 @@ fun LemonLiteracyApp(authViewModel: AuthViewModel = hiltViewModel()) {
 
     if (!authState.isFirstCheckComplete) {
         BindingLoadingScreen()
+        if (authState.requiresSessionRecovery) {
+            SessionRecoveryDialog(
+                isRecovering = authState.isRecoveringSession,
+                message = authState.sessionRecoveryMessage,
+                onRetryRefresh = authViewModel::retrySessionRefresh,
+                onRestoreWithBinding = authViewModel::restoreLiteracyBindingFromDialog
+            )
+        }
         return
     }
 
@@ -262,6 +274,89 @@ fun LemonLiteracyApp(authViewModel: AuthViewModel = hiltViewModel()) {
         avatarUrl = authState.currentUser?.avatarUrl,
         userId = authState.currentUser?.uid.orEmpty()
     )
+
+    // 放在应用根层且最后组合。Dialog 是独立窗口，能覆盖“智能添加识字”、朗读等
+    // 所有业务弹层，避免用户在会话不可用时继续提交其他请求。
+    if (authState.requiresSessionRecovery) {
+        SessionRecoveryDialog(
+            isRecovering = authState.isRecoveringSession,
+            message = authState.sessionRecoveryMessage,
+            onRetryRefresh = authViewModel::retrySessionRefresh,
+            onRestoreWithBinding = authViewModel::restoreLiteracyBindingFromDialog
+        )
+    }
+}
+
+@Composable
+private fun SessionRecoveryDialog(
+    isRecovering: Boolean,
+    message: String?,
+    onRetryRefresh: () -> Unit,
+    onRestoreWithBinding: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            shadowElevation = 20.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    "登录连接需要恢复",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Ink,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    "当前登录凭证未能刷新。请先重试；如果仍无法恢复，可使用本机已保存的绑定码静默重新登录。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF5E6A6E)
+                )
+                message?.let {
+                    Text(it, color = EvaluationErrorRed, fontSize = 13.sp)
+                }
+                if (isRecovering) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Sky)
+                        Text("正在恢复登录…", color = Ink, fontSize = 14.sp)
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onRetryRefresh,
+                        enabled = !isRecovering,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("重试刷新")
+                    }
+                    Button(
+                        onClick = onRestoreWithBinding,
+                        enabled = !isRecovering,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Sky)
+                    ) {
+                        Text("使用绑定码登录")
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -714,7 +809,10 @@ private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) 
     known = isKnown,
     characters = characters,
     completedCharacterIds = if (isKnown) {
-        recognizedCharacters.filter { it.isPracticeComplete(practiceProgress) }.map { it.id }.toSet()
+        recognizedCharacters
+            .filter { it.isPracticeComplete(practiceProgress, recognizedCharacterRequiredReadings) }
+            .map { it.id }
+            .toSet()
     } else {
         completedCharacterIds
     },
@@ -805,7 +903,12 @@ private fun LearnScreen(
     completedTaskCharacterIds: Set<String>
 ) {
     val cards = if (group.isKnown) {
-        group.recognizedCharacters.map { it.toLiteracyCard(practiceProgress) }
+        group.recognizedCharacters.map {
+            it.toLiteracyCard(
+                practiceProgress = practiceProgress,
+                characterRequiredReadings = group.recognizedCharacterRequiredReadings
+            )
+        }
     } else {
         group.learningCharacters.map { it.toLiteracyCard(practiceProgress, it.id in completedTaskCharacterIds) }
     }
@@ -912,29 +1015,40 @@ private fun ChildLiteracyCharacter.toLiteracyCard(
     ),
     terms = words.mapIndexedNotNull { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            learningContent(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, pinyins = example.pinyins), practiceProgress, completed)
+            learningContent(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text), practiceProgress, completed)
         }
     },
     sentences = sentences.mapIndexedNotNull { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            learningContent(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text, pinyins = example.pinyins), practiceProgress, completed)
+            learningContent(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text), practiceProgress, completed)
         }
     }
 )
 
-private fun RecognizedCharacter.toLiteracyCard(practiceProgress: Map<String, Int>) = LiteracyCard(
+private fun RecognizedCharacter.toLiteracyCard(
+    practiceProgress: Map<String, Int>,
+    characterRequiredReadings: Int = 3
+) = LiteracyCard(
     literacyCharacterId = id,
     word = character,
     contentSource = ReadingContentSource.RECOGNIZED,
     character = learningContent(
-        ReadingTarget(id, "character", character, audioUrl = characterAudioUrl, audioVersion = characterAudioVersion, contentSource = ReadingContentSource.RECOGNIZED),
+        ReadingTarget(
+            id,
+            "character",
+            character,
+            audioUrl = characterAudioUrl,
+            audioVersion = characterAudioVersion,
+            contentSource = ReadingContentSource.RECOGNIZED,
+            characterRequiredReadings = characterRequiredReadings
+        ),
         practiceProgress,
         completed = false
     ),
     terms = words.mapIndexedNotNull { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
             learningContent(
-                ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, pinyins = example.pinyins, contentSource = ReadingContentSource.RECOGNIZED),
+                ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, contentSource = ReadingContentSource.RECOGNIZED),
                 practiceProgress,
                 completed = false
             )
@@ -945,8 +1059,10 @@ private fun RecognizedCharacter.toLiteracyCard(practiceProgress: Map<String, Int
 )
 
 /** 已认识字复习只要求主字和词语满星，且使用其自身的一星词语规则。 */
-private fun RecognizedCharacter.isPracticeComplete(practiceProgress: Map<String, Int>): Boolean =
-    toLiteracyCard(practiceProgress).completed
+private fun RecognizedCharacter.isPracticeComplete(
+    practiceProgress: Map<String, Int>,
+    characterRequiredReadings: Int = 3
+): Boolean = toLiteracyCard(practiceProgress, characterRequiredReadings).completed
 
 private fun learningContent(
     target: ReadingTarget,
@@ -967,12 +1083,12 @@ private fun ChildLiteracyCharacter.practiceTargets(): List<ReadingTarget> = buil
     add(ReadingTarget(id, "character", character, audioUrl = characterAudioUrl, audioVersion = characterAudioVersion))
     words.forEachIndexed { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            add(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text, pinyins = example.pinyins))
+            add(ReadingTarget(id, "word", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, wordText = text))
         }
     }
     sentences.forEachIndexed { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
-            add(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text, pinyins = example.pinyins))
+            add(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text))
         }
     }
 }
@@ -1145,32 +1261,6 @@ private fun ReadingDialog(
             readingTarget.displayText
         }
 
-    fun evaluationReferenceFor(readingTarget: ReadingTarget, evaluationText: String): EvaluationReference {
-        // 认字题继续沿用原规则。只有词、句且拼音数量与汉字一一对应时，才切换到
-        // 腾讯的指定发音模式；历史内容没有拼音不会被误判为配置异常。
-        val pinyins = readingTarget.pinyins
-        val characters = evaluationText.filter { it.isChineseCharacter() }
-        if (
-            readingTarget.targetType == "character" ||
-            pinyins.size != characters.length ||
-            pinyins.any { !it.matches(Regex("[a-züv]+")) }
-        ) return EvaluationReference(evaluationText, 0)
-
-        var pinyinIndex = 0
-        val phoneticText = buildString {
-            evaluationText.forEach { character ->
-                if (character.isChineseCharacter()) {
-                    // 业务数据不维护声调；腾讯的发音描述格式仍要求一个调号，临时补
-                    // 一级调，并明确关闭 F_TDET，因此调号不会参与孩子的通过判定。
-                    append(character).append("{::pron{").append(pinyins[pinyinIndex++]).append("1}}")
-                } else {
-                    append(character)
-                }
-            }
-        }
-        return EvaluationReference(phoneticText, 1)
-    }
-
     fun cancelRecording() {
         evaluationAttemptId++
         controller?.cancelOralEvaluation()
@@ -1197,14 +1287,14 @@ private fun ReadingDialog(
 
     DisposableEffect(target) { onDispose { cancelRecording() } }
 
-    fun startSdkEvaluation(preparedSession: TencentEvaluationCredentials, readingTarget: ReadingTarget, wordIndex: Int) {
+    fun startSdkEvaluation(
+        preparedSession: TencentEvaluationCredentials,
+        readingTarget: ReadingTarget,
+        wordIndex: Int,
+        evaluationReference: PreparedEvaluation
+    ) {
         val attemptId = ++evaluationAttemptId
-        // 评测统一使用腾讯内置词典；在云函数发布前客户端也强制使用完整教学文本，
-        // 避免旧会话中遗留的 JSON 拼音参考文本继续触发 4113。
-        // 字的本轮参考文本按未点亮星数动态重复：初次为“花花花”，已完成两次后为“花”。
-        // 题库和本地进度始终只保存原始目标字“花”。词、句仍使用原始文本评测。
         val evaluationText = evaluationTextFor(readingTarget)
-        val evaluationReference = evaluationReferenceFor(readingTarget, evaluationText)
         val evaluationRefText = evaluationReference.refText
         // 仅记录教学文本与参考文本，不记录短期凭证，便于定位腾讯返回的 RefText 错误。
         android.util.Log.d(
@@ -1218,8 +1308,6 @@ private fun ReadingDialog(
             put(HttpParameterKey.SCORE_COEFF, 1.0)
             put(HttpParameterKey.SENTENCE_INFO_ENABLED, 1)
             put(HttpParameterKey.REF_TEXT, evaluationRefText)
-            // 发音描述中的临时调号只为满足腾讯格式要求；不检测声调，兼容轻声。
-            if (evaluationReference.textMode == 1) put("F_TDET", false)
         }
         val listener = object : TAIListener {
             override fun onMessage(msg: String) = Unit
@@ -1313,14 +1401,21 @@ private fun ReadingDialog(
         state = RecordingState.PREPARING
         message = "正在准备朗读…"
         scope.launch {
-            evaluationViewModel.credentialsForEvaluation()
-                .onSuccess { credentials ->
-                    sessions[currentWordIndex] = credentials
-                    startSdkEvaluation(credentials, wordTargets[currentWordIndex], currentWordIndex)
+            val readingTarget = wordTargets[currentWordIndex]
+            val credentials = evaluationViewModel.credentialsForEvaluation().getOrElse { error ->
+                state = RecordingState.ERROR
+                message = error.message ?: "评测准备失败，请重新开始"
+                return@launch
+            }
+            sessions[currentWordIndex] = credentials
+            val repeatCount = if (readingTarget.targetType == "character") characterReadingsNeeded() else 1
+            evaluationViewModel.prepareEvaluation(readingTarget, repeatCount)
+                .onSuccess { reference ->
+                    startSdkEvaluation(credentials, readingTarget, currentWordIndex, reference)
                 }
                 .onFailure { error ->
                     state = RecordingState.ERROR
-                    message = error.message ?: "评测准备失败，请重新开始"
+                    message = error.message ?: "正在准备发音，请稍后再试"
                 }
         }
     }
@@ -1549,7 +1644,7 @@ private fun PracticeProgressRating(
     Text(stars, color = Wheat, fontSize = 32.sp, letterSpacing = 3.sp)
     Text(
         when (evaluationSummary?.wrongCharacterCount) {
-            null -> if (hideRemainingReadingHint) "请连续朗读三次" else "读对 $requiredReadingCount 次，就能点亮全部星星"
+            null -> if (hideRemainingReadingHint) "请连续朗读 ${requiredReadingCount} 次" else "读对 $requiredReadingCount 次，就能点亮全部星星"
             0 -> if (correctReadingCount >= requiredReadingCount) {
                 "全部星星点亮啦！"
             } else if (hideRemainingReadingHint) {
@@ -1767,11 +1862,6 @@ private fun DialogCharacterText(
 }
 
 private fun Char.isChineseCharacter(): Boolean = this in '\u4E00'..'\u9FFF'
-
-private data class EvaluationReference(
-    val refText: String,
-    val textMode: Int
-)
 
 /**
  * SDK 回调的内容只保留在当前弹层。当前 TEXT_MODE=0 的实际回调中，错读时 MatchTag
@@ -2052,21 +2142,9 @@ private fun GenerateLiteracyTasksDialog(
                                         }
                                         errorMessage = null
                                     },
-                                    onWordsPinyinsChange = { pinyins ->
-                                        editableTasks = editableTasks.map {
-                                            if (it.character == task.character) it.copy(wordsPinyinsText = pinyins) else it
-                                        }
-                                        errorMessage = null
-                                    },
                                     onSentenceChange = { sentence ->
                                         editableTasks = editableTasks.map {
                                             if (it.character == task.character) it.copy(sentence = sentence) else it
-                                        }
-                                        errorMessage = null
-                                    },
-                                    onSentencePinyinsChange = { pinyins ->
-                                        editableTasks = editableTasks.map {
-                                            if (it.character == task.character) it.copy(sentencePinyinsText = pinyins) else it
                                         }
                                         errorMessage = null
                                     },
@@ -2098,9 +2176,7 @@ private fun GenerateLiteracyTasksDialog(
                                         EditableLiteracyTask(
                                             character = it.character,
                                             wordsText = it.words.joinToString("、") { example -> example.text },
-                                            wordsPinyinsText = it.words.joinToString("、") { example -> example.pinyins.joinToString(" ") },
-                                            sentence = it.sentence.text,
-                                            sentencePinyinsText = it.sentence.pinyins.joinToString(" ")
+                                            sentence = it.sentence.text
                                         )
                                     }
                                 } else {
@@ -2112,16 +2188,9 @@ private fun GenerateLiteracyTasksDialog(
                                     GeneratedLiteracyTask(
                                         character = it.character,
                                         words = it.wordsText.split(Regex("[、，,\\s]+")).filter(String::isNotBlank).mapIndexed { index, text ->
-                                            GeneratedLiteracyExample(
-                                                text = text,
-                                                pinyins = it.wordsPinyinsText.split(Regex("[、，,]+"))
-                                                    .getOrNull(index).orEmpty().trim().split(Regex("\\s+")).filter(String::isNotBlank)
-                                            )
+                                            GeneratedLiteracyExample(text = text)
                                         },
-                                        sentence = GeneratedLiteracyExample(
-                                            text = it.sentence.trim(),
-                                            pinyins = it.sentencePinyinsText.trim().split(Regex("\\s+")).filter(String::isNotBlank)
-                                        )
+                                        sentence = GeneratedLiteracyExample(text = it.sentence.trim())
                                     )
                                 }
                                 validateEditedLiteracyTasks(tasks)?.let {
@@ -2159,9 +2228,7 @@ private fun GenerateLiteracyTasksDialog(
 private data class EditableLiteracyTask(
     val character: String,
     val wordsText: String,
-    val wordsPinyinsText: String,
-    val sentence: String,
-    val sentencePinyinsText: String
+    val sentence: String
 )
 
 @Composable
@@ -2169,9 +2236,7 @@ private fun EditableLiteracyTaskCard(
     task: EditableLiteracyTask,
     isKnownCharacter: Boolean,
     onWordsChange: (String) -> Unit,
-    onWordsPinyinsChange: (String) -> Unit,
     onSentenceChange: (String) -> Unit,
-    onSentencePinyinsChange: (String) -> Unit,
     onDelete: () -> Unit
 ) {
     Surface(shape = RoundedCornerShape(18.dp), color = Background, modifier = Modifier.fillMaxWidth()) {
@@ -2216,40 +2281,11 @@ private fun EditableLiteracyTaskCard(
                 )
             )
             OutlinedTextField(
-                value = task.wordsPinyinsText,
-                onValueChange = onWordsPinyinsChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("词语拼音（可编辑）") },
-                supportingText = { Text("不标声调；每个字一个拼音，词语之间用顿号分隔，例如：zu zhang") },
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Sky,
-                    unfocusedBorderColor = Line,
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color.White
-                )
-            )
-            OutlinedTextField(
                 value = task.sentence,
                 onValueChange = onSentenceChange,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("句子（可编辑）") },
                 supportingText = { Text("不限制句子字数") },
-                minLines = 2,
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Sky,
-                    unfocusedBorderColor = Line,
-                    focusedContainerColor = Color.White,
-                    unfocusedContainerColor = Color.White
-                )
-            )
-            OutlinedTextField(
-                value = task.sentencePinyinsText,
-                onValueChange = onSentencePinyinsChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("句子拼音（可编辑）") },
-                supportingText = { Text("不标声调；按句中汉字顺序逐个填写") },
                 minLines = 2,
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -2277,15 +2313,6 @@ private fun validateEditedLiteracyTasks(tasks: List<GeneratedLiteracyTask>): Str
         }
         if (!task.sentence.text.contains(task.character)) {
             return "“${task.character}”的句子必须包含该字"
-        }
-        (task.words + task.sentence).forEach { example ->
-            val characterCount = example.text.count { it.isChineseCharacter() }
-            if (example.pinyins.size != characterCount) {
-                return "“${example.text}”的拼音数量需与汉字数量一致"
-            }
-            if (example.pinyins.any { !it.matches(Regex("[a-züv]+")) }) {
-                return "拼音请使用不带声调的字母，例如 zhang"
-            }
         }
     }
     return null
@@ -2630,6 +2657,41 @@ private fun PendingCharactersScreen(
 
     LaunchedEffect(userId) { viewModel.load(userId) }
 
+    if (state.isLoadingPhonetics) {
+        Dialog(onDismissRequest = viewModel::dismissPhonetics) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Sky, strokeWidth = 2.dp)
+                    Text("正在加载发音标注…", color = Ink, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+    state.phoneticDetail?.let { detail ->
+        PendingPhoneticDetailDialog(
+            detail = detail,
+            savingAssetId = state.savingAssetId,
+            errorMessage = state.phoneticErrorMessage,
+            onDismiss = viewModel::dismissPhonetics,
+            onSave = viewModel::savePhoneticAsset
+        )
+    }
+    state.phoneticErrorMessage?.takeIf { state.phoneticDetail == null && !state.isLoadingPhonetics }?.let { message ->
+        Dialog(onDismissRequest = viewModel::dismissPhonetics) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("无法加载发音标注", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text(message, color = EvaluationErrorRed)
+                    Button(onClick = viewModel::dismissPhonetics, modifier = Modifier.fillMaxWidth()) { Text("知道了") }
+                }
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
         BackHeader("待认识的字", "这些汉字正等着和你见面", onBack)
         Spacer(Modifier.height(15.dp))
@@ -2660,15 +2722,17 @@ private fun PendingCharactersScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp)
                 ) {
-                    items(state.characters, key = { it }) { character ->
+                    items(state.characters, key = { it.id }) { character ->
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = Color.White,
                             border = androidx.compose.foundation.BorderStroke(1.dp, Line),
-                            modifier = Modifier.aspectRatio(1f)
+                            modifier = Modifier
+                                .aspectRatio(1f)
+                                .clickable { viewModel.showPhonetics(character) }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Text(character, fontSize = 28.sp, color = Ink, fontWeight = FontWeight.ExtraBold)
+                                Text(character.character, fontSize = 28.sp, color = Ink, fontWeight = FontWeight.ExtraBold)
                             }
                         }
                     }
@@ -2680,6 +2744,128 @@ private fun PendingCharactersScreen(
                     textAlign = TextAlign.Center,
                     fontSize = 13.sp
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingPhoneticDetailDialog(
+    detail: PendingPhoneticDetail,
+    savingAssetId: String?,
+    errorMessage: String?,
+    onDismiss: () -> Unit,
+    onSave: (PhoneticAsset, List<String?>) -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Card(
+            modifier = Modifier.fillMaxWidth(.94f).fillMaxHeight(.9f).widthIn(max = 760.dp).padding(12.dp),
+            shape = RoundedCornerShape(28.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White)
+        ) {
+            Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${detail.character.character} 的发音标注", style = MaterialTheme.typography.titleLarge, color = Ink, fontWeight = FontWeight.ExtraBold)
+                        Text("词句内容只读；可修正腾讯使用的数字拼音", color = Color(0xFF748184), fontSize = 13.sp)
+                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "关闭") }
+                }
+                errorMessage?.let { Text(it, color = EvaluationErrorRed, fontSize = 13.sp) }
+                if (detail.assets.isEmpty()) {
+                    EmptyContent("暂时没有发音标注", "词句保存后会自动准备，请稍后再试。", "🔤")
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 4.dp)
+                    ) {
+                        items(detail.assets, key = { it.id }) { asset ->
+                            PendingPhoneticAssetCard(
+                                asset = asset,
+                                isSaving = savingAssetId == asset.id,
+                                onSave = { tokens -> onSave(asset, tokens) }
+                            )
+                        }
+                    }
+                }
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F3F2), contentColor = Ink),
+                    shape = RoundedCornerShape(17.dp)
+                ) { Text("关闭") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingPhoneticAssetCard(
+    asset: PhoneticAsset,
+    isSaving: Boolean,
+    onSave: (List<String?>) -> Unit
+) {
+    val characters = remember(asset.text) { asset.text.filter { it in '\u4E00'..'\u9FFF' }.map(Char::toString) }
+    val initialTokens = remember(asset.id, asset.tokens, characters) {
+        if (asset.tokens.size == characters.size) asset.tokens else List(characters.size) { "" }
+    }
+    val drafts = remember(asset.id, initialTokens) { mutableStateListOf<String?>().also { it.addAll(initialTokens) } }
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFFFFFEF9),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Line),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (asset.itemType == "word") "词语" else "句子", color = Leaf, fontWeight = FontWeight.ExtraBold)
+                Spacer(Modifier.width(8.dp))
+                Text(asset.text, color = Ink, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(
+                    when (asset.status) {
+                        "ready" -> "已就绪"
+                        "failed" -> "生成失败"
+                        else -> "正在准备"
+                    },
+                    color = if (asset.status == "failed") EvaluationErrorRed else Color(0xFF748184),
+                    fontSize = 12.sp
+                )
+            }
+            asset.lastError?.let { Text("自动生成：$it", color = EvaluationErrorRed, fontSize = 12.sp) }
+            if (characters.isEmpty()) {
+                Text("此内容没有可编辑的汉字", color = EvaluationErrorRed, fontSize = 13.sp)
+            } else {
+                characters.forEachIndexed { index, character ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Surface(shape = CircleShape, color = WheatLight, modifier = Modifier.size(32.dp)) {
+                            Box(contentAlignment = Alignment.Center) { Text(character, color = Ink, fontWeight = FontWeight.ExtraBold) }
+                        }
+                        if (drafts[index] == null) {
+                            Text("腾讯不支持指定轻声", color = Color(0xFF748184), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        } else {
+                            OutlinedTextField(
+                                value = drafts[index].orEmpty(),
+                                onValueChange = { drafts[index] = it.lowercase(Locale.ROOT).trim() },
+                                enabled = !isSaving,
+                                singleLine = true,
+                                label = { Text("数字拼音") },
+                                placeholder = { Text("例如 zhang3") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+                Button(
+                    onClick = { onSave(drafts.toList()) },
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Sky),
+                    shape = RoundedCornerShape(13.dp)
+                ) {
+                    if (isSaving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("保存发音标注")
+                }
             }
         }
     }

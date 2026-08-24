@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.Family
 import com.lemonkids.shared.model.User
 import com.lemonkids.shared.model.UserRole
+import com.lemonkids.shared.auth.SessionRecoveryCoordinator
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.AlreadyBoundException
 import com.lemonkids.shared.repository.BindingCodeInfo
@@ -39,13 +40,18 @@ data class AuthUiState(
     val isBindingCodeMode: Boolean = false,
     val bindingCodeStatus: String? = null,
     val boundDeviceId: String? = null,
-    val bindingCodes: List<BindingCodeInfo> = emptyList()
+    val bindingCodes: List<BindingCodeInfo> = emptyList(),
+    /** 由根层展示，必须压过任意业务弹层的会话恢复弹窗。 */
+    val requiresSessionRecovery: Boolean = false,
+    val isRecoveringSession: Boolean = false,
+    val sessionRecoveryMessage: String? = null
 )
 
 @HiltViewModel
 class AuthViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val familyRepository: FamilyRepository,
+    private val sessionRecoveryCoordinator: SessionRecoveryCoordinator,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -70,6 +76,15 @@ class AuthViewModel @Inject constructor(
                 }
             }
         }
+        viewModelScope.launch {
+            sessionRecoveryCoordinator.required.collect { required ->
+                _uiState.value = _uiState.value.copy(
+                    requiresSessionRecovery = required,
+                    isRecoveringSession = if (required) _uiState.value.isRecoveringSession else false,
+                    sessionRecoveryMessage = if (required) _uiState.value.sessionRecoveryMessage else null
+                )
+            }
+        }
     }
 
     private suspend fun restoreExistingSession() {
@@ -82,7 +97,18 @@ class AuthViewModel @Inject constructor(
                     return
                 },
                 onFailure = { error ->
-                    if (authRepository.hasAuthSession) {
+                    // 认字端已有本地绑定码时，刷新失败不再无限停留在启动加载页。
+                    // 根层恢复弹层会让孩子/家长明确选择重试或静默重新登录。
+                    if (isLiteracyApp && authRepository.hasAuthSession) {
+                        firstCheckDone = true
+                        _uiState.value = _uiState.value.copy(
+                            isFirstCheckComplete = false,
+                            isLoading = false,
+                            sessionRecoveryMessage = "登录凭证刷新失败，请恢复登录后继续。"
+                        )
+                        sessionRecoveryCoordinator.requireRecovery()
+                        return
+                    } else if (authRepository.hasAuthSession) {
                         _uiState.value = _uiState.value.copy(
                             isFirstCheckComplete = false,
                             isLoading = true,
@@ -117,7 +143,55 @@ class AuthViewModel @Inject constructor(
             authRepository.childPassword(bindingResult.childUid)
         ).getOrElse { return false }
         applyUserState(user)
+        sessionRecoveryCoordinator.markRecovered()
         return true
+    }
+
+    /** 在功能请求发现 token 不可用后，重新尝试刷新当前会话。 */
+    fun retrySessionRefresh() {
+        viewModelScope.launch {
+            updateSessionRecoveryUi(isRecovering = true, message = null)
+            authRepository.restoreSession().fold(
+                onSuccess = { user ->
+                    if (user != null) {
+                        applyUserState(user)
+                        sessionRecoveryCoordinator.markRecovered()
+                    } else {
+                        updateSessionRecoveryUi(
+                            isRecovering = false,
+                            message = "没有可刷新的登录凭证，请使用绑定码重新登录。"
+                        )
+                    }
+                },
+                onFailure = {
+                    updateSessionRecoveryUi(
+                        isRecovering = false,
+                        message = "刷新登录状态失败，请检查网络后重试，或使用绑定码重新登录。"
+                    )
+                }
+            )
+        }
+    }
+
+    /** 使用本机保存且已验证的认字绑定码，静默换取一份全新会话。 */
+    fun restoreLiteracyBindingFromDialog() {
+        viewModelScope.launch {
+            updateSessionRecoveryUi(isRecovering = true, message = null)
+            if (!isLiteracyApp || !restoreLiteracyBinding()) {
+                updateSessionRecoveryUi(
+                    isRecovering = false,
+                    message = "本机绑定码无法恢复登录，请重新进入认字应用后按提示绑定。"
+                )
+            }
+        }
+    }
+
+    private fun updateSessionRecoveryUi(isRecovering: Boolean, message: String?) {
+        _uiState.value = _uiState.value.copy(
+            requiresSessionRecovery = true,
+            isRecoveringSession = isRecovering,
+            sessionRecoveryMessage = message
+        )
     }
 
     private fun applyUserState(user: User?) {
@@ -135,7 +209,10 @@ class AuthViewModel @Inject constructor(
             needsFamilySetup = user != null && !hasFamily,
             isUploadingAvatar = _uiState.value.isUploadingAvatar,
             // 用户状态刷新时保留家庭管理页已加载的绑定码，避免列表被重置为空。
-            bindingCodes = _uiState.value.bindingCodes
+            bindingCodes = _uiState.value.bindingCodes,
+            requiresSessionRecovery = _uiState.value.requiresSessionRecovery,
+            isRecoveringSession = _uiState.value.isRecoveringSession,
+            sessionRecoveryMessage = _uiState.value.sessionRecoveryMessage
         )
 
         val fid = user?.familyId

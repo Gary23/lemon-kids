@@ -19,6 +19,8 @@ const tencentcloud = require('tencentcloud-sdk-nodejs-sts');
 const StsClient = tencentcloud.sts.v20180813.Client;
 const scf = require('tencentcloud-sdk-nodejs-scf');
 const ScfClient = scf.scf.v20180416.Client;
+const { pinyin } = require('pinyin-pro');
+const crypto = require('crypto');
 
 const SUPABASE_URL = requiredEnv('SUPABASE_URL').replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
@@ -76,6 +78,23 @@ function bearer(event) {
     throw new HttpError(401, '缺少登录凭证');
   }
   return authorization.slice('Bearer '.length).trim();
+}
+
+/**
+ * 历史音素回填不应依赖某个孩子的短期登录态。该入口只接受部署时单独配置的密钥，
+ * 便于安全地由运维脚本或定时 HTTP 调用持续处理队列；未配置密钥时入口默认关闭。
+ */
+function requirePhoneticBackfillKey(event) {
+  const expected = process.env.LITERACY_PHONETIC_BACKFILL_KEY;
+  if (!expected) throw new HttpError(503, '未配置音素回填密钥，后台回填入口未启用');
+  const headers = event.headers || {};
+  const received = headers['x-phonetic-backfill-key'] || headers['X-Phonetic-Backfill-Key'];
+  if (typeof received !== 'string') throw new HttpError(401, '缺少音素回填密钥');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  const receivedBuffer = Buffer.from(received, 'utf8');
+  if (expectedBuffer.length !== receivedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, receivedBuffer)) {
+    throw new HttpError(401, '音素回填密钥不正确');
+  }
 }
 
 class HttpError extends Error {
@@ -253,19 +272,13 @@ function outOfLibraryChineseCharacters(text, allowedCharacters) {
   );
 }
 
-function pinyinForExample(rawExample, label) {
+function textForExample(rawExample, label) {
   if (!rawExample || typeof rawExample !== 'object' || Array.isArray(rawExample)) {
-    throw new Error(`${label}必须包含 text 和 pinyins`);
+    throw new Error(`${label}必须包含 text`);
   }
   const text = typeof rawExample.text === 'string' ? rawExample.text.trim() : '';
-  const pinyins = Array.isArray(rawExample.pinyins)
-    ? rawExample.pinyins.map((pinyin) => typeof pinyin === 'string' ? pinyin.trim().toLowerCase() : '')
-    : [];
-  const chineseCount = chineseCharacters(text).length;
-  if (!text || pinyins.length !== chineseCount || pinyins.some((pinyin) => !/^[a-züv]+$/.test(pinyin))) {
-    throw new Error(`${label}的拼音必须与每个汉字一一对应，且不带声调`);
-  }
-  return { text, pinyins };
+  if (!text) throw new Error(`${label}不能为空`);
+  return { text };
 }
 
 function validateGeneratedTasks(payload, requestedCharacters, allowedCharacters, options = {}) {
@@ -285,9 +298,9 @@ function validateGeneratedTasks(payload, requestedCharacters, allowedCharacters,
     // 包含对应目标字，避免把不相关的内容写入该字的学习任务。
     // 仅保留可显示的字符串；空词不写入任务。
     const words = Array.isArray(item.words) ? item.words : [];
-    const sentence = pinyinForExample(item.sentence, `“${character}”的句子`);
+    const sentence = textForExample(item.sentence, `“${character}”的句子`);
     const normalizedWords = words
-      .map((word) => pinyinForExample(word, `“${character}”的词语`));
+      .map((word) => textForExample(word, `“${character}”的词语`));
     for (const word of normalizedWords) {
       if (!word.text.includes(character)) {
         throw new Error(`“${character}”的词语“${word.text}”必须包含该字`);
@@ -384,9 +397,9 @@ function collectWordFallbackTasks(payload, requestedCharacters, allowedCharacter
 function literacyGenerationPrompt(requestedCharacters, allowedCharacters, previousError, previousContent) {
   return [
     '你是儿童识字教材编辑。只输出一个 JSON 对象，不要 Markdown、解释或额外字段。',
-    '请为每个目标汉字生成一条识字任务。JSON 格式必须为：{"items":[{"character":"字","words":[{"text":"词语","pinyins":["ci","yu"]}],"sentence":{"text":"句子","pinyins":["ju","zi"]}}]}。',
+    '请为每个目标汉字生成一条识字任务。JSON 格式必须为：{"items":[{"character":"字","words":[{"text":"词语"}],"sentence":{"text":"句子"}}]}。',
     '每个目标字必须恰好出现一次。每个 words 提供 1 到 3 个词语即可，不要求凑满 3 个；优先提供至少两个汉字的、有学习意义的词语，不要只返回目标字本身。',
-    '每个词语和句子都必须包含对应目标字。这是硬性要求。句子不限制长度，但应是可供儿童朗读的完整短句，不要只返回目标字本身。每个词和句都必须提供 pinyins，按其中汉字出现顺序逐字填写；拼音只用小写字母或 ü/v，不写声调和数字。例如“组长”的拼音为 ["zu","zhang"]，“妈妈”为 ["ma","ma"]。',
+    '每个词语和句子都必须包含对应目标字。这是硬性要求。句子不限制长度，但应是可供儿童朗读的完整短句，不要只返回目标字本身。绝对不要返回拼音、注音、pinyins 或其他发音字段。',
     '词语中的汉字应全部取自“允许汉字”；句子最多可出现 2 个“允许汉字”之外的汉字。不得使用英文、数字、空格或任何其他符号。句中只可使用中文逗号、句号、问号、叹号、顿号，标点可省略。',
     '输出前请逐项自检：items 数量等于目标字数量；每个词语和句子均包含对应目标字；词语不含字库外汉字，句子最多含 2 个字库外汉字。不要输出自检过程。',
     `目标汉字：${requestedCharacters.join('')}`,
@@ -580,16 +593,93 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
     sentences: [task.sentence],
     sort_order: nextSortOrder + index
   }));
-  const created = await supabase('child_literacy_characters', {
+  // 任务正文与 pending 音素资产必须由同一个 RPC 落库，避免新任务在异步生成器
+  // 第一次扫描时丢失固定索引，也避免请求中断留下无法评测的半成品任务。
+  const created = await supabase('rpc/create_literacy_tasks_with_phonetic_assets', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
-    body: JSON.stringify(rows)
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      p_child_id: childId,
+      p_family_id: familyId,
+      p_rows: rows
+    })
   });
   return {
     created: (created || []).map((row) => ({ id: row.id, character: row.character })),
     knownCharacters: knownCharactersInRequest,
     skippedExistingCharacters
   };
+}
+
+function normalizePhonemeTokens(value, itemText) {
+  if (!Array.isArray(value)) throw new HttpError(400, 'phonemeTokens 必须是数组');
+  const characters = chineseCharacters(itemText);
+  if (value.length !== characters.length) {
+    throw new HttpError(400, `音素数量必须与汉字数量一致（应为 ${characters.length} 个）`);
+  }
+  return value.map((token, index) => {
+    if (token === null) return null;
+    if (typeof token !== 'string' || !/^[a-zv]+[1-4]$/.test(token.trim().toLowerCase())) {
+      throw new HttpError(400, `第 ${index + 1} 个汉字“${characters[index]}”的数字拼音格式不正确`);
+    }
+    return token.trim().toLowerCase();
+  });
+}
+
+function wordListForPhonemeTokens(itemText, tokens) {
+  const normalized = normalizePhonemeTokens(tokens, itemText);
+  return chineseCharacters(itemText).map((word, index) =>
+    normalized[index] === null ? { word } : { word, pron: [[normalized[index]]] }
+  );
+}
+
+function phonemesForText(text) {
+  const sourceCharacters = [...text];
+  const generated = pinyin(text, { toneType: 'num', type: 'array', v: true });
+  if (!Array.isArray(generated) || generated.length !== sourceCharacters.length) {
+    throw new Error('词组拼音词典返回长度与原文不一致');
+  }
+  const tokens = [];
+  sourceCharacters.forEach((character, index) => {
+    if (!/[\u4E00-\u9FFF]/.test(character)) return;
+    const token = typeof generated[index] === 'string' ? generated[index].toLowerCase() : '';
+    // pinyin-pro 以 0 表示轻声；腾讯不支持该标注，因此保留位置但让组装器省略 pron。
+    if (/^[a-zv]+0$/.test(token)) {
+      tokens.push(null);
+    } else if (/^[a-zv]+[1-4]$/.test(token)) {
+      tokens.push(token);
+    } else {
+      throw new Error(`词典无法为“${character}”生成腾讯支持的数字拼音`);
+    }
+  });
+  if (tokens.length !== chineseCharacters(text).length) throw new Error('音素数量与汉字数量不一致');
+  return tokens;
+}
+
+async function generatePhoneticAssets(limit = 50) {
+  const assets = await supabase('rpc/claim_literacy_phonetic_assets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ p_limit: Math.max(1, Math.min(Number(limit) || 50, 50)) })
+  });
+  const result = { ready: 0, failed: 0 };
+  for (const asset of assets || []) {
+    try {
+      const tokens = phonemesForText(asset.item_text);
+      await supabase('rpc/complete_literacy_phonetic_asset', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_asset_id: asset.id, p_phoneme_tokens: tokens, p_generator_version: 'pinyin-pro-3.27.0' })
+      });
+      result.ready++;
+    } catch (error) {
+      await supabase('rpc/fail_literacy_phonetic_asset', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_asset_id: asset.id, p_reason: String(error.message || error).slice(0, 1000) })
+      });
+      result.failed++;
+    }
+  }
+  return result;
 }
 
 function audioGeneratorClient() {
@@ -694,6 +784,65 @@ async function loadTarget(childId, literacyCharacterId, targetType, sentenceText
   };
 }
 
+async function prepareEvaluation(childId, body) {
+  const target = await loadTarget(
+    childId,
+    body.literacyCharacterId,
+    body.targetType,
+    body.sentenceText,
+    body.wordText,
+    body.contentSource
+  );
+  const repeatCount = Number.isInteger(body.repeatCount) ? body.repeatCount : 1;
+  if (repeatCount < 1 || repeatCount > 3) throw new HttpError(400, 'repeatCount 必须在 1 到 3 之间');
+  if (target.targetType === 'character') {
+    return { refText: target.targetText.repeat(repeatCount), textMode: 0, targetText: target.targetText };
+  }
+  // loadTarget 已将 wordText / sentenceText 收窄为单条数据库内容，因此固定索引可
+  // 与音素资产精确对应。任何未就绪资产均不可静默回退到 TEXT_MODE=0。
+  const item = target.examples[0];
+  const assets = await supabase(
+    `literacy_phonetic_assets?content_source=eq.${encodeURIComponent(target.contentSource === 'task' ? 'pending' : 'recognized')}` +
+    `&literacy_character_id=eq.${encodeURIComponent(target.character.id)}` +
+    `&item_type=eq.${encodeURIComponent(target.targetType)}` +
+    `&item_index=eq.${item.sortOrder}&status=eq.ready&select=id,item_text,phoneme_tokens&limit=1`
+  );
+  const asset = assets?.[0];
+  if (!asset || asset.item_text !== item.text || !Array.isArray(asset.phoneme_tokens)) {
+    throw new HttpError(409, '正在准备发音，请稍后再试');
+  }
+  const wordList = wordListForPhonemeTokens(item.text, asset.phoneme_tokens);
+  return { refText: JSON.stringify({ wordList }), textMode: 1, targetText: item.text };
+}
+
+async function loadPhoneticAssets(childId, literacyCharacterId, contentSource = 'task') {
+  if (!['task', 'recognized'].includes(contentSource)) throw new HttpError(400, 'contentSource 必须是 task 或 recognized');
+  const target = await loadTarget(childId, literacyCharacterId, 'character', undefined, undefined, contentSource);
+  const source = contentSource === 'task' ? 'pending' : 'recognized';
+  const assets = await supabase(
+    `literacy_phonetic_assets?content_source=eq.${source}&literacy_character_id=eq.${encodeURIComponent(target.character.id)}` +
+    '&select=id,item_type,item_index,item_text,phoneme_tokens,status,last_error&order=item_type.asc,item_index.asc'
+  );
+  return { character: target.character.character, assets: assets || [] };
+}
+
+async function savePhoneticAsset(childId, body) {
+  if (typeof body.assetId !== 'string' || !body.assetId.trim()) throw new HttpError(400, 'assetId 必填');
+  const assets = await supabase(
+    `literacy_phonetic_assets?id=eq.${encodeURIComponent(body.assetId)}&select=id,content_source,literacy_character_id,item_text&limit=1`
+  );
+  const asset = assets?.[0];
+  if (!asset) throw new HttpError(404, '未找到音素资产');
+  await loadTarget(childId, asset.literacy_character_id, 'character', undefined, undefined,
+    asset.content_source === 'pending' ? 'task' : 'recognized');
+  const tokens = normalizePhonemeTokens(body.phonemeTokens, asset.item_text);
+  await supabase(`literacy_phonetic_assets?id=eq.${encodeURIComponent(asset.id)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify({ phoneme_tokens: tokens, status: 'ready', last_error: null, updated_at: new Date().toISOString() })
+  });
+  return { saved: true };
+}
+
 function resolveHelpContext(target, characterIndex) {
   if (target.targetType === 'character') return target.targetText;
   let start = 0;
@@ -744,62 +893,20 @@ async function completeLiteracyCharacter(childId, literacyCharacterId, hasCharac
   if (hasCharacterAudioPointRead !== undefined && typeof hasCharacterAudioPointRead !== 'boolean') {
     throw new HttpError(400, 'hasCharacterAudioPointRead 必须是布尔值');
   }
-  const tasks = await supabase(
-    `child_literacy_characters?id=eq.${encodeURIComponent(literacyCharacterId)}&child_id=eq.${encodeURIComponent(childId)}&select=id,family_id,child_id,character,character_audio_url,character_audio_version,character_audio_hash,words,sentences`
-  );
-  const task = tasks[0];
-  if (!task) throw new HttpError(404, '未找到该识字任务');
-
   // 旧版客户端没有该字段，为避免它们在函数先发布时改变既有行为，仍按“点读过”处理。
   const shouldRecognize = hasCharacterAudioPointRead !== false;
-  if (shouldRecognize) {
-    // 由服务端复制教学内容，客户端不能篡改已认识字的字、词、句。
-    await supabase(
-      'recognized_characters?on_conflict=child_id,character',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' },
-        body: JSON.stringify({
-          child_id: childId,
-          family_id: task.family_id,
-          character: task.character,
-          // 主字音频独立存列，必须与 words / sentences 内的音频元数据一起转入复习卡。
-          character_audio_url: task.character_audio_url,
-          character_audio_version: task.character_audio_version,
-          character_audio_hash: task.character_audio_hash,
-          words: task.words,
-          sentences: task.sentences,
-          source: 'system',
-          // 归档时据此精确清理原任务的字、词、句音频，不能按文字全局匹配。
-          source_literacy_character_id: task.id
-        })
-      }
-    );
-  } else {
-    // 未点读主字时不创建复习卡，整字完成后直接幂等写入孩子的字库。
-    await supabase(
-      'known_characters?on_conflict=user_id,character',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates,return=minimal' },
-        body: JSON.stringify({ user_id: childId, character: task.character, learned_at: new Date().toISOString() })
-      }
-    );
-  }
-  // 仅首次完成时记录学会时间。星星和“已读/未读”均只保存在孩子端当天本地，
-  // 不再写入主表的 read_status/read_date 字段。
-  const completedAt = new Date();
-  await supabase(
-    `child_literacy_characters?id=eq.${encodeURIComponent(task.id)}&child_id=eq.${encodeURIComponent(childId)}&learned_at=is.null`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-      body: JSON.stringify({
-        learned_at: completedAt.toISOString()
-      })
-    }
-  );
-  return { character: task.character, recognized: shouldRecognize };
+  // 主表更新及 pending 资产的迁移/清理都由一个数据库 RPC 提交，网络失败时不会
+  // 出现“已认识记录已创建但音素仍留在待认识任务”的中间状态。
+  const completed = await supabase('rpc/complete_literacy_character_with_phonetic_assets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      p_child_id: childId,
+      p_literacy_character_id: literacyCharacterId,
+      p_has_character_audio_point_read: shouldRecognize
+    })
+  });
+  return completed || { recognized: shouldRecognize };
 }
 
 /**
@@ -810,7 +917,7 @@ async function archiveRecognizedCharacter(childId, recognizedCharacterId) {
   if (typeof recognizedCharacterId !== 'string' || !recognizedCharacterId.trim()) {
     throw new HttpError(400, 'recognizedCharacterId 必填');
   }
-  const result = await supabase('rpc/archive_recognized_character', {
+  const result = await supabase('rpc/archive_recognized_character_with_phonetic_assets', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -822,8 +929,16 @@ async function archiveRecognizedCharacter(childId, recognizedCharacterId) {
 }
 
 async function handler(event) {
-  const childId = await authenticatedChild(event);
   const body = requestBody(event);
+  // 后台回填只访问内部 service_role 队列，不读取或修改任何单个孩子的业务数据。
+  // 必须先匹配独立密钥；不要将此分支放到普通 JWT 鉴权之后，否则定时任务仍无法调用。
+  if (body.action === 'run_phonetic_backfill') {
+    requirePhoneticBackfillKey(event);
+    const generated = await generatePhoneticAssets(body.limit);
+    console.info('音素资产后台回填完成一批', generated);
+    return response(200, { generated });
+  }
+  const childId = await authenticatedChild(event);
   if (body.action === 'issue_credentials') {
     const sts = await issueStsCredentials();
     return response(200, {
@@ -856,6 +971,20 @@ async function handler(event) {
         targetText: target.targetText
       }
     });
+  }
+  if (body.action === 'prepare_evaluation') {
+    return response(200, { evaluation: await prepareEvaluation(childId, body) });
+  }
+  if (body.action === 'get_phonetic_assets') {
+    return response(200, await loadPhoneticAssets(childId, body.literacyCharacterId, body.contentSource));
+  }
+  if (body.action === 'save_phonetic_asset') {
+    return response(200, await savePhoneticAsset(childId, body));
+  }
+  // 供受控的定时调用或故障恢复使用；函数仍要求有效的孩子登录凭证，避免暴露
+  // service_role 的音素写入能力。正常新建会在保存后立即执行一次。
+  if (body.action === 'generate_phonetic_assets') {
+    return response(200, { generated: await generatePhoneticAssets(body.limit) });
   }
   if (body.action === 'record_help_request') {
     if (typeof body.character !== 'string' || !/^[\u4E00-\u9FFF]$/.test(body.character)) {
@@ -909,7 +1038,8 @@ async function handler(event) {
   if (body.action === 'save_literacy_tasks') {
     const generated = await saveGeneratedLiteracyTasks(childId, body.characters, body.items);
     const audioGeneration = await triggerNewLiteracyTaskAudio(generated.created);
-    return response(201, { status: 'created', generated, audioGeneration });
+    const phoneticGeneration = await generatePhoneticAssets(Math.max(1, generated.created.length * 4));
+    return response(201, { status: 'created', generated, audioGeneration, phoneticGeneration });
   }
   throw new HttpError(400, '未知 action');
 }
@@ -922,4 +1052,10 @@ exports.main_handler = async (event) => {
   }
 };
 
-exports._private = { triggerNewLiteracyTaskAudio };
+exports._private = {
+  triggerNewLiteracyTaskAudio,
+  phonemesForText,
+  normalizePhonemeTokens,
+  wordListForPhonemeTokens,
+  requirePhoneticBackfillKey
+};

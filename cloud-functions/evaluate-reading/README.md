@@ -35,7 +35,10 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-本次部署包为 `evaluate-reading-web-20260813-phonetic-reading-evaluation.zip`。部署前需先执行 `supabase/sql/20260804_recognized_characters.sql`、`supabase/sql/20260805_literacy_help_request_sources.sql`、`supabase/sql/20260806_literacy_help_request_clicked_character.sql`、`supabase/sql/20260807_literacy_tts_cleanup.sql` 与 `supabase/sql/20260813_literacy_example_pinyins.sql`，并为评测函数使用的 CAM 身份增加目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。对已经自动收录且主字音频为空的历史数据，额外执行一次 `supabase/sql/20260811_backfill_recognized_character_audio.sql`。
+当前部署包为 `evaluate-reading-web-20260823-phonetic-lifecycle-atomic.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`；后者将待认识完成与已认识存库的音素资产迁移/清理合并为原子 RPC。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+
+待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
+[`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
 
 部署后的验收：在认字端完成一次“智能添加识字”并提交；`evaluate-reading` 日志不应出现
 `AccessDenied` 或 `UnauthorizedOperation`，`generate-literacy-audio` 应随即收到异步调用，待其执行
@@ -58,7 +61,7 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 `issue_session` 保留给旧版客户端兼容使用；新版客户端不再按每个字、词、句分别
 调用它。
 
-认字端“我的 → 智能添加识字”先调用 `preview_literacy_tasks`：输入只允许汉字，去重后每次最多 12 个。函数会查询当前孩子的 `known_characters`（字库），但字库已有字仍会发送给 DeepSeek 生成字词句，并在预览中逐组标记；已有待认识任务的同字才会跳过。函数固定使用 DeepSeek `deepseek-v4-flash`，以字库加本次输入字为允许字集。每个目标字会提示 DeepSeek 生成 1～3 个词语，提供 1 个即可，不要求凑满 3 个；词语应由至少两个汉字组成，句子应为可朗读的短句，不能只返回目标字本身。每个词、句还会同步生成按汉字位置对应的无声调拼音，例如“组长”为 `["zu","zhang"]`；预览页允许人工修改词句及拼音。词数、词长与句长均为质量建议；但每个词语和句子必须包含对应目标字，这是客户端与服务端都会校验的硬性要求。词语会先按纯字库规则逐字重试，累计第 10 次仍越界时保留 DeepSeek 返回的完整词语；句子允许最多 2 个字库外汉字。绝不会删除原词句中的越界字。预览完成日志会记录每组的词数、单字词数和句子长度等质量统计，不记录完整词句。预览不写库；页面中的字不可编辑，词、句和拼音可编辑，每组均可删除。长按词、句中的任意字时，云函数仍会实时查询 `known_characters`：在字库内才写入帮助请求表，字库外字直接返回 `skipped`，不留记录。
+认字端“我的 → 智能添加识字”先调用 `preview_literacy_tasks`：输入只允许汉字，去重后每次最多 12 个。DeepSeek 只返回字、词、句文本，预览页仅允许编辑词句。保存时服务端会在同一数据库事务内创建待认识任务及 `pending` 音素资产；随后用 `pinyin-pro` 按完整词句生成腾讯数字拼音，例如“组长”为 `zu3 zhang3`，“长城”为 `chang2 cheng2`。轻声位置保存为 `null`，绝不伪造 `0`、`5` 或一声。长按词、句中的任意字时，云函数仍会实时查询 `known_characters`：在字库内才写入帮助请求表，字库外字直接返回 `skipped`，不留记录。
 
 家长确认后，客户端调用 `save_literacy_tasks` 提交原输入字和未删除的 `items`。服务端会重新读取最新字库用于标记和字词句校验；字库已有字仍可写入 `child_literacy_characters`，删除的整组不会提交或写入；已有同字任务会跳过，不覆盖。成功写入后，会立即以异步事件定向触发每条新任务的音频生成；客户端不会等待 MP3 合成完成，原定时扫描不受影响。
 
@@ -73,7 +76,7 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 {
   "action": "save_literacy_tasks",
   "characters": "春夏秋冬",
-  "items": [{"character":"春","words":[{"text":"春天","pinyins":["chun","tian"]}],"sentence":{"text":"春天来了我们一起看花","pinyins":["chun","tian","lai","le","wo","men","yi","qi","kan","hua"]}}]
+  "items": [{"character":"春","words":[{"text":"春天"}],"sentence":{"text":"春天来了我们一起看花"}}]
 }
 ```
 
@@ -92,7 +95,7 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 
 词组逐词评测时，客户端会额外携带 `wordText`，例如 `"白霜"`。该字段只能精确匹配当前识字任务数据库内已有的一项词语；云函数会只为这一个词生成 `REF_TEXT`。这样三个词会使用三个独立的腾讯会话，不会再把连续朗读音频交给同一次评测。
 
-每次朗读的对错、星星及“已读/未读”只按天保存在孩子端本地，应用次日启动会清理。未学习任务中主字读对 3 次、每个词读对 2 次、每个句子读对 1 次；全部达标后客户端调用 `complete_literacy_character`，并首次写入 `child_literacy_characters.learned_at`。若本次学习中曾长按**主字**播放音频，云函数会复制主字及其音频元数据、字词句，幂等写入 `recognized_characters`；若未长按主字，则直接幂等写入 `known_characters`。词、句中的长按不影响该判断。已认识字复习仅展示字、词（主字 3 次、每词 1 次），不调用此完成接口或更新数据表。
+每次朗读的对错、星星及“已读/未读”只按天保存在孩子端本地，应用次日启动会清理。未学习任务中主字读对 3 次、每个词读对 2 次、每个句子读对 1 次；全部达标后客户端调用 `complete_literacy_character`，并首次写入 `child_literacy_characters.learned_at`。若本次学习中曾长按**主字**播放音频，云函数会复制主字及其音频元数据、字词句，幂等写入 `recognized_characters`；若未长按主字，则直接幂等写入 `known_characters`。词、句中的长按不影响该判断。已认识字复习仅展示字、词：列表按 `recognized_at` 从近到远取最近 24 个，前 8 个主字读 3 次、中间 8 个读 2 次、后 8 个读 1 次；每个词始终读 1 次，不调用此完成接口或更新数据表。
 
 ```json
 {
@@ -131,4 +134,4 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 
 ## 评测模式
 
-主字评测继续以腾讯 `TEXT_MODE=0` 传递汉字原文。新保存的词、句会使用 `TEXT_MODE=1` 的发音描述块指定每个字的读音；数据库只保存无声调拼音，客户端为满足腾讯格式临时补调号，并关闭 `F_TDET`，所以声调（包括轻声）不参与对错判定。没有 `pinyins` 的历史词句继续使用 `TEXT_MODE=0`，不会改变既有任务的评测行为；评测结果不落库。
+主字评测继续以腾讯 `TEXT_MODE=0` 传递汉字原文。词、句朗读前，Android 调用 `prepare_evaluation`；服务端只从对应的 `ready` 音素资产组装 `TEXT_MODE=1` 的 `wordList` JSON 并返回 `{ refText, textMode: 1 }`。资产未就绪时返回“正在准备发音”，客户端不得回退到 `TEXT_MODE=0`。客户端不再拼接 `RefText`、补一声或传递 `F_TDET=false`；服务端也不会开启腾讯的声调检测命令，因此声调不参与正误判断，而多音字的声母、韵母会按指定参考音严格区分。

@@ -18,10 +18,14 @@ class SupabaseRecognizedCharacterRepository @Inject constructor(
     override suspend fun getRecognizedCharacters(
         childId: String,
         offset: Long,
-        limit: Long
+        limit: Long,
+        recognizedBefore: String?
     ): Result<List<RecognizedCharacter>> = runCatching {
         postgrest.from("recognized_characters").select {
-            filter { eq("child_id", childId) }
+            filter {
+                eq("child_id", childId)
+                recognizedBefore?.let { lt("recognized_at", it) }
+            }
             order("recognized_at", Order.DESCENDING)
             order("character", Order.ASCENDING)
             range(offset, offset + limit - 1)

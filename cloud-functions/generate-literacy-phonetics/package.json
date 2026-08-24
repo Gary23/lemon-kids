@@ -1,0 +1,15 @@
+{
+  "name": "lemon-literacy-generate-phonetics",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "pinyin-pro": "^3.27.0"
+  }
+}

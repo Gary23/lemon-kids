@@ -2,6 +2,7 @@ package com.lemonkids.kidliteracy.feature.reading
 
 import androidx.lifecycle.ViewModel
 import android.util.Log
+import com.lemonkids.shared.auth.SessionRecoveryCoordinator
 import com.lemonkids.shared.model.ChildLiteracyCharacter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.jan.supabase.SupabaseClient
@@ -40,10 +41,13 @@ data class ReadingTarget(
     val sentenceText: String? = null,
     // 词组朗读时指定本轮要评测的一个词；云端会校验它确实属于该识字任务。
     val wordText: String? = null,
-    /** 词、句每个汉字的指定读音；不含声调。为空时兼容历史内容。 */
-    val pinyins: List<String> = emptyList(),
     /** 内容来自认字任务或独立的已认识字表。 */
-    val contentSource: ReadingContentSource = ReadingContentSource.TASK
+    val contentSource: ReadingContentSource = ReadingContentSource.TASK,
+    /**
+     * 已认识字按入库日期分组后的主字朗读次数；词语仍使用既定的一次规则。
+     * null 表示使用默认规则，避免影响待认识字和其他已有调用方。
+     */
+    val characterRequiredReadings: Int? = null
 )
 
 /** 一份凭证可在有效期内用于多个字、词、句的腾讯实时评测。 */
@@ -68,10 +72,10 @@ data class GeneratedLiteracyTask(
 )
 
 /** 智能生成和人工确认阶段使用的词、句及其逐字拼音。 */
-data class GeneratedLiteracyExample(
-    val text: String,
-    val pinyins: List<String>
-)
+data class GeneratedLiteracyExample(val text: String)
+
+/** 由服务端按已授权内容和已就绪音素资产组装的腾讯评测参数。 */
+data class PreparedEvaluation(val refText: String, val textMode: Int)
 
 data class LiteracyTasksPreview(
     val tasks: List<GeneratedLiteracyTask>,
@@ -87,7 +91,8 @@ data class SavedLiteracyTasks(
 
 @HiltViewModel
 class ReadingEvaluationViewModel @Inject constructor(
-    private val supabase: SupabaseClient
+    private val supabase: SupabaseClient,
+    private val sessionRecoveryCoordinator: SessionRecoveryCoordinator
 ) : ViewModel() {
     private val auth get() = supabase.pluginManager.getPlugin(Auth)
     private val json = Json { ignoreUnknownKeys = true }
@@ -178,6 +183,13 @@ class ReadingEvaluationViewModel @Inject constructor(
         Unit
     }
 
+    suspend fun prepareEvaluation(target: ReadingTarget, repeatCount: Int = 1): Result<PreparedEvaluation> = runCatching {
+        val response = request(
+            """{"action":"prepare_evaluation","literacyCharacterId":"${target.literacyCharacterId.jsonEscape()}","targetType":"${target.targetType.jsonEscape()}","contentSource":"${target.contentSource.wireValue}","repeatCount":$repeatCount${target.sentenceText?.let { ",\"sentenceText\":\"${it.jsonEscape()}\"" }.orEmpty()}${target.wordText?.let { ",\"wordText\":\"${it.jsonEscape()}\"" }.orEmpty()}}"""
+        ).requiredObject("evaluation")
+        PreparedEvaluation(response.requiredString("refText"), response.requiredString("textMode").toInt())
+    }
+
     /** 只生成可编辑预览，不会向 Supabase 写入任何待认识任务。 */
     suspend fun previewLiteracyTasks(characters: String): Result<LiteracyTasksPreview> = runCatching {
         val response = request(
@@ -244,7 +256,10 @@ class ReadingEvaluationViewModel @Inject constructor(
         readTimeoutMillis: Int = DEFAULT_READ_TIMEOUT_MILLIS
     ): JsonObject = withContext(Dispatchers.IO) {
         val accessToken = auth.currentSessionOrNull()?.accessToken
-            ?: error("登录已失效，请重新进入认字应用")
+            ?: run {
+                sessionRecoveryCoordinator.requireRecovery()
+                error("登录凭证需要恢复")
+            }
         val connection = (URL(FUNCTION_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 10_000
@@ -279,13 +294,11 @@ class ReadingEvaluationViewModel @Inject constructor(
 private fun JsonElement.jsonObjectOrNull(): JsonObject? = this as? JsonObject
 
 private fun JsonObject.toGeneratedLiteracyExample() = GeneratedLiteracyExample(
-    text = this["text"]?.jsonPrimitive?.content ?: error("生成内容缺少 text"),
-    pinyins = this["pinyins"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
+    text = this["text"]?.jsonPrimitive?.content ?: error("生成内容缺少 text")
 )
 
 private fun GeneratedLiteracyExample.toRequestJson(): String {
-    val serializedPinyins = pinyins.joinToString(prefix = "[", postfix = "]") { "\"${it.jsonEscape()}\"" }
-    return """{"text":"${text.jsonEscape()}","pinyins":$serializedPinyins}"""
+    return """{"text":"${text.jsonEscape()}"}"""
 }
 
 private fun String.jsonEscape(): String = buildString {

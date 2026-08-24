@@ -24,6 +24,10 @@ Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通
 
 字库已通过 `LibraryViewModel` 接入 Repository；认字首页通过 `LiteracyHomeViewModel` 读取真实任务。评测请求由 `ReadingEvaluationViewModel` 调用腾讯 SCF，APK 不保存腾讯长期密钥。`RECORD_AUDIO`、拒绝授权态与取消录音逻辑已接入；逐字评测结果解析以腾讯真机返回结构为准。
 
+## 登录会话恢复
+
+启动或业务请求发现 Supabase 登录凭证不可用时，`SessionRecoveryCoordinator` 通知 `LemonLiteracyApp` 根层显示不可关闭的恢复弹层，覆盖朗读、智能添加识字等所有业务弹层，避免继续提交受保护请求。孩子可先“重试刷新”；仍失败时，可用本机已保存且已验证的 `task` 绑定码静默换取新会话。恢复成功后自动关闭弹层；没有可用绑定码时保留失败提示，需重新进入应用按绑定流程处理。
+
 ## 字库数据约定
 
 字库读取当前已登录孩子的 `uid`，查询 `public.known_characters`：

@@ -69,10 +69,12 @@ class SupabaseAuthRepository @Inject constructor(
             return@runCatching null
         }
 
-        runCatching { auth.refreshCurrentSession() }
+        // 刷新失败时不能继续拿旧 session.user 把界面判定为“已登录”。
+        // 旧用户资料可留在内存中，但 access token 已可能不可用于任何受保护请求。
+        auth.refreshCurrentSession()
 
         val uid = auth.currentUserOrNull()?.id
-            ?: session.user?.id
+            ?: auth.currentSessionOrNull()?.user?.id
             ?: throw Exception("已恢复会话但未能获取用户信息")
         loadCurrentUser(uid)
     }
