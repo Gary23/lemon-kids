@@ -10,6 +10,8 @@ interface RecognizedCharacterRepository {
     suspend fun getRecognizedCharacters(
         childId: String,
         offset: Long = 0,
-        limit: Long = 24
+        limit: Long = 24,
+        /** 仅返回此时间点之前收录的记录；为空时不限制收录日期。 */
+        recognizedBefore: String? = null
     ): Result<List<RecognizedCharacter>>
 }

@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 
 data class LiteracyHomeUiState(
@@ -54,16 +56,17 @@ class LiteracyHomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(LiteracyHomeUiState())
     val uiState: StateFlow<LiteracyHomeUiState> = _uiState.asStateFlow()
 
-    /**
-     * 每次回到首页都重新查询已认识字；待认识字则只在当天首次加载时生成快照。
-     * 当天刚完成的任务仍在快照中展示，所以在当天不同时显示其对应的已认识记录；
-     * 次日快照过期后，这些字才会进入已认识区。
-     */
+    /** 每次回到首页都重新查询昨天及更早收录的已认识字；待认识字只在当天首次加载时生成快照。 */
     fun load(childId: String) {
         if (childId.isBlank()) return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
-            val recognizedResult = async { recognizedCharacterRepository.getRecognizedCharacters(childId) }
+            val recognizedResult = async {
+                recognizedCharacterRepository.getRecognizedCharacters(
+                    childId = childId,
+                    recognizedBefore = todayStartInChina().toString()
+                )
+            }
             val literacyResult = async { characterRepository.getCharacters(childId) }
             val recognized = recognizedResult.await()
             val literacy = literacyResult.await()
@@ -78,7 +81,6 @@ class LiteracyHomeViewModel @Inject constructor(
                     groups = recognized
                         .getOrNull()
                         .orEmpty()
-                        .excludeTodayTaskCharacters(todayTask)
                         .toKnownGroups() +
                         todayTask?.toLearningGroup().orEmpty()
                 )
@@ -92,16 +94,9 @@ class LiteracyHomeViewModel @Inject constructor(
 
 private fun ChildLiteracyCharacter.isFullyLearned(): Boolean = learnedAt != null
 
-/**
- * `complete_literacy_character` 会立即创建已认识记录，但当天任务要以本地快照为准。
- * 仅按来源任务 ID 排除，避免把手工添加或历史已认识的同字误隐藏。
- */
-private fun List<RecognizedCharacter>.excludeTodayTaskCharacters(
-    todayTask: DailyLiteracyTaskSnapshot?
-): List<RecognizedCharacter> {
-    val todayTaskIds = todayTask?.characters?.map { it.id }?.toSet().orEmpty()
-    return filterNot { it.sourceLiteracyCharacterId in todayTaskIds }
-}
+private fun todayStartInChina() = LocalDate.now(CHINA_ZONE).atStartOfDay(CHINA_ZONE).toInstant()
+
+private val CHINA_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
 
 private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGroup> =
     take(24).chunked(8).mapIndexed { index, characters ->
