@@ -22,7 +22,7 @@ Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通
 
 ## 技术边界
 
-字库已通过 `LibraryViewModel` 接入 Repository；认字首页通过 `LiteracyHomeViewModel` 读取真实任务，待认识字排在已认识字之前，点击单字打开统一的字、词、句学习弹层。评测请求由 `ReadingEvaluationViewModel` 调用腾讯 SCF，APK 不保存腾讯长期密钥：主字本地构造 `TEXT_MODE=0` 参考文本，词、句预取服务端音素参数并仅在当日内存中缓存。`RECORD_AUDIO`、拒绝授权态与取消录音逻辑已接入；逐字评测结果解析以腾讯真机返回结构为准。
+字库已通过 `LibraryViewModel` 接入 Repository；认字首页通过 `LiteracyHomeViewModel` 读取真实任务，待认识字排在已认识字之前，点击单字打开统一学习弹层：待认识字练习字、词、句，已认识字复习只练字、词。评测请求由 `ReadingEvaluationViewModel` 调用腾讯 SCF，APK 不保存腾讯长期密钥：主字本地构造 `TEXT_MODE=0` 参考文本，待认识字的词、句和已认识字的词预取服务端音素参数并仅在当日内存中缓存。`RECORD_AUDIO`、拒绝授权态与取消录音逻辑已接入；逐字评测结果解析以腾讯真机返回结构为准。
 
 ## 登录会话恢复
 

@@ -872,7 +872,6 @@ private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) 
 @Composable
 private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
     val background = if (lesson.known) LeafLight else CoralLight
-    val accent = if (lesson.known) Leaf else Coral
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
@@ -913,12 +912,6 @@ private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
                     }
                 }
             }
-            Icon(
-                imageVector = Icons.Filled.KeyboardArrowRight,
-                contentDescription = "打开汉字学习弹层",
-                tint = accent,
-                modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
-            )
         }
     }
 }
@@ -1106,25 +1099,8 @@ private fun RecognizedCharacter.toLiteracyCard(
             )
         }
     },
-    // 首页统一学习弹层始终展示字、词、句；已认识字的句子沿用一次朗读规则。
-    sentences = sentences.mapIndexedNotNull { index, example ->
-        example.text.takeIf { it.isNotBlank() }?.let { text ->
-            learningContent(
-                ReadingTarget(
-                    id,
-                    "sentence",
-                    text,
-                    audioUrl = example.audioUrl,
-                    audioVersion = example.audioVersion,
-                    itemOrder = index,
-                    sentenceText = text,
-                    contentSource = ReadingContentSource.RECOGNIZED
-                ),
-                practiceProgress,
-                completed = false
-            )
-        }
-    }
+    // 已认识字为复习模式：只练主字与词语，不展示句子，完成判定也不能包含句子星数。
+    sentences = emptyList()
 )
 
 /** 已认识字复习只要求主字和词语满星，且使用其自身的一星词语规则。 */
@@ -1275,10 +1251,7 @@ private fun LearningSection(
     }
 }
 
-/**
- * 首页单字学习弹层。字、词、句始终同屏纵向呈现；被点击的项目在原位置展开朗读会话，
- * 所有其他项目会暂时锁定，确保腾讯录音 SDK 同一时间只服务一个项目。
- */
+/** 首页单字学习弹层。字、词、句按教学层级分区；朗读状态始终在对应行内呈现。 */
 @Composable
 private fun CharacterStudyDialog(
     card: LiteracyCard,
@@ -1290,26 +1263,33 @@ private fun CharacterStudyDialog(
 ) {
     val context = LocalContext.current
     var activeTarget by remember(card.literacyCharacterId) { mutableStateOf<ReadingTarget?>(null) }
+    var activeRecordingState by remember(card.literacyCharacterId) { mutableStateOf<RecordingState?>(null) }
     var pendingTarget by remember(card.literacyCharacterId) { mutableStateOf<ReadingTarget?>(null) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         activeTarget = if (granted) pendingTarget else null
+        activeRecordingState = if (granted && pendingTarget != null) RecordingState.PREPARING else null
         pendingTarget = null
     }
-    val allContents = remember(card) { listOf(card.character) + card.terms + card.sentences }
+    fun isActivePracticeLocked(): Boolean = activeTarget != null &&
+        activeRecordingState != RecordingState.FINISHED && activeRecordingState != RecordingState.ERROR
 
     fun start(content: LearningContent) {
-        if (activeTarget != null) return
+        // 满星内容已完成当天的练习，不再允许重新打开朗读会话。
+        if (content.learned) return
+        // 仅在准备、录音、评测阶段锁定其它项；已有结果后可以直接切换到其它字词句。
+        if (isActivePracticeLocked()) return
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             activeTarget = content.target
+            activeRecordingState = RecordingState.PREPARING
         } else {
             pendingTarget = content.target
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
-    Dialog(onDismissRequest = {
-        if (activeTarget == null) onDismiss()
-    }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    // 正在评测时也必须允许退出。ReadingDialog 被移除时会在 DisposableEffect 中取消并释放 SDK，
+    // 避免一次没有回包的评测把整个字词句弹层永久锁住。
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Card(
             modifier = Modifier.fillMaxWidth(.9f).fillMaxHeight(.9f),
             shape = RoundedCornerShape(30.dp),
@@ -1321,35 +1301,59 @@ private fun CharacterStudyDialog(
                         Text("${card.word}的朗读练习", style = MaterialTheme.typography.titleLarge, color = Ink)
                         Text("长按汉字可听正确读音", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF7C898D))
                     }
-                    IconButton(onClick = { if (activeTarget == null) onDismiss() }, enabled = activeTarget == null) {
+                    IconButton(onClick = onDismiss) {
                         Icon(Icons.Filled.Close, contentDescription = "关闭学习弹层", tint = Color(0xFF748185))
                     }
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = Line)
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(allContents, key = { it.target.practiceProgressKey() }) { content ->
-                        val isActive = activeTarget?.practiceProgressKey() == content.target.practiceProgressKey()
-                        StudyContentRow(
-                            content = content,
-                            active = isActive,
-                            otherRecordingActive = activeTarget != null && !isActive,
-                            onStart = { start(content) }
+                    item { StudySectionHeader("字", "先认识这个字") }
+                    item(key = card.character.target.practiceProgressKey()) {
+                        StudyPracticeItem(
+                            content = card.character,
+                            activeTarget = activeTarget,
+                            otherRecordingActive = isActivePracticeLocked(),
+                            onStart = { start(card.character) },
+                            onDismiss = { activeTarget = null; activeRecordingState = null },
+                            onReadingStateChanged = { activeRecordingState = it },
+                            onSpeak = onSpeak,
+                            onStopPlayback = onStopPlayback,
+                            onCharacterAudioPointRead = onCharacterAudioPointRead,
+                            onCorrectReadings = onCorrectReadings
                         )
-                        if (isActive) {
-                            Spacer(Modifier.height(8.dp))
-                            ReadingDialog(
-                                target = content.target,
-                                correctReadingCount = content.correctReadings,
-                                onDismiss = { activeTarget = null },
+                    }
+                    item { StudySectionHeader("词", "一词一行，逐个练习") }
+                    items(card.terms, key = { it.target.practiceProgressKey() }) { content ->
+                        StudyPracticeItem(
+                            content = content,
+                            activeTarget = activeTarget,
+                            otherRecordingActive = isActivePracticeLocked(),
+                            onStart = { start(content) },
+                            onDismiss = { activeTarget = null; activeRecordingState = null },
+                            onReadingStateChanged = { activeRecordingState = it },
+                            onSpeak = onSpeak,
+                            onStopPlayback = onStopPlayback,
+                            onCharacterAudioPointRead = onCharacterAudioPointRead,
+                            onCorrectReadings = onCorrectReadings
+                        )
+                    }
+                    if (card.sentences.isNotEmpty()) {
+                        item { StudySectionHeader("句", "读一读完整的句子") }
+                        items(card.sentences, key = { it.target.practiceProgressKey() }) { content ->
+                            StudyPracticeItem(
+                                content = content,
+                                activeTarget = activeTarget,
+                                otherRecordingActive = isActivePracticeLocked(),
+                                onStart = { start(content) },
+                                onDismiss = { activeTarget = null; activeRecordingState = null },
+                                onReadingStateChanged = { activeRecordingState = it },
                                 onSpeak = onSpeak,
                                 onStopPlayback = onStopPlayback,
                                 onCharacterAudioPointRead = onCharacterAudioPointRead,
-                                onCorrectReadings = onCorrectReadings,
-                                inline = true,
-                                startImmediately = true
+                                onCorrectReadings = onCorrectReadings
                             )
                         }
                     }
@@ -1368,62 +1372,220 @@ private fun CharacterStudyDialog(
 }
 
 @Composable
+private fun StudySectionHeader(title: String, subtitle: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Surface(shape = RoundedCornerShape(9.dp), color = WheatLight) {
+            Text(title, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), color = Ink, fontWeight = FontWeight.ExtraBold)
+        }
+        Text(subtitle, color = Color(0xFF7C898D), fontSize = 13.sp)
+        HorizontalDivider(modifier = Modifier.weight(1f), color = Line)
+    }
+}
+
+@Composable
+private fun StudyPracticeItem(
+    content: LearningContent,
+    activeTarget: ReadingTarget?,
+    otherRecordingActive: Boolean,
+    onStart: () -> Unit,
+    onDismiss: () -> Unit,
+    onReadingStateChanged: (RecordingState) -> Unit,
+    onSpeak: (ReadingTarget, String) -> Unit,
+    onStopPlayback: () -> Unit,
+    onCharacterAudioPointRead: (ReadingTarget) -> Unit,
+    onCorrectReadings: (ReadingTarget, Int) -> Int
+) {
+    val active = activeTarget?.practiceProgressKey() == content.target.practiceProgressKey()
+    if (active) {
+        ReadingDialog(
+            target = content.target,
+            correctReadingCount = content.correctReadings,
+            onDismiss = onDismiss,
+            onSpeak = onSpeak,
+            onStopPlayback = onStopPlayback,
+            onCharacterAudioPointRead = onCharacterAudioPointRead,
+            onCorrectReadings = onCorrectReadings,
+            inline = true,
+            startImmediately = true,
+            onReadingStateChanged = onReadingStateChanged
+        )
+    } else {
+        StudyContentRow(
+            content = content,
+            otherRecordingActive = otherRecordingActive,
+            onStart = onStart,
+            onSpeak = onSpeak,
+            onCharacterAudioPointRead = onCharacterAudioPointRead
+        )
+    }
+}
+
+@Composable
 private fun StudyContentRow(
     content: LearningContent,
-    active: Boolean,
     otherRecordingActive: Boolean,
-    onStart: () -> Unit
+    onStart: () -> Unit,
+    onSpeak: (ReadingTarget, String) -> Unit,
+    onCharacterAudioPointRead: (ReadingTarget) -> Unit
 ) {
+    val context = LocalContext.current
+    val evaluationViewModel: ReadingEvaluationViewModel = hiltViewModel()
+    val scope = rememberCoroutineScope()
+    var pointReadCharacterIndex by remember(content.target) { mutableStateOf<Int?>(null) }
+    var isContentPressed by remember(content.target) { mutableStateOf(false) }
     val accent = when {
-        active -> Coral
         content.learned -> Leaf
         else -> Sky
     }
     val background = when {
-        active -> CoralLight
         content.learned -> LeafLight
         else -> SkyLight
     }
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = background.copy(alpha = .58f),
-        border = androidx.compose.foundation.BorderStroke(if (active) 2.dp else 1.dp, accent.copy(alpha = .6f))
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White,
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = .62f))
+    ) {
+        // 未开始时也保留与朗读中完全一致的提示栏位置。这样点“开始”后，
+        // 卡片高度和后续词句的位置都不会因为出现状态提示而跳动。
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // 右侧操作区固定宽度，字、词、句的内容区便统一使用句子的最大可用宽度。
+                StudyContentPanel(
+                    content = content,
+                    accent = accent,
+                    background = background,
+                    contentPressed = isContentPressed,
+                    pointReadCharacterIndex = pointReadCharacterIndex,
+                    modifier = Modifier.weight(1f),
+                    onPressChanged = { isContentPressed = it },
+                    onLongPress = { character, characterIndex ->
+                        val target = content.target
+                        val clickedContent = target.clickedReadingContent(character, characterIndex)
+                        // 词、句仅临时高亮被长按的字；长按主字沿用原有朗读与求助计数逻辑。
+                        pointReadCharacterIndex = characterIndex.takeIf {
+                            target.targetType == "word" || target.targetType == "sentence"
+                        }
+                        context.sendBroadcast(
+                            Intent(ACTION_LITERACY_READING_CONTENT_CLICKED)
+                                .setPackage(context.packageName)
+                                .putExtra(EXTRA_READING_TARGET_TYPE, target.targetType)
+                                .putExtra(EXTRA_READING_CONTENT, clickedContent)
+                                .putExtra(EXTRA_READING_CLICKED_CHARACTER, character.toString())
+                                .putExtra(EXTRA_READING_CHARACTER_INDEX, characterIndex)
+                        )
+                        onSpeak(target, clickedContent)
+                        if (target.contentSource == ReadingContentSource.TASK && target.targetType == "character") {
+                            onCharacterAudioPointRead(target)
+                        }
+                        scope.launch {
+                            // 与朗读中点读一致：记录失败不能影响已经开始的本地朗读。
+                            evaluationViewModel.recordHelpRequest(target, character, characterIndex)
+                        }
+                    }
+                )
+                if (!content.learned) {
+                    Row(
+                        modifier = Modifier.width(172.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        PracticeRecordingDots(active = false, color = accent)
+                        Button(
+                            onClick = onStart,
+                            enabled = !otherRecordingActive,
+                            modifier = Modifier.width(82.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = accent),
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 9.dp)
+                        ) {
+                            Text("开始", maxLines = 1)
+                        }
+                    }
+                }
+            }
+            PracticeMessageSlot()
+        }
+    }
+}
+
+@Composable
+private fun StudyContentPanel(
+    content: LearningContent,
+    accent: Color,
+    background: Color,
+    contentPressed: Boolean,
+    pointReadCharacterIndex: Int?,
+    modifier: Modifier = Modifier,
+    onPressChanged: (Boolean) -> Unit,
+    onLongPress: (Char, Int) -> Unit
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = when {
+            contentPressed -> Sky.copy(alpha = .25f)
+            content.learned -> background.copy(alpha = .65f)
+            else -> Color.White
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            if (contentPressed) 2.dp else 1.dp,
+            if (contentPressed) Sky else accent.copy(alpha = .55f)
+        )
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(start = 7.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    "★".repeat(content.correctReadings) + "☆".repeat(content.requiredReadings - content.correctReadings),
-                    color = Wheat,
-                    fontSize = 23.sp
+            StudyStarRail(content.correctReadings, content.requiredReadings)
+            // 与朗读中的文字使用同一套排版和内边距，避免切换状态时内容框高度变化；
+            // 未开始的行同样保留长按点读和按压反馈，不能因为 UI 重构而丢失原交互。
+            Box(Modifier.weight(1f)) {
+                DialogReadingContent(
+                    target = content.target,
+                    enabled = true,
+                    pointReadCharacterIndex = pointReadCharacterIndex,
+                    onPressChanged = onPressChanged,
+                    onLongPress = onLongPress
                 )
-                Text("${content.correctReadings}/${content.requiredReadings}", color = Color(0xFF7F8B8D), fontSize = 12.sp)
             }
+        }
+    }
+}
+
+/** 行内朗读提示始终占位，状态切换只更新文案，绝不改变练习卡高度。 */
+@Composable
+private fun PracticeMessageSlot(message: String? = null, isError: Boolean = false) {
+    Box(
+        modifier = Modifier.fillMaxWidth().height(18.dp).padding(start = 28.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        message?.let {
             Text(
-                content.text,
-                modifier = Modifier.weight(1f),
-                color = Ink,
-                fontWeight = if (content.target.targetType == "character") FontWeight.ExtraBold else FontWeight.Medium,
-                fontSize = when (content.target.targetType) {
-                    "character" -> 38.sp
-                    "word" -> 20.sp
-                    else -> 18.sp
-                },
-                maxLines = if (content.target.targetType == "sentence") 4 else 1,
+                it,
+                color = if (isError) EvaluationErrorRed else Color(0xFF718084),
+                fontSize = 12.sp,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Button(
-                onClick = onStart,
-                enabled = !otherRecordingActive && !active,
-                colors = ButtonDefaults.buttonColors(containerColor = accent),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Text(if (active) "朗读中" else if (content.learned) "再读一次" else if (content.target.targetType == "character") "开始朗读" else "开始")
-            }
+        }
+    }
+}
+
+@Composable
+private fun StudyStarRail(correctReadings: Int, requiredReadings: Int) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((-2).dp)) {
+        repeat(requiredReadings) { index ->
+            Text(if (index < correctReadings) "★" else "☆", color = Wheat, fontSize = 17.sp, lineHeight = 17.sp)
         }
     }
 }
@@ -1438,7 +1600,8 @@ private fun ReadingDialog(
     onCharacterAudioPointRead: (ReadingTarget) -> Unit,
     onCorrectReadings: (ReadingTarget, Int) -> Int,
     inline: Boolean = false,
-    startImmediately: Boolean = false
+    startImmediately: Boolean = false,
+    onReadingStateChanged: (RecordingState) -> Unit = {}
 ) {
     val context = LocalContext.current
     val evaluationViewModel: ReadingEvaluationViewModel = hiltViewModel()
@@ -1470,6 +1633,10 @@ private fun ReadingDialog(
     // 每次开始或取消都会推进编号，忽略 SDK 取消后迟到的最终回包。
     var evaluationAttemptId by remember(target) { mutableIntStateOf(0) }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
+
+    LaunchedEffect(state) {
+        onReadingStateChanged(state)
+    }
 
     LaunchedEffect(correctReadingCount) {
         displayedCorrectReadingCount = correctReadingCount
@@ -1725,9 +1892,89 @@ private fun ReadingDialog(
     var pointReadCharacterIndex by remember(target) { mutableStateOf<Int?>(null) }
     // 手指按住内容时突出其所在的朗读区域，松手后立即还原。
     var isReadingContentPressed by remember(target) { mutableStateOf(false) }
+    fun handleLongPress(character: Char, characterIndex: Int) {
+        val clickedContent = target.clickedReadingContent(character, characterIndex)
+        discardEvaluationForManualRead()
+        // 词、句点读时仅临时高亮被长按的字，不能与错读红色混用。
+        pointReadCharacterIndex = characterIndex.takeIf {
+            target.targetType == "word" || target.targetType == "sentence"
+        }
+        context.sendBroadcast(
+            Intent(ACTION_LITERACY_READING_CONTENT_CLICKED)
+                .setPackage(context.packageName)
+                .putExtra(EXTRA_READING_TARGET_TYPE, target.targetType)
+                .putExtra(EXTRA_READING_CONTENT, clickedContent)
+                .putExtra(EXTRA_READING_CLICKED_CHARACTER, character.toString())
+                .putExtra(EXTRA_READING_CHARACTER_INDEX, characterIndex)
+        )
+        onSpeak(target, clickedContent)
+        if (target.contentSource == ReadingContentSource.TASK && target.targetType == "character") {
+            onCharacterAudioPointRead(target)
+        }
+        message = "正在播放正确读音"
+        scope.launch {
+            evaluationViewModel.recordHelpRequest(target, character, characterIndex)
+            // 记录异常不影响已经开始的点读；下次长按仍会继续尝试记录。
+        }
+    }
+    fun performAction() {
+        if (state == RecordingState.RECORDING) {
+            state = RecordingState.EVALUATING
+            message = "正在生成评测结果…"
+            controller?.stopOralEvaluation()
+            // 腾讯 SDK 在无有效语音时偶发不回调；超时后恢复为可重试状态，不能锁死其它练习项。
+            val stoppedAttemptId = evaluationAttemptId
+            mainHandler.postDelayed({
+                if (stoppedAttemptId == evaluationAttemptId && state == RecordingState.EVALUATING) {
+                    android.util.Log.w("ReadingEvaluation", "evaluation result timeout after manual finish")
+                    controller?.cancelOralEvaluation()
+                    controller?.release()
+                    controller = null
+                    state = RecordingState.ERROR
+                    message = "评测结果未返回，请重新开始"
+                }
+            }, 15_000)
+        } else if (state == RecordingState.FINISHED && hasCompletedCurrentTarget) {
+            close()
+        } else if (state == RecordingState.FINISHED && isWordGroup && currentWordIndex < wordTargets.lastIndex) {
+            moveToNextWord()
+        } else if (state == RecordingState.FINISHED && isWordGroup) {
+            restartWordGroup()
+        } else {
+            startRecording()
+        }
+    }
+    val actionLabel = when {
+        state == RecordingState.RECORDING -> "读完"
+        state == RecordingState.FINISHED && hasCompletedCurrentTarget -> "完成"
+        state == RecordingState.FINISHED && isWordGroup && currentWordIndex < wordTargets.lastIndex -> "下一词"
+        state == RecordingState.FINISHED && isWordGroup -> "再读一遍"
+        state == RecordingState.FINISHED -> "开始"
+        state == RecordingState.ERROR -> "重试"
+        else -> "开始"
+    }
+    val actionEnabled = sessions.getOrNull(currentWordIndex) != null &&
+        (state == RecordingState.READY || state == RecordingState.RECORDING || state == RecordingState.FINISHED || state == RecordingState.ERROR)
     ReadingDialogContainer(inline = inline, onDismissRequest = ::close) {
-        Card(
-            modifier = if (inline) Modifier.fillMaxWidth() else Modifier.widthIn(max = 500.dp).padding(24.dp),
+        if (inline) {
+            InlineReadingPracticeRow(
+                target = target,
+                correctReadingCount = displayedCorrectReadingCount,
+                requiredReadingCount = target.requiredCorrectReadings(),
+                state = state,
+                message = message,
+                accent = accent,
+                actionLabel = actionLabel,
+                actionEnabled = actionEnabled,
+                wrongCharacterIndexes = evaluationSummary?.wrongCharacterIndexes.orEmpty(),
+                pointReadCharacterIndex = pointReadCharacterIndex,
+                contentPressed = isReadingContentPressed,
+                onPressChanged = { isReadingContentPressed = it },
+                onLongPress = ::handleLongPress,
+                onAction = ::performAction
+            )
+        } else Card(
+            modifier = Modifier.widthIn(max = 500.dp).padding(24.dp),
             shape = RoundedCornerShape(32.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White)
         ) {
@@ -1766,69 +2013,132 @@ private fun ReadingDialog(
                         wrongCharacterIndexes = if (isWordGroup) emptySet() else evaluationSummary?.wrongCharacterIndexes.orEmpty(),
                         pointReadCharacterIndex = pointReadCharacterIndex,
                         onPressChanged = { isReadingContentPressed = it },
-                        onLongPress = { character, characterIndex ->
-                            val clickedContent = target.clickedReadingContent(character, characterIndex)
-                            discardEvaluationForManualRead()
-                            // 词、句点读时仅临时高亮被长按的字，不能与错读红色混用。
-                            pointReadCharacterIndex = characterIndex.takeIf {
-                                target.targetType == "word" || target.targetType == "sentence"
-                            }
-                            context.sendBroadcast(
-                                Intent(ACTION_LITERACY_READING_CONTENT_CLICKED)
-                                    .setPackage(context.packageName)
-                                    .putExtra(EXTRA_READING_TARGET_TYPE, target.targetType)
-                                    .putExtra(EXTRA_READING_CONTENT, clickedContent)
-                                    .putExtra(EXTRA_READING_CLICKED_CHARACTER, character.toString())
-                                    .putExtra(EXTRA_READING_CHARACTER_INDEX, characterIndex)
-                            )
-                            // 点读不依赖网络请求返回：先立刻用当前词/句朗读，
-                            // 后台统一按被长按字是否存在于字库决定是否记录求助，避免孩子等待。
-                            onSpeak(target, clickedContent)
-                            if (target.contentSource == ReadingContentSource.TASK && target.targetType == "character") {
-                                onCharacterAudioPointRead(target)
-                            }
-                            message = "正在播放正确读音"
-                            scope.launch {
-                                evaluationViewModel.recordHelpRequest(target, character, characterIndex)
-                                // 记录异常不影响已经开始的点读；下次长按仍会继续尝试记录。
-                            }
-                        }
+                        onLongPress = ::handleLongPress
                     )
                 }
                 if (state == RecordingState.RECORDING || isWaitingForResult) RecordingAnimation(accent)
                 Button(
-                    onClick = {
-                        if (state == RecordingState.RECORDING) {
-                            state = RecordingState.EVALUATING
-                            message = "正在生成评测结果…"
-                            controller?.stopOralEvaluation()
-                        } else if (state == RecordingState.FINISHED && hasCompletedCurrentTarget) {
-                            close()
-                        } else if (state == RecordingState.FINISHED && isWordGroup && currentWordIndex < wordTargets.lastIndex) {
-                            moveToNextWord()
-                        } else if (state == RecordingState.FINISHED && isWordGroup) {
-                            restartWordGroup()
-                        } else {
-                            startRecording()
-                        }
-                    },
-                    enabled = sessions.getOrNull(currentWordIndex) != null && (state == RecordingState.READY || state == RecordingState.RECORDING || state == RecordingState.FINISHED || state == RecordingState.ERROR),
+                    onClick = ::performAction,
+                    enabled = actionEnabled,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = accent),
                     shape = RoundedCornerShape(18.dp)
                 ) {
-                    Text(
-                        when {
-                            state == RecordingState.RECORDING -> if (target.targetType == "character") "我读完了" else "结束"
-                            state == RecordingState.FINISHED && hasCompletedCurrentTarget -> "完成"
-                            state == RecordingState.FINISHED && isWordGroup && currentWordIndex < wordTargets.lastIndex -> "下一词"
-                            state == RecordingState.FINISHED && isWordGroup -> "再读一遍"
-                            state == RecordingState.FINISHED -> if (target.targetType == "character") "开始朗读" else "再读一次"
-                            state == RecordingState.ERROR -> if (target.targetType == "character") "开始朗读" else "重试"
-                            else -> if (target.targetType == "character") "开始朗读" else "开始"
-                        }
-                    )
+                    Text(actionLabel)
                 }
+            }
+        }
+    }
+}
+
+/** 首页学习弹层的行内朗读区：内容、五点动画和操作按钮始终保持在同一行。 */
+@Composable
+private fun InlineReadingPracticeRow(
+    target: ReadingTarget,
+    correctReadingCount: Int,
+    requiredReadingCount: Int,
+    state: RecordingState,
+    message: String,
+    accent: Color,
+    actionLabel: String,
+    actionEnabled: Boolean,
+    wrongCharacterIndexes: Set<Int>,
+    pointReadCharacterIndex: Int?,
+    contentPressed: Boolean,
+    onPressChanged: (Boolean) -> Unit,
+    onLongPress: (Char, Int) -> Unit,
+    onAction: () -> Unit
+) {
+    val completed = correctReadingCount >= requiredReadingCount
+    val panelAccent = when {
+        completed -> Leaf
+        state == RecordingState.RECORDING || state == RecordingState.EVALUATING -> Coral
+        wrongCharacterIndexes.isNotEmpty() -> Coral
+        else -> Sky
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = Color.White,
+        border = androidx.compose.foundation.BorderStroke(2.dp, panelAccent.copy(alpha = .72f))
+    ) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    color = when {
+                        contentPressed -> Sky.copy(alpha = .25f)
+                        completed -> LeafLight.copy(alpha = .62f)
+                        else -> Color.White
+                    },
+                    border = androidx.compose.foundation.BorderStroke(
+                        if (contentPressed) 2.dp else 1.dp,
+                        if (contentPressed) Sky else panelAccent.copy(alpha = .55f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 7.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StudyStarRail(correctReadingCount, requiredReadingCount)
+                        Box(Modifier.weight(1f)) {
+                            DialogReadingContent(
+                                target = target,
+                                enabled = true,
+                                wrongCharacterIndexes = wrongCharacterIndexes,
+                                pointReadCharacterIndex = pointReadCharacterIndex,
+                                onPressChanged = onPressChanged,
+                                onLongPress = onLongPress
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.width(172.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    PracticeRecordingDots(
+                        active = state == RecordingState.RECORDING || state == RecordingState.EVALUATING,
+                        color = accent
+                    )
+                    Button(
+                        onClick = onAction,
+                        enabled = actionEnabled,
+                        modifier = Modifier.width(82.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accent),
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 9.dp)
+                    ) {
+                        Text(actionLabel, maxLines = 1)
+                    }
+                }
+            }
+            PracticeMessageSlot(
+                message = message,
+                isError = state == RecordingState.ERROR
+            )
+        }
+    }
+}
+
+@Composable
+private fun PracticeRecordingDots(active: Boolean, color: Color) {
+    if (active) {
+        RecordingAnimation(color)
+    } else {
+        Row(
+            modifier = Modifier.width(80.dp).height(18.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            repeat(5) {
+                Surface(shape = CircleShape, color = color.copy(alpha = .32f), modifier = Modifier.size(12.dp)) {}
             }
         }
     }
@@ -1854,8 +2164,8 @@ private fun RecordingAnimation(color: Color) {
     val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "recording")
     // 圆点始终占用相同空间，只在自己的图层内缩放，避免把下方按钮来回顶动。
     Row(
-        modifier = Modifier.height(18.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.width(80.dp).height(18.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(5) { index ->
@@ -2024,6 +2334,7 @@ private fun DialogCharacterText(
     onPressChanged: (Boolean) -> Unit = {},
     onLongPress: (Char, Int) -> Unit
 ) {
+    val isSentence = targetType == "sentence"
     val text = buildAnnotatedString {
         target.forEachIndexed { index, character ->
             val color = if (character.isChineseCharacter() && index in wrongCharacterIndexes) EvaluationErrorRed else Ink
@@ -2048,67 +2359,73 @@ private fun DialogCharacterText(
             }
             ?: rawCharacterIndex
     }
-    Text(
-        text = text,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(18.dp)
-            // 短按不播放，长按时再根据文字布局换算出精确的汉字位置。
-            // 首次打开弹层时 TextLayoutResult 由下一帧才回写；将其作为键可确保
-            // 手势协程在布局就绪后重新绑定，不会因首次长按读到空布局而被静默忽略。
-            .pointerInput(target, enabled, layoutResult) {
-                detectTapGestures(
-                    onPress = { position ->
-                        if (enabled && characterIndexAt(position)?.let(target::getOrNull)?.isChineseCharacter() == true) {
-                            onPressChanged(true)
-                            try {
-                                tryAwaitRelease()
-                            } finally {
-                                onPressChanged(false)
+    // 句子将文本块置于内容区中央，但固定一个略小于内容区的阅读宽度，
+    // 让换行后的每一行从同一条左边线开始，读起来更自然。
+    Box(
+        modifier = modifier.fillMaxWidth().padding(18.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier
+                .fillMaxWidth(if (isSentence) .92f else 1f)
+                // 短按不播放，长按时再根据文字布局换算出精确的汉字位置。
+                // 首次打开弹层时 TextLayoutResult 由下一帧才回写；将其作为键可确保
+                // 手势协程在布局就绪后重新绑定，不会因首次长按读到空布局而被静默忽略。
+                .pointerInput(target, enabled, layoutResult) {
+                    detectTapGestures(
+                        onPress = { position ->
+                            if (enabled && characterIndexAt(position)?.let(target::getOrNull)?.isChineseCharacter() == true) {
+                                onPressChanged(true)
+                                try {
+                                    tryAwaitRelease()
+                                } finally {
+                                    onPressChanged(false)
+                                }
                             }
-                        }
-                    },
-                    onLongPress = { position ->
-                        if (!enabled) return@detectTapGestures
-                        val currentLayout = layoutResult
-                        if (currentLayout == null) {
-                            android.util.Log.w("LiteracyPointRead", "长按未处理：文字布局尚未就绪，text=$target")
-                            return@detectTapGestures
-                        }
-                        val characterIndex = characterIndexAt(position) ?: return@detectTapGestures
-                        target.getOrNull(characterIndex)
-                            ?.takeIf { it.isChineseCharacter() }
-                            ?.let { character ->
-                                android.util.Log.d(
+                        },
+                        onLongPress = { position ->
+                            if (!enabled) return@detectTapGestures
+                            val currentLayout = layoutResult
+                            if (currentLayout == null) {
+                                android.util.Log.w("LiteracyPointRead", "长按未处理：文字布局尚未就绪，text=$target")
+                                return@detectTapGestures
+                            }
+                            val characterIndex = characterIndexAt(position) ?: return@detectTapGestures
+                            target.getOrNull(characterIndex)
+                                ?.takeIf { it.isChineseCharacter() }
+                                ?.let { character ->
+                                    android.util.Log.d(
+                                        "LiteracyPointRead",
+                                        "已捕获长按，text=$target，character=$character，index=$characterIndex"
+                                    )
+                                    onLongPress(character, characterIndex)
+                                }
+                                ?: android.util.Log.d(
                                     "LiteracyPointRead",
-                                    "已捕获长按，text=$target，character=$character，index=$characterIndex"
+                                    "长按未命中汉字，text=$target，index=$characterIndex"
                                 )
-                                onLongPress(character, characterIndex)
-                            }
-                            ?: android.util.Log.d(
-                                "LiteracyPointRead",
-                                "长按未命中汉字，text=$target，index=$characterIndex"
-                            )
-                    }
-                )
-            },
-        style = MaterialTheme.typography.bodyLarge.copy(
-            textAlign = TextAlign.Center,
-            // 朗读弹层是孩子跟读时的主视觉：词、句需要明显大于普通正文，
-            // 句子保留较小一级以便较长内容在平板上自然换行。
-            fontSize = when (targetType) {
-                "word" -> 40.sp
-                "sentence" -> 34.sp
-                else -> if (target.count { it.isChineseCharacter() } == 1) 58.sp else 34.sp
-            },
-            letterSpacing = when (targetType) {
-                "word", "sentence" -> 1.5.sp
-                else -> 0.sp
-            },
-            fontWeight = FontWeight.ExtraBold
-        ),
-        onTextLayout = { layoutResult = it }
-    )
+                        }
+                    )
+                },
+            style = MaterialTheme.typography.bodyLarge.copy(
+                textAlign = if (isSentence) TextAlign.Start else TextAlign.Center,
+                // 朗读弹层是孩子跟读时的主视觉：词、句需要明显大于普通正文，
+                // 句子保留较小一级以便较长内容在平板上自然换行。
+                fontSize = when (targetType) {
+                    "word" -> 40.sp
+                    "sentence" -> 34.sp
+                    else -> if (target.count { it.isChineseCharacter() } == 1) 58.sp else 34.sp
+                },
+                letterSpacing = when (targetType) {
+                    "word", "sentence" -> 1.5.sp
+                    else -> 0.sp
+                },
+                fontWeight = FontWeight.ExtraBold
+            ),
+            onTextLayout = { layoutResult = it }
+        )
+    }
 }
 
 private fun Char.isChineseCharacter(): Boolean = this in '\u4E00'..'\u9FFF'
