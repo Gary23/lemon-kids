@@ -16,6 +16,7 @@
 | 计划/个人资料 | `feature/plan/PlanScreen.kt`、`feature/profile/` |
 | 语音朗读 | `util/KidTtsManager.kt`、`di/KidTtsEntryPoint.kt` |
 | 到点提醒 | `reminder/TaskReminderScheduler.kt`、`TaskReminderReceiver.kt` |
+| 桌面任务卡片 | `widget/TaskWidgetProvider.kt`、`res/xml/task_widget_info.xml` |
 
 ## 路由与约束
 
@@ -25,6 +26,8 @@
 - 任务完成、撤销和奖励兑换依赖 `:shared` Repository/RPC；页面只负责展示状态与触发 ViewModel。
 - 有截止时间的待完成任务会在孩子端以本地通知提醒；首次启动需取得通知权限。
 - 今日任务按上午、下午、晚上展示；无时间任务归入上午，避免遗漏。
+- 任务端提供标准 Android 桌面小部件“今日任务卡片”，当前以演示任务验证荣耀平板桌面的识别与尺寸调整。
+- 桌面卡片宽度小于 `320dp` 时展示单列任务，达到该宽度时展示双列；卡片由 `onAppWidgetOptionsChanged` 在用户拖动尺寸后刷新。
 
 ## 修改后验证
 

@@ -18,6 +18,19 @@
             android:name=".reminder.TaskReminderReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".widget.TaskWidgetProvider"
+            android:exported="true"
+            android:label="今日任务卡片">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/task_widget_info" />
+        </receiver>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

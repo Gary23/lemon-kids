@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/task_widget_background"
+    android:orientation="vertical"
+    android:padding="18dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="今日任务 · 4 项待完成"
+        android:textColor="#2B210B"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="点击卡片，打开柠檬小管家"
+        android:textColor="#786B43"
+        android:textSize="13sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:background="@drawable/task_widget_task_background"
+        android:padding="12dp"
+        android:text="08:30  整理书包"
+        android:textColor="#2B210B"
+        android:textSize="16sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/task_widget_task_background"
+        android:padding="12dp"
+        android:text="16:30  完成数学练习"
+        android:textColor="#2B210B"
+        android:textSize="16sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/task_widget_task_background"
+        android:padding="12dp"
+        android:text="19:00  阅读 10 分钟"
+        android:textColor="#2B210B"
+        android:textSize="16sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/task_widget_task_background"
+        android:padding="12dp"
+        android:text="20:30  整理明日课本"
+        android:textColor="#2B210B"
+        android:textSize="16sp" />
+</LinearLayout>
