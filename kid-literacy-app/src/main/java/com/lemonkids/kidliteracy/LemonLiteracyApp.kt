@@ -1493,23 +1493,22 @@ private fun StudyContentRow(
                         }
                     }
                 )
-                if (!content.learned) {
-                    Row(
-                        modifier = Modifier.width(172.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                // 即使满星后隐藏动画与按钮，也必须保留完整的右侧操作区，不能让文字区扩张。
+                Row(
+                    modifier = Modifier.width(172.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    PracticeRecordingDots(active = false, color = accent, visible = !content.learned)
+                    Button(
+                        onClick = onStart,
+                        enabled = !content.learned && !otherRecordingActive,
+                        modifier = Modifier.width(82.dp).graphicsLayer { alpha = if (content.learned) 0f else 1f },
+                        colors = ButtonDefaults.buttonColors(containerColor = accent),
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 9.dp)
                     ) {
-                        PracticeRecordingDots(active = false, color = accent)
-                        Button(
-                            onClick = onStart,
-                            enabled = !otherRecordingActive,
-                            modifier = Modifier.width(82.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = accent),
-                            shape = RoundedCornerShape(14.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 9.dp)
-                        ) {
-                            Text("开始", maxLines = 1)
-                        }
+                        Text("开始", maxLines = 1)
                     }
                 }
             }
@@ -2105,12 +2104,14 @@ private fun InlineReadingPracticeRow(
                 ) {
                     PracticeRecordingDots(
                         active = state == RecordingState.RECORDING || state == RecordingState.EVALUATING,
-                        color = accent
+                        color = accent,
+                        // 最后一颗星点亮的同一帧即隐藏，位置仍由固定宽度的占位区域保持。
+                        visible = !completed
                     )
                     Button(
                         onClick = onAction,
-                        enabled = actionEnabled,
-                        modifier = Modifier.width(82.dp),
+                        enabled = !completed && actionEnabled,
+                        modifier = Modifier.width(82.dp).graphicsLayer { alpha = if (completed) 0f else 1f },
                         colors = ButtonDefaults.buttonColors(containerColor = accent),
                         shape = RoundedCornerShape(14.dp),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 9.dp)
@@ -2128,12 +2129,14 @@ private fun InlineReadingPracticeRow(
 }
 
 @Composable
-private fun PracticeRecordingDots(active: Boolean, color: Color) {
+private fun PracticeRecordingDots(active: Boolean, color: Color, visible: Boolean = true) {
     if (active) {
-        RecordingAnimation(color)
+        Box(Modifier.width(80.dp).height(18.dp).graphicsLayer { alpha = if (visible) 1f else 0f }) {
+            RecordingAnimation(color)
+        }
     } else {
         Row(
-            modifier = Modifier.width(80.dp).height(18.dp),
+            modifier = Modifier.width(80.dp).height(18.dp).graphicsLayer { alpha = if (visible) 1f else 0f },
             horizontalArrangement = Arrangement.spacedBy(5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

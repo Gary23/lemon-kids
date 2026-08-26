@@ -5,6 +5,7 @@
 Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通过共享绑定码恢复孩子登录态；评测与智能生成均经云函数调用，APK 不保存腾讯或 DeepSeek 长期密钥。
 
 当前业务行为的唯一正式来源是 [学习与数据规则](docs/LEARNING-RULES.md)。页面布局、状态和交互验收见 [UI 规范](docs/UI-SPEC.md)。
+词句指定读音的协议、数据规则与运维验收见 [音素资产文档](docs/phonetic-assets/README.md)。
 
 ## AI 定位入口
 
@@ -17,6 +18,7 @@ Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通
 - 主题与颜色：`ui/theme/LiteracyTheme.kt`。
 - 当前学习、点读和数据流转规则：[LEARNING-RULES.md](docs/LEARNING-RULES.md)。
 - 详细页面/验收状态：[UI-SPEC.md](docs/UI-SPEC.md)。
+- 词句音素资产：[概览](docs/phonetic-assets/README.md)、[设计](docs/phonetic-assets/design.md)、[部署与验收](docs/phonetic-assets/operations.md)。
 - 评测接口、凭证与部署：[认字口语评测云函数](../cloud-functions/evaluate-reading/README.md)。
 - 预生成点读音频的运行与部署说明：[认字教学音频生成云函数](../cloud-functions/generate-literacy-audio/README.md)。
 
