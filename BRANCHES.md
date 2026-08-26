@@ -1,17 +1,15 @@
-# 开发分支台账
+# 分支说明
 
-本文件记录当前仍需关注的开发分支，避免将并行功能混淆。功能完成并合入 `main` 后，将对应条目移至提交历史即可。
+现有开发分支均已合并到 `product`，不再在本文件保留功能分支的开发说明。
 
-| 分支 | 开发内容 | 当前状态 | 合并注意事项 |
-| --- | --- | --- | --- |
-| `main` | 稳定主线；当前线上基线。 | 已推送 | 只合并完成验证的功能分支。 |
-| `product` | 产品集成分支：基于 `main`，汇总认字连续朗读与词句逐字拼音评测功能。 | 本地已创建，合并提交 `a796a10`，尚未推送。 | 上线前执行 `supabase/sql/20260813_literacy_example_pinyins.sql`，部署评测云函数 ZIP，并完成认字端构建和真机验收。 |
-| `feature/known-character-review-stars` | 已认识字按 `recognized_at` 从近到远取最近 24 个：前 8 个主字读 3 次、中间 8 个读 2 次、后 8 个读 1 次；词语始终读 1 次。 | 已完成 Kotlin 编译验证，待推送。 | 改动认字端首页分组、认字页星级与本地完成态；合并时注意与其他 `LemonLiteracyApp.kt` 改动协调。 |
-| `feature/literacy-character-three-reads` | 仅认字页：主字连续朗读三次填满三颗星；点击“我读完了”后评测，不再要求反复点击开始/结束；词和句不改。 | 开发中，改动尚未提交 | 与拼音评测分支都改动认字端主页面，合并前需人工解决同文件冲突。 |
-| `feature/literacy-phonetic-reading-evaluation` | 词、句逐字无声调拼音：DeepSeek 生成、人工可编辑、入库；腾讯评测指定读音且不检测声调，历史无拼音数据兼容原模式。 | 已提交并推送，提交 `a91ba03` | 合并前先在 Supabase 执行 `supabase/sql/20260813_literacy_example_pinyins.sql`，并部署对应评测函数 ZIP。 |
+| 分支 | 用途 | 当前状态 |
+| --- | --- | --- |
+| `main` | 稳定主线与基础版本。 | 已推送。 |
+| `product` | 产品集成与发布分支。 | 已推送；认字端发布标签见下表。 |
 
-## 推荐合并顺序
+## `product` 认字端发布标签
 
-1. 完成并验证 `feature/literacy-character-three-reads`，提交后先合入 `main`。
-2. 再合并 `feature/literacy-phonetic-reading-evaluation`，处理 `LemonLiteracyApp.kt` 的冲突并重新构建认字端。
-3. 部署前按各分支 README 与 SQL 文件执行数据库迁移、云函数部署和真机验收。
+| 标签 | 指向提交 | 说明 |
+| --- | --- | --- |
+| `认字端appv1.0` | `e72154a` | 合并已提交的认字评测改造后的产品基线。 |
+| `认字端appv1.1` | `f4886a5` | 合并认字端文档整理与复习优化后的产品版本。 |
