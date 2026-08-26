@@ -1,6 +1,7 @@
 package com.lemonkids.kidliteracy.feature.reading
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import android.util.Log
 import com.lemonkids.shared.auth.SessionRecoveryCoordinator
 import com.lemonkids.shared.model.ChildLiteracyCharacter
@@ -12,6 +13,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -21,6 +28,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.HttpURLConnection
 import java.net.URL
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 
 enum class ReadingContentSource(val wireValue: String) {
@@ -99,6 +108,48 @@ class ReadingEvaluationViewModel @Inject constructor(
     private val credentialMutex = Mutex()
     private var credentialCache: TencentEvaluationCredentials? = null
     private var pendingCredential: CompletableDeferred<Result<TencentEvaluationCredentials>>? = null
+    private var evaluationCacheScope: EvaluationCacheScope? = null
+    private val preparedEvaluations = mutableMapOf<String, PreparedEvaluation>()
+    private val pendingPreparedEvaluations = mutableMapOf<String, CompletableDeferred<Result<PreparedEvaluation>>>()
+
+    /**
+     * 评测准备参数仅在当天、当前孩子、当前首页数据批次内存活。
+     * 不落盘，因此进程重启或次日均不会复用旧的词句音素参数。
+     */
+    fun beginDailyEvaluationCache(childId: String, homeBatchId: String) {
+        val scope = EvaluationCacheScope(childId, homeBatchId, chinaToday())
+        if (evaluationCacheScope != scope) {
+            evaluationCacheScope = scope
+            preparedEvaluations.clear()
+            pendingPreparedEvaluations.clear()
+        }
+    }
+
+    fun invalidateEvaluationCacheForCharacter(literacyCharacterId: String) {
+        val keys = preparedEvaluations.keys.filter { it.contains("|$literacyCharacterId|") }
+        keys.forEach(preparedEvaluations::remove)
+    }
+
+    /** 主字的 TEXT_MODE=0 参考文本完全由客户端决定，无需网络准备。 */
+    fun prepareCharacterEvaluation(target: ReadingTarget, remainingReadings: Int): PreparedEvaluation =
+        PreparedEvaluation(
+            refText = target.displayText.repeat(remainingReadings.coerceAtLeast(1)),
+            textMode = 0
+        )
+
+    /** 词句预取：相同请求合并，且最多并发 3 个，避免打开弹层时拥塞网络。 */
+    fun prefetchWordAndSentenceEvaluations(targets: List<ReadingTarget>) {
+        val scope = evaluationCacheScope ?: return
+        viewModelScope.launch {
+            val semaphore = Semaphore(3)
+            coroutineScope {
+                targets
+                    .filter { it.targetType == "word" || it.targetType == "sentence" }
+                    .map { target -> async { semaphore.withPermit { prepareCachedEvaluation(target, scope) } } }
+                    .awaitAll()
+            }
+        }
+    }
 
     /**
      * 进入认字页时只领取一份短期凭证。字、词、句的参考文本来自当前页面已加载的
@@ -188,6 +239,45 @@ class ReadingEvaluationViewModel @Inject constructor(
             """{"action":"prepare_evaluation","literacyCharacterId":"${target.literacyCharacterId.jsonEscape()}","targetType":"${target.targetType.jsonEscape()}","contentSource":"${target.contentSource.wireValue}","repeatCount":$repeatCount${target.sentenceText?.let { ",\"sentenceText\":\"${it.jsonEscape()}\"" }.orEmpty()}${target.wordText?.let { ",\"wordText\":\"${it.jsonEscape()}\"" }.orEmpty()}}"""
         ).requiredObject("evaluation")
         PreparedEvaluation(response.requiredString("refText"), response.requiredString("textMode").toInt())
+    }
+
+    suspend fun prepareCachedEvaluation(target: ReadingTarget): Result<PreparedEvaluation> =
+        prepareCachedEvaluation(target, evaluationCacheScope)
+
+    private suspend fun prepareCachedEvaluation(
+        target: ReadingTarget,
+        expectedScope: EvaluationCacheScope?
+    ): Result<PreparedEvaluation> {
+        if (target.targetType == "character") return Result.success(prepareCharacterEvaluation(target, 1))
+        if (evaluationCacheScope?.date != chinaToday()) {
+            // 应用跨午夜仍在前台时，也不能让旧 map 留作后续可复用数据。
+            evaluationCacheScope = null
+            preparedEvaluations.clear()
+            synchronized(pendingPreparedEvaluations) { pendingPreparedEvaluations.clear() }
+        }
+        val scope = expectedScope ?: return prepareEvaluation(target)
+        // 午夜切换后绝不把前一天仍在执行的请求结果写回新缓存。
+        if (scope.date != chinaToday() || scope != evaluationCacheScope) return prepareEvaluation(target)
+        val key = target.evaluationCacheKey()
+        preparedEvaluations[key]?.let { return Result.success(it) }
+        var owner = false
+        val deferred = synchronized(pendingPreparedEvaluations) {
+            preparedEvaluations[key]?.let { return Result.success(it) }
+            pendingPreparedEvaluations[key] ?: CompletableDeferred<Result<PreparedEvaluation>>().also {
+                pendingPreparedEvaluations[key] = it
+                owner = true
+            }
+        }
+        if (!owner) return deferred.await()
+        val result = prepareEvaluation(target)
+        synchronized(pendingPreparedEvaluations) {
+            if (result.isSuccess && evaluationCacheScope == scope && scope.date == chinaToday()) {
+                preparedEvaluations[key] = result.getOrThrow()
+            }
+            pendingPreparedEvaluations.remove(key)
+        }
+        deferred.complete(result)
+        return result
     }
 
     /** 只生成可编辑预览，不会向 Supabase 写入任何待认识任务。 */
@@ -313,3 +403,20 @@ private fun String.jsonEscape(): String = buildString {
         }
     }
 }
+
+private data class EvaluationCacheScope(
+    val childId: String,
+    val homeBatchId: String,
+    val date: String
+)
+
+private fun chinaToday(): String = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString()
+
+/** 缓存键保留目标来源、任务、类型、位置与文本，防止同文内容串用评测参数。 */
+private fun ReadingTarget.evaluationCacheKey(): String = listOf(
+    contentSource.wireValue,
+    literacyCharacterId,
+    targetType,
+    itemOrder.toString(),
+    wordText ?: sentenceText ?: displayText
+).joinToString("|")

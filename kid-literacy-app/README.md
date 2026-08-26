@@ -5,11 +5,12 @@
 Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通过共享绑定码恢复孩子登录态；评测与智能生成均经云函数调用，APK 不保存腾讯或 DeepSeek 长期密钥。
 
 当前业务行为的唯一正式来源是 [学习与数据规则](docs/LEARNING-RULES.md)。页面布局、状态和交互验收见 [UI 规范](docs/UI-SPEC.md)。
+词句指定读音的协议、数据规则与运维验收见 [音素资产文档](docs/phonetic-assets/README.md)。
 
 ## AI 定位入口
 
 - 启动：`MainActivity.kt` → `LemonLiteracyApp()`。
-- 首页分组与学习页页面切换：`LemonLiteracyApp.kt`。
+- 首页分组、单字学习弹层与朗读交互：`LemonLiteracyApp.kt`。
 - 首页任务与已认识字加载：`feature/home/LiteracyHomeViewModel.kt`。
 - 待认识字全量展示：`feature/pending/PendingCharactersViewModel.kt`。
 - 字库状态与加载逻辑：`feature/library/LibraryViewModel.kt`。
@@ -17,12 +18,13 @@ Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通
 - 主题与颜色：`ui/theme/LiteracyTheme.kt`。
 - 当前学习、点读和数据流转规则：[LEARNING-RULES.md](docs/LEARNING-RULES.md)。
 - 详细页面/验收状态：[UI-SPEC.md](docs/UI-SPEC.md)。
+- 词句音素资产：[概览](docs/phonetic-assets/README.md)、[设计](docs/phonetic-assets/design.md)、[部署与验收](docs/phonetic-assets/operations.md)。
 - 评测接口、凭证与部署：[认字口语评测云函数](../cloud-functions/evaluate-reading/README.md)。
 - 预生成点读音频的运行与部署说明：[认字教学音频生成云函数](../cloud-functions/generate-literacy-audio/README.md)。
 
 ## 技术边界
 
-字库已通过 `LibraryViewModel` 接入 Repository；认字首页通过 `LiteracyHomeViewModel` 读取真实任务。评测请求由 `ReadingEvaluationViewModel` 调用腾讯 SCF，APK 不保存腾讯长期密钥。`RECORD_AUDIO`、拒绝授权态与取消录音逻辑已接入；逐字评测结果解析以腾讯真机返回结构为准。
+字库已通过 `LibraryViewModel` 接入 Repository；认字首页通过 `LiteracyHomeViewModel` 读取真实任务，待认识字排在已认识字之前，点击单字打开统一学习弹层：待认识字练习字、词、句，已认识字复习只练字、词。评测请求由 `ReadingEvaluationViewModel` 调用腾讯 SCF，APK 不保存腾讯长期密钥：主字本地构造 `TEXT_MODE=0` 参考文本，待认识字的词、句和已认识字的词预取服务端音素参数并仅在当日内存中缓存。`RECORD_AUDIO`、拒绝授权态与取消录音逻辑已接入；逐字评测结果解析以腾讯真机返回结构为准。
 
 ## 登录会话恢复
 
