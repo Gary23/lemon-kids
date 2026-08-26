@@ -89,13 +89,15 @@ data class PreparedEvaluation(val refText: String, val textMode: Int)
 data class LiteracyTasksPreview(
     val tasks: List<GeneratedLiteracyTask>,
     val knownCharacters: List<String>,
-    val skippedExistingCharacters: List<String>
+    val skippedExistingCharacters: List<String>,
+    val skippedRecognizedCharacters: List<String>
 )
 
 data class SavedLiteracyTasks(
     val createdCharacters: List<String>,
     val knownCharacters: List<String>,
-    val skippedExistingCharacters: List<String>
+    val skippedExistingCharacters: List<String>,
+    val skippedRecognizedCharacters: List<String>
 )
 
 @HiltViewModel
@@ -308,7 +310,11 @@ class ReadingEvaluationViewModel @Inject constructor(
             ?.jsonArray
             ?.mapNotNull { it.jsonPrimitive.contentOrNull }
             .orEmpty()
-        LiteracyTasksPreview(tasks, knownCharacters, skippedExistingCharacters)
+        val skippedRecognizedCharacters = preview["skippedRecognizedCharacters"]
+            ?.jsonArray
+            ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+            .orEmpty()
+        LiteracyTasksPreview(tasks, knownCharacters, skippedExistingCharacters, skippedRecognizedCharacters)
     }
 
     /** 家长确认或修改预览后，服务端校验内容及最新字库，再写入待认识任务。 */
@@ -338,7 +344,11 @@ class ReadingEvaluationViewModel @Inject constructor(
             ?.jsonArray
             ?.mapNotNull { it.jsonPrimitive.contentOrNull }
             .orEmpty()
-        SavedLiteracyTasks(createdCharacters, knownCharacters, skippedExistingCharacters)
+        val skippedRecognizedCharacters = generated["skippedRecognizedCharacters"]
+            ?.jsonArray
+            ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+            .orEmpty()
+        SavedLiteracyTasks(createdCharacters, knownCharacters, skippedExistingCharacters, skippedRecognizedCharacters)
     }
 
     private suspend fun request(

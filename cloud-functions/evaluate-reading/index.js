@@ -190,9 +190,24 @@ async function loadKnownCharacterSet(childId) {
   return knownCharacters;
 }
 
-async function loadExistingLiteracyCharacters(childId) {
+/**
+ * 只有尚未完成的任务才能占用“待认识”位置。
+ *
+ * 已完成任务会保留在 child_literacy_characters 中作为学习历史，但客户端会依据
+ * learned_at 将其从待认识列表隐藏；若这里不同时过滤，就会把已完成字误报成
+ * “已有待认识任务”，导致家长无法重新添加复习任务。
+ */
+async function loadUnlearnedLiteracyCharacters(childId) {
   const rows = await supabase(
-    `child_literacy_characters?child_id=eq.${encodeURIComponent(childId)}&select=character`
+    `child_literacy_characters?child_id=eq.${encodeURIComponent(childId)}&learned_at=is.null&select=character`
+  );
+  return new Set((rows || []).map((row) => row.character).filter((character) => typeof character === 'string'));
+}
+
+/** 已认识字仍在复习表中时不可重新添加；存入字库后该记录会被物理移除，届时允许添加。 */
+async function loadRecognizedLiteracyCharacters(childId) {
+  const rows = await supabase(
+    `recognized_characters?child_id=eq.${encodeURIComponent(childId)}&select=character`
   );
   return new Set((rows || []).map((row) => row.character).filter((character) => typeof character === 'string'));
 }
@@ -536,20 +551,26 @@ async function generateWithDeepSeek(requestedCharacters, allowedCharacters) {
 
 async function previewGeneratedLiteracyTasks(childId, rawCharacters) {
   const requestedCharacters = normalizeRequestedCharacters(rawCharacters);
-  const [knownCharacters, existingCharacters] = await Promise.all([
+  const [knownCharacters, unlearnedCharacters, recognizedCharacters] = await Promise.all([
     loadKnownCharacterSet(childId),
-    loadExistingLiteracyCharacters(childId)
+    loadUnlearnedLiteracyCharacters(childId),
+    loadRecognizedLiteracyCharacters(childId)
   ]);
-  // 字库已有字仍生成可编辑的字词句，只在预览中标记；已有待认识任务的同字才跳过，避免重复创建。
+  // 字库已有字仍生成可编辑的字词句；未完成任务和已认识复习字各自占用同字入口。
   const knownCharactersInRequest = requestedCharacters.filter((character) => knownCharacters.has(character));
-  const skippedExistingCharacters = requestedCharacters.filter((character) => existingCharacters.has(character));
-  const charactersToCreate = requestedCharacters.filter((character) => !existingCharacters.has(character));
+  const skippedRecognizedCharacters = requestedCharacters.filter((character) => recognizedCharacters.has(character));
+  const skippedExistingCharacters = requestedCharacters.filter(
+    (character) => !recognizedCharacters.has(character) && unlearnedCharacters.has(character)
+  );
+  const charactersToCreate = requestedCharacters.filter(
+    (character) => !recognizedCharacters.has(character) && !unlearnedCharacters.has(character)
+  );
   if (!charactersToCreate.length) {
-    return { tasks: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters };
+    return { tasks: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
   }
   const allowedCharacters = new Set([...knownCharacters, ...requestedCharacters]);
   const tasks = await generateWithDeepSeek(charactersToCreate, allowedCharacters);
-  return { tasks, knownCharacters: knownCharactersInRequest, skippedExistingCharacters };
+  return { tasks, knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
 }
 
 async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
@@ -558,14 +579,20 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
   if (rawItems.some((item) => !requestedCharacters.includes(item?.character))) {
     throw new HttpError(400, '提交内容包含未输入的汉字');
   }
-  const [knownCharactersAtStart, existingCharacters] = await Promise.all([
+  const [knownCharactersAtStart, unlearnedCharacters, recognizedCharacters] = await Promise.all([
     loadKnownCharacterSet(childId),
-    loadExistingLiteracyCharacters(childId)
+    loadUnlearnedLiteracyCharacters(childId),
+    loadRecognizedLiteracyCharacters(childId)
   ]);
-  // 字库已有字允许继续创建待认识任务；保存时只跳过已有待认识任务的同字。
+  // 字库已有字及历史已完成任务均允许再次创建；未完成或已认识同字任务不允许覆盖。
   const knownCharactersInRequest = requestedCharacters.filter((character) => knownCharactersAtStart.has(character));
-  const skippedExistingCharacters = requestedCharacters.filter((character) => existingCharacters.has(character));
-  const charactersToCreate = requestedCharacters.filter((character) => !existingCharacters.has(character));
+  const skippedRecognizedCharacters = requestedCharacters.filter((character) => recognizedCharacters.has(character));
+  const skippedExistingCharacters = requestedCharacters.filter(
+    (character) => !recognizedCharacters.has(character) && unlearnedCharacters.has(character)
+  );
+  const charactersToCreate = requestedCharacters.filter(
+    (character) => !recognizedCharacters.has(character) && !unlearnedCharacters.has(character)
+  );
 
   const [familyId, knownCharacters, sortRows] = await Promise.all([
     loadChildFamilyId(childId),
@@ -584,7 +611,7 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
     { allowOutOfLibraryWords: true }
   );
   if (!generatedTasks.length) {
-    return { created: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters };
+    return { created: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
   }
   const nextSortOrder = Number(sortRows?.[0]?.sort_order || 0) + 1;
   const rows = generatedTasks.map((task, index) => ({
@@ -609,7 +636,8 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
   return {
     created: (created || []).map((row) => ({ id: row.id, character: row.character })),
     knownCharacters: knownCharactersInRequest,
-    skippedExistingCharacters
+    skippedExistingCharacters,
+    skippedRecognizedCharacters
   };
 }
 

@@ -17,6 +17,20 @@ Object.assign(process.env, {
 
 const { _private } = require('../index');
 
+test('智能添加分别识别未完成待认识任务和已认识复习字', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
+  assert.match(
+    source,
+    /child_literacy_characters\?child_id=eq\.\$\{encodeURIComponent\(childId\)\}&learned_at=is\.null&select=character/
+  );
+  assert.match(
+    source,
+    /recognized_characters\?child_id=eq\.\$\{encodeURIComponent\(childId\)\}&select=character/
+  );
+  assert.match(source, /skippedRecognizedCharacters/);
+  assert.doesNotMatch(source, /async function loadExistingLiteracyCharacters/);
+});
+
 test('词组级字典会区分组长和长城的多音字', () => {
   assert.deepEqual(_private.phonemesForText('组长'), ['zu3', 'zhang3']);
   assert.deepEqual(_private.phonemesForText('长城'), ['chang2', 'cheng2']);

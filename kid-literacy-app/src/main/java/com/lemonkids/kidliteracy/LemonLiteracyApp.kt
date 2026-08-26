@@ -702,6 +702,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                     val created = generated.createdCharacters.joinToString("、")
                     val knownCharacters = generated.knownCharacters.joinToString("、")
                     val skippedExisting = generated.skippedExistingCharacters.joinToString("、")
+                    val skippedRecognized = generated.skippedRecognizedCharacters.joinToString("、")
                     notice = buildString {
                         if (created.isNotBlank()) append("已添加待认识字：$created")
                         if (knownCharacters.isNotBlank()) {
@@ -711,6 +712,10 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                         if (skippedExisting.isNotBlank()) {
                             if (isNotEmpty()) append("；")
                             append("已有待认识任务：$skippedExisting")
+                        }
+                        if (skippedRecognized.isNotBlank()) {
+                            if (isNotEmpty()) append("；")
+                            append("已有已认识字：$skippedRecognized")
                         }
                     }.ifBlank { "没有可添加的识字内容" }
                     Result.success(generated)
@@ -2683,6 +2688,20 @@ private fun GenerateLiteracyTasksDialog(
                         ) {
                             Text(
                                 "已存在待认识任务，不会覆盖：${skipped.joinToString("、")}",
+                                modifier = Modifier.padding(14.dp),
+                                fontSize = 13.sp,
+                                color = Ink
+                            )
+                        }
+                    }
+                    preview?.skippedRecognizedCharacters?.takeIf { it.isNotEmpty() }?.let { skipped ->
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = WheatLight,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                "已存在已认识字，不能重复添加：${skipped.joinToString("、")}",
                                 modifier = Modifier.padding(14.dp),
                                 fontSize = 13.sp,
                                 color = Ink
