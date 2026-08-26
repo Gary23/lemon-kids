@@ -35,7 +35,7 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-当前部署包为 `evaluate-reading-web-20260823-phonetic-lifecycle-atomic.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`；后者将待认识完成与已认识存库的音素资产迁移/清理合并为原子 RPC。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+当前部署包为 `evaluate-reading-web-20260826-sync-audio-cleanup-rollback.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`；后者将待认识完成与已认识存库的音素资产迁移/清理合并为原子 RPC。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
 
 待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
 [`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
@@ -107,7 +107,7 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 
 `hasCharacterAudioPointRead` 仅表示主字是否被长按点读；传 `true` 时收录到已认识字表，传 `false` 时直接写入字库。旧版客户端未传此字段时，为兼容既有发布版本，云函数仍按 `true` 处理。该动作依赖 `supabase/sql/20260804_recognized_characters.sql` 已执行。
 
-已认识字列表的“存库”调用会先将这条记录写入 `known_characters`（同字重复操作不会重复写入），再投递关联教学音频的异步删除任务。系统转入记录会同时覆盖原认字任务的字、词、句音频；手工/导入记录仅覆盖自身。认字端会立即从当前列表移除该卡片，而 `recognized_characters` 记录会在全部对象删除成功后才物理删除。Storage 暂时失败只会使任务保持待重试，绝不会撤销存库：
+已认识字列表的“存库”调用会先将这条记录写入 `known_characters`（同字重复操作不会重复写入），再同步删除关联教学音频。只有全部对象删除且复习记录物理移除后，认字端才会收到成功提示；系统转入记录会同时覆盖原认字任务的字、词、句音频，手工/导入记录仅覆盖自身。Storage 暂时失败会让本次请求返回失败：函数会删除本次新增的字库记录、恢复复习数据及尚未删除音频的原状态，不投递后台清理；由孩子再次点击“存库”发起新的尝试。若同字在本次操作前已存在于字库，则保留该历史字库记录：
 
 ```json
 {

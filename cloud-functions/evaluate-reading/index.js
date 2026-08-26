@@ -48,6 +48,8 @@ const DEEPSEEK_GENERATION_BUDGET_MILLIS = 65_000;
 // Supabase 调用同样必须主动超时。否则鉴权或字库读取连接卡住时，函数仍会被
 // SCF 在 90 秒后强制终止，并在客户端表现为没有业务语义的 433。
 const SUPABASE_REQUEST_TIMEOUT_MILLIS = 15_000;
+const AUDIO_BUCKET = 'literacy-audio';
+const AUDIO_DELETE_MAX_ATTEMPTS = 3;
 // 音频函数保持事件函数形态，名称可按部署环境覆盖；默认与现有函数名一致。
 const LITERACY_AUDIO_GENERATOR_FUNCTION = process.env.LITERACY_AUDIO_GENERATOR_FUNCTION || 'generate-literacy-audio';
 
@@ -910,13 +912,14 @@ async function completeLiteracyCharacter(childId, literacyCharacterId, hasCharac
 }
 
 /**
- * “存库”是一次服务端受控的转移：数据库 RPC 先幂等写入字库，再投递音频
- * 清理任务。物理删除由独立清理分支重试，不能因 Storage 临时失败阻塞存库。
+ * “存库”是一次服务端受控的转移。只有教学音频全部删除后才提交；若删除失败，
+ * 立即撤销本次新增的字库记录并恢复复习数据，等待孩子再次主动点击“存库”。
  */
 async function archiveRecognizedCharacter(childId, recognizedCharacterId) {
   if (typeof recognizedCharacterId !== 'string' || !recognizedCharacterId.trim()) {
     throw new HttpError(400, 'recognizedCharacterId 必填');
   }
+  const target = await loadRecognizedArchiveTarget(childId, recognizedCharacterId);
   const result = await supabase('rpc/archive_recognized_character_with_phonetic_assets', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -925,7 +928,224 @@ async function archiveRecognizedCharacter(childId, recognizedCharacterId) {
       p_recognized_character_id: recognizedCharacterId
     })
   });
+  // 存库提示只能在教学音频也同步删除完成后返回。失败不进入后台清理队列，
+  // 而是撤销这一次转移；孩子下次点击“存库”才会重新开始。
+  if (target) {
+    try {
+      await deleteArchivedTeachingAudio(target);
+    } catch (cleanupError) {
+      try {
+        await rollbackRecognizedArchive(target);
+      } catch (rollbackError) {
+        console.error('存库音频清理失败后回滚失败', {
+          recognizedCharacterId: target.id,
+          cleanupError: audioCleanupError(cleanupError),
+          rollbackError: audioCleanupError(rollbackError)
+        });
+        throw new HttpError(500, '教学音频清理失败，且存库回滚失败，请联系管理员');
+      }
+      throw cleanupError;
+    }
+  }
   return result || { archived: true };
+}
+
+async function loadRecognizedArchiveTarget(childId, recognizedCharacterId) {
+  const recognizedFields = [
+    'id', 'child_id', 'character', 'source_literacy_character_id',
+    'character_audio_url', 'character_audio_version', 'character_audio_hash', 'words', 'sentences'
+  ].join(',');
+  const rows = await supabase(
+    `recognized_characters?select=${recognizedFields}&id=eq.${encodeURIComponent(recognizedCharacterId)}&child_id=eq.${encodeURIComponent(childId)}&limit=1`
+  );
+  const recognized = Array.isArray(rows) ? rows[0] || null : null;
+  if (!recognized) return null;
+
+  const [knownRows, sourceTaskRows, assets] = await Promise.all([
+    supabase(
+      `known_characters?select=character&user_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(recognized.character)}&limit=1`
+    ),
+    recognized.source_literacy_character_id
+      ? supabase(
+        `child_literacy_characters?select=id,character_audio_url,character_audio_version,character_audio_hash,words,sentences&id=eq.${encodeURIComponent(recognized.source_literacy_character_id)}&child_id=eq.${encodeURIComponent(childId)}&limit=1`
+      )
+      : Promise.resolve([]),
+    listArchivedTeachingAudio(recognized)
+  ]);
+  return {
+    ...recognized,
+    knownCharacterExisted: Array.isArray(knownRows) && knownRows.length > 0,
+    sourceTask: Array.isArray(sourceTaskRows) ? sourceTaskRows[0] || null : null,
+    assets
+  };
+}
+
+function archivedAudioMetadata(record) {
+  return {
+    character_audio_url: record.character_audio_url,
+    character_audio_version: record.character_audio_version,
+    character_audio_hash: record.character_audio_hash,
+    words: record.words,
+    sentences: record.sentences
+  };
+}
+
+async function rollbackRecognizedArchive(target, supabaseRequest = supabase) {
+  const restoreOptions = {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' }
+  };
+  const now = new Date().toISOString();
+  const restoreCalls = [
+    supabaseRequest(
+      `recognized_characters?id=eq.${encodeURIComponent(target.id)}&child_id=eq.${encodeURIComponent(target.child_id)}`,
+      { ...restoreOptions, body: JSON.stringify(archivedAudioMetadata(target)) }
+    )
+  ];
+  if (target.sourceTask) {
+    restoreCalls.push(supabaseRequest(
+      `child_literacy_characters?id=eq.${encodeURIComponent(target.sourceTask.id)}&child_id=eq.${encodeURIComponent(target.child_id)}`,
+      { ...restoreOptions, body: JSON.stringify(archivedAudioMetadata(target.sourceTask)) }
+    ));
+  }
+  for (const asset of (target.assets || []).filter((item) => item.status !== 'deleted')) {
+    restoreCalls.push(supabaseRequest(
+      `literacy_tts_assets?id=eq.${encodeURIComponent(asset.id)}&status=neq.deleted`,
+      {
+        ...restoreOptions,
+        body: JSON.stringify({ status: asset.status, last_error: null, updated_at: now })
+      }
+    ));
+  }
+  await Promise.all(restoreCalls);
+
+  // 同字可能在本次操作前已存在于字库；这种历史记录绝不能随回滚删除。
+  if (!target.knownCharacterExisted) {
+    await supabaseRequest(
+      `known_characters?user_id=eq.${encodeURIComponent(target.child_id)}&character=eq.${encodeURIComponent(target.character)}`,
+      { method: 'DELETE', headers: { Prefer: 'return=minimal' } }
+    );
+  }
+}
+
+function teachingAudioPath(asset) {
+  if (asset.object_path) return asset.object_path;
+  const filename = asset.item_type === 'character'
+    ? 'character.mp3'
+    : `${asset.item_type}-${asset.item_order}.mp3`;
+  if (asset.root_literacy_character_id) {
+    return `${asset.voice_version}/task/${asset.root_literacy_character_id}/${filename}`;
+  }
+  if (asset.recognized_character_id) {
+    return `${asset.voice_version}/recognized/${asset.recognized_character_id}/${filename}`;
+  }
+  throw new Error(`教学音频资产 ${asset.id} 缺少归属记录`);
+}
+
+function encodeStoragePath(path) {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function audioCleanupError(error) {
+  const message = String(error?.message || error || '未知错误')
+    .replace(/Bearer\s+[^\s,;]+/ig, 'Bearer [已隐藏]')
+    .replace(/(secret(?:id|key)?|token|apikey)\s*[=:]\s*[^\s,;]+/ig, '$1=[已隐藏]');
+  return message.slice(0, 500);
+}
+
+function audioDeleteRetryable(error) {
+  const status = Number(error?.status || error?.statusCode || 0);
+  return status === 429 || status >= 500 || /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND)$/i.test(String(error?.code || ''));
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function deleteTeachingAudioObject(asset, fetchImpl = fetch) {
+  const objectPath = teachingAudioPath(asset);
+  const result = await fetchImpl(
+    `${SUPABASE_URL}/storage/v1/object/${AUDIO_BUCKET}/${encodeStoragePath(objectPath)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+      }
+    }
+  );
+  const body = await result.text();
+  const alreadyMissing = result.status === 404
+    || /"statusCode"\s*:\s*"?404"?|"code"\s*:\s*"NoSuchKey"|Object not found/i.test(body);
+  if (result.ok || alreadyMissing) return;
+  const error = new Error(`教学音频删除失败，HTTP ${result.status}`);
+  error.status = result.status;
+  throw error;
+}
+
+async function deleteTeachingAudioWithRetry(asset, fetchImpl = fetch, waitFn = wait) {
+  let lastError;
+  for (let attempt = 1; attempt <= AUDIO_DELETE_MAX_ATTEMPTS; attempt++) {
+    try {
+      await deleteTeachingAudioObject(asset, fetchImpl);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!audioDeleteRetryable(error) || attempt === AUDIO_DELETE_MAX_ATTEMPTS) break;
+      await waitFn(250 * (2 ** (attempt - 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function listArchivedTeachingAudio(target, supabaseRequest = supabase) {
+  const fields = 'id,object_path,voice_version,item_type,item_order,root_literacy_character_id,recognized_character_id,status';
+  const queries = [
+    `literacy_tts_assets?select=${fields}&status=neq.deleted&recognized_character_id=eq.${encodeURIComponent(target.id)}`
+  ];
+  if (target.source_literacy_character_id) {
+    queries.push(
+      `literacy_tts_assets?select=${fields}&status=neq.deleted&root_literacy_character_id=eq.${encodeURIComponent(target.source_literacy_character_id)}`
+    );
+  }
+  const pages = await Promise.all(queries.map((query) => supabaseRequest(query)));
+  return [...new Map(pages.flat().filter(Boolean).map((asset) => [asset.id, asset])).values()];
+}
+
+async function deleteArchivedTeachingAudio(target, {
+  supabaseRequest = supabase,
+  fetchImpl = fetch,
+  waitFn = wait
+} = {}) {
+  const assets = await listArchivedTeachingAudio(target, supabaseRequest);
+  for (const asset of assets) {
+    try {
+      await deleteTeachingAudioWithRetry(asset, fetchImpl, waitFn);
+      await supabaseRequest(`literacy_tts_assets?id=eq.${encodeURIComponent(asset.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ status: 'deleted', deleted_at: new Date().toISOString(), last_error: null, updated_at: new Date().toISOString() })
+      });
+    } catch (error) {
+      throw new HttpError(503, '教学音频清理失败，请稍后重试');
+    }
+  }
+
+  const deleteOptions = { method: 'DELETE', headers: { Prefer: 'return=minimal' } };
+  await supabaseRequest(
+    `literacy_tts_assets?recognized_character_id=eq.${encodeURIComponent(target.id)}&status=eq.deleted`,
+    deleteOptions
+  );
+  if (target.source_literacy_character_id) {
+    await supabaseRequest(
+      `literacy_tts_assets?root_literacy_character_id=eq.${encodeURIComponent(target.source_literacy_character_id)}&status=eq.deleted`,
+      deleteOptions
+    );
+  }
+  await supabaseRequest(
+    `recognized_characters?id=eq.${encodeURIComponent(target.id)}`,
+    deleteOptions
+  );
 }
 
 async function handler(event) {
@@ -1053,6 +1273,11 @@ exports.main_handler = async (event) => {
 };
 
 exports._private = {
+  archiveRecognizedCharacter,
+  rollbackRecognizedArchive,
+  deleteArchivedTeachingAudio,
+  deleteTeachingAudioWithRetry,
+  teachingAudioPath,
   triggerNewLiteracyTaskAudio,
   phonemesForText,
   normalizePhonemeTokens,
