@@ -3055,6 +3055,7 @@ private fun KnownScreen(
     val state by viewModel.uiState.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     var archivingCharacterIds by remember { mutableStateOf(emptySet<String>()) }
+    var archiveConfirmationCharacter by remember { mutableStateOf<RecognizedCharacter?>(null) }
     LaunchedEffect(userId) { viewModel.load(userId) }
     LaunchedEffect(state.topNotice) {
         state.topNotice?.let {
@@ -3098,6 +3099,50 @@ private fun KnownScreen(
             }
         }
     }
+    archiveConfirmationCharacter?.let { character ->
+        Dialog(onDismissRequest = { archiveConfirmationCharacter = null }) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text("确认存入字库？", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        "“${character.character}”存库后会从已认识的字列表移除，关联的学习内容和教学音频也会清理。",
+                        color = Color(0xFF5F6D72)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+                    ) {
+                        TextButton(onClick = { archiveConfirmationCharacter = null }) { Text("取消") }
+                        Button(
+                            onClick = {
+                                if (character.id.isBlank() || character.id in archivingCharacterIds) {
+                                    archiveConfirmationCharacter = null
+                                    return@Button
+                                }
+                                archiveConfirmationCharacter = null
+                                archivingCharacterIds = archivingCharacterIds + character.id
+                                coroutineScope.launch {
+                                    onArchive(character)
+                                        .onSuccess {
+                                            viewModel.removeCharacter(character.id)
+                                            onArchived(character)
+                                        }
+                                        .onFailure { error ->
+                                            onNotice(error.message ?: "存入字库失败，请稍后重试")
+                                        }
+                                    archivingCharacterIds = archivingCharacterIds - character.id
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Leaf)
+                        ) { Text("确认存库") }
+                    }
+                }
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
         BackHeader("已认识的字", "每一粒小麦，都是你的进步", onBack)
@@ -3137,18 +3182,8 @@ private fun KnownScreen(
                         onDetails = { viewModel.showPhonetics(character) },
                         onTop = { viewModel.topCharacter(character) },
                         onArchive = {
-                            if (character.id.isBlank() || character.id in archivingCharacterIds) return@RecognizedCharacterCard
-                            archivingCharacterIds = archivingCharacterIds + character.id
-                            coroutineScope.launch {
-                                onArchive(character)
-                                    .onSuccess {
-                                        viewModel.removeCharacter(character.id)
-                                        onArchived(character)
-                                    }
-                                    .onFailure { error ->
-                                        onNotice(error.message ?: "存入字库失败，请稍后重试")
-                                    }
-                                archivingCharacterIds = archivingCharacterIds - character.id
+                            if (character.id.isNotBlank() && character.id !in archivingCharacterIds) {
+                                archiveConfirmationCharacter = character
                             }
                         }
                     )
