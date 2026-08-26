@@ -141,6 +141,28 @@ test('回滚不会删除本次存库前已有的同字字库记录', async () =>
   assert.equal(calls.some((call) => call.path.startsWith('known_characters?') && call.options.method === 'DELETE'), false);
 });
 
+test('置顶只更新当前孩子的已认识字收录时间', async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify([{ recognized_at: '2026-08-27T08:00:00.000Z' }])
+    };
+  };
+  try {
+    const result = await _private.topRecognizedCharacter('child-1', 'recognized-1');
+    assert.equal(result.recognizedAt, '2026-08-27T08:00:00.000Z');
+    assert.match(calls[0].url, /recognized_characters\?id=eq\.recognized-1&child_id=eq\.child-1/);
+    assert.equal(calls[0].options.method, 'PATCH');
+    assert.match(calls[0].options.body, /recognized_at/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('后台回填必须使用独立密钥，不能依赖或绕过儿童登录凭证', () => {
   assert.doesNotThrow(() => _private.requirePhoneticBackfillKey({
     headers: { 'x-phonetic-backfill-key': 'test-phonetic-backfill-key' }

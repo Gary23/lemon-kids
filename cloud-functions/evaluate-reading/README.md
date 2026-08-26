@@ -35,7 +35,7 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-当前部署包为 `evaluate-reading-web-20260826-sync-audio-cleanup-rollback.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`；后者将待认识完成与已认识存库的音素资产迁移/清理合并为原子 RPC。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+当前部署包为 `evaluate-reading-web-20260827-recognized-character-top.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`；后者将待认识完成与已认识存库的音素资产迁移/清理合并为原子 RPC。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
 
 待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
 [`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
@@ -112,6 +112,15 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 ```json
 {
   "action": "archive_recognized_character",
+  "recognizedCharacterId": "已认识字 UUID"
+}
+```
+
+已认识字列表的“置顶”调用仅更新当前孩子该条记录的 `recognized_at` 为当前时间，用于重新进入首页三天学习周期，不改动字词句或音频资产：
+
+```json
+{
+  "action": "top_recognized_character",
   "recognizedCharacterId": "已认识字 UUID"
 }
 ```

@@ -950,6 +950,29 @@ async function archiveRecognizedCharacter(childId, recognizedCharacterId) {
   return result || { archived: true };
 }
 
+/**
+ * 将复习字重新排到首页的“新字”队列：只允许孩子本人更新自己的收录时间。
+ * 复习内容、音频和学习记录都不变，首页会据此从当天开始重新计算三天学习期。
+ */
+async function topRecognizedCharacter(childId, recognizedCharacterId) {
+  if (typeof recognizedCharacterId !== 'string' || !recognizedCharacterId.trim()) {
+    throw new HttpError(400, 'recognizedCharacterId 必填');
+  }
+  const recognizedAt = new Date().toISOString();
+  const updated = await supabase(
+    `recognized_characters?id=eq.${encodeURIComponent(recognizedCharacterId)}&child_id=eq.${encodeURIComponent(childId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({ recognized_at: recognizedAt })
+    }
+  );
+  if (!Array.isArray(updated) || updated.length !== 1) {
+    throw new HttpError(404, '未找到该已认识汉字');
+  }
+  return { recognizedAt: updated[0].recognized_at || recognizedAt };
+}
+
 async function loadRecognizedArchiveTarget(childId, recognizedCharacterId) {
   const recognizedFields = [
     'id', 'child_id', 'character', 'source_literacy_character_id',
@@ -1246,6 +1269,10 @@ async function handler(event) {
     const archived = await archiveRecognizedCharacter(childId, body.recognizedCharacterId);
     return response(201, { status: 'archived', archived });
   }
+  if (body.action === 'top_recognized_character') {
+    const topped = await topRecognizedCharacter(childId, body.recognizedCharacterId);
+    return response(200, { status: 'topped', topped });
+  }
   if (body.action === 'preview_literacy_tasks') {
     console.info('识字任务预览开始');
     const preview = await previewGeneratedLiteracyTasks(childId, body.characters);
@@ -1274,6 +1301,7 @@ exports.main_handler = async (event) => {
 
 exports._private = {
   archiveRecognizedCharacter,
+  topRecognizedCharacter,
   rollbackRecognizedArchive,
   deleteArchivedTeachingAudio,
   deleteTeachingAudioWithRetry,
