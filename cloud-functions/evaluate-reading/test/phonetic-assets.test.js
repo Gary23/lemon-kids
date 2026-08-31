@@ -31,6 +31,25 @@ test('智能添加分别识别未完成待认识任务和已认识复习字', ()
   assert.doesNotMatch(source, /async function loadExistingLiteracyCharacters/);
 });
 
+test('智能添加到已认识固定复用任务完成迁移，不允许落入字库分支', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
+  const migration = fs.readFileSync(
+    path.resolve(__dirname, '../../../supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql'),
+    'utf8'
+  );
+  assert.match(source, /body\.action === 'save_recognized_literacy_tasks'/);
+  assert.match(source, /rpc\/create_recognized_literacy_tasks_with_phonetic_assets/);
+  assert.match(migration, /create or replace function public\.create_recognized_literacy_tasks_with_phonetic_assets/i);
+  assert.match(migration, /complete_literacy_character_with_phonetic_assets\([\s\S]*created\.id, true/);
+  assert.match(migration, /attach_recognized_character_to_literacy_tts_asset/);
+  const conflictFix = fs.readFileSync(
+    path.resolve(__dirname, '../../../supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql'),
+    'utf8'
+  );
+  assert.match(conflictFix, /drop constraint if exists child_literacy_characters_child_id_character_key/i);
+  assert.match(conflictFix, /where learned_at is null/i);
+});
+
 test('词组级字典会区分组长和长城的多音字', () => {
   assert.deepEqual(_private.phonemesForText('组长'), ['zu3', 'zhang3']);
   assert.deepEqual(_private.phonemesForText('长城'), ['chang2', 'cheng2']);

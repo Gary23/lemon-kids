@@ -694,8 +694,11 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
             onPreview = { characters ->
                 readingEvaluationViewModel.previewLiteracyTasks(characters)
             },
-            onSave = { characters, tasks ->
-                val result = readingEvaluationViewModel.saveLiteracyTasks(characters, tasks)
+            onSave = { destination, characters, tasks ->
+                val result = when (destination) {
+                    LiteracySaveDestination.PENDING -> readingEvaluationViewModel.saveLiteracyTasks(characters, tasks)
+                    LiteracySaveDestination.RECOGNIZED -> readingEvaluationViewModel.saveRecognizedLiteracyTasks(characters, tasks)
+                }
                 if (result.isSuccess) {
                     val generated = result.getOrThrow()
                     homeViewModel.load(userId)
@@ -704,7 +707,15 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                     val skippedExisting = generated.skippedExistingCharacters.joinToString("、")
                     val skippedRecognized = generated.skippedRecognizedCharacters.joinToString("、")
                     notice = buildString {
-                        if (created.isNotBlank()) append("已添加待认识字：$created")
+                        if (created.isNotBlank()) {
+                            append(
+                                if (destination == LiteracySaveDestination.RECOGNIZED) {
+                                    "已添加已认识字：$created"
+                                } else {
+                                    "已添加待认识字：$created"
+                                }
+                            )
+                        }
                         if (knownCharacters.isNotBlank()) {
                             if (isNotEmpty()) append("；")
                             append("输入中已在字库：$knownCharacters")
@@ -2591,7 +2602,7 @@ private fun ProfileScreen(
 private fun GenerateLiteracyTasksDialog(
     onDismiss: () -> Unit,
     onPreview: suspend (String) -> Result<LiteracyTasksPreview>,
-    onSave: suspend (String, List<GeneratedLiteracyTask>) -> Result<SavedLiteracyTasks>
+    onSave: suspend (LiteracySaveDestination, String, List<GeneratedLiteracyTask>) -> Result<SavedLiteracyTasks>
 ) {
     var characters by remember { mutableStateOf("") }
     var preview by remember { mutableStateOf<LiteracyTasksPreview?>(null) }
@@ -2602,6 +2613,28 @@ private fun GenerateLiteracyTasksDialog(
     val normalizedCharacters = characters.trim()
     val validInput = normalizedCharacters.isNotEmpty() && normalizedCharacters.all { it.isChineseCharacter() }
     val hasTasksToSave = editableTasks.isNotEmpty()
+    val saveEditedTasks: (LiteracySaveDestination) -> Unit = { destination ->
+        coroutineScope.launch {
+            val tasks = editableTasks.map {
+                GeneratedLiteracyTask(
+                    character = it.character,
+                    words = it.wordsText.split(Regex("[、，,\\s]+")).filter(String::isNotBlank).map { text ->
+                        GeneratedLiteracyExample(text = text)
+                    },
+                    sentence = GeneratedLiteracyExample(text = it.sentence.trim())
+                )
+            }
+            validateEditedLiteracyTasks(tasks)?.let {
+                errorMessage = it
+                return@launch
+            }
+            isWorking = true
+            val result = onSave(destination, normalizedCharacters, tasks)
+            if (result.isSuccess) onDismiss()
+            else errorMessage = result.exceptionOrNull()?.message ?: "保存识字任务失败，请稍后重试"
+            isWorking = false
+        }
+    }
 
     Dialog(
         onDismissRequest = { if (!isWorking) onDismiss() },
@@ -2741,10 +2774,10 @@ private fun GenerateLiteracyTasksDialog(
                     }
                 }
                 errorMessage?.let { Text(it, color = Coral, fontSize = 13.sp) }
-                Button(
-                    onClick = {
-                        coroutineScope.launch {
-                            if (preview == null) {
+                if (preview == null) {
+                    Button(
+                        onClick = {
+                            coroutineScope.launch {
                                 if (!validInput) {
                                     errorMessage = "请输入一个或多个汉字"
                                     return@launch
@@ -2764,47 +2797,50 @@ private fun GenerateLiteracyTasksDialog(
                                     errorMessage = result.exceptionOrNull()?.message ?: "生成识字内容失败，请稍后重试"
                                 }
                                 isWorking = false
-                            } else {
-                                val tasks = editableTasks.map {
-                                    GeneratedLiteracyTask(
-                                        character = it.character,
-                                        words = it.wordsText.split(Regex("[、，,\\s]+")).filter(String::isNotBlank).mapIndexed { index, text ->
-                                            GeneratedLiteracyExample(text = text)
-                                        },
-                                        sentence = GeneratedLiteracyExample(text = it.sentence.trim())
-                                    )
-                                }
-                                validateEditedLiteracyTasks(tasks)?.let {
-                                    errorMessage = it
-                                    return@launch
-                                }
-                                isWorking = true
-                                val result = onSave(normalizedCharacters, tasks)
-                                if (result.isSuccess) onDismiss()
-                                else errorMessage = result.exceptionOrNull()?.message ?: "保存识字任务失败，请稍后重试"
-                                isWorking = false
                             }
+                        },
+                        enabled = !isWorking,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Leaf),
+                        shape = RoundedCornerShape(17.dp)
+                    ) {
+                        if (isWorking) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(9.dp))
+                            Text("正在生成…")
+                        } else {
+                            Icon(Icons.Filled.AddCircle, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("生成内容")
                         }
-                    },
-                    enabled = !isWorking && (preview == null || hasTasksToSave),
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-                    shape = RoundedCornerShape(17.dp)
-                ) {
-                    if (isWorking) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(9.dp))
-                        Text(if (preview == null) "正在生成…" else "正在保存…")
-                    } else {
-                        Icon(Icons.Filled.AddCircle, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        Text(if (preview == null) "生成内容" else "确认并添加到待认识")
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = { saveEditedTasks(LiteracySaveDestination.PENDING) },
+                            enabled = !isWorking && hasTasksToSave,
+                            modifier = Modifier.weight(1f).height(52.dp),
+                            shape = RoundedCornerShape(17.dp)
+                        ) {
+                            Text(if (isWorking) "正在保存…" else "确认并添加到待认识", maxLines = 2)
+                        }
+                        Button(
+                            onClick = { saveEditedTasks(LiteracySaveDestination.RECOGNIZED) },
+                            enabled = !isWorking && hasTasksToSave,
+                            modifier = Modifier.weight(1f).height(52.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Leaf),
+                            shape = RoundedCornerShape(17.dp)
+                        ) {
+                            Text(if (isWorking) "正在保存…" else "确认并添加到已认识", maxLines = 2)
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private enum class LiteracySaveDestination { PENDING, RECOGNIZED }
 
 private data class EditableLiteracyTask(
     val character: String,

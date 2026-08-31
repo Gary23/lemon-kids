@@ -35,7 +35,7 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-当前部署包为 `evaluate-reading-web-20260827-recognized-task-conflict.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`；后者将待认识完成与已认识存库的音素资产迁移/清理合并为原子 RPC。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+当前部署包为 `evaluate-reading-web-20260831-smart-add-recognized.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`；后两个迁移让智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
 
 待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
 [`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
@@ -63,7 +63,7 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 
 认字端“我的 → 智能添加识字”先调用 `preview_literacy_tasks`：输入只允许汉字，去重后每次最多 12 个。DeepSeek 只返回字、词、句文本，预览页仅允许编辑词句。保存时服务端会在同一数据库事务内创建待认识任务及 `pending` 音素资产；随后用 `pinyin-pro` 按完整词句生成腾讯数字拼音，例如“组长”为 `zu3 zhang3`，“长城”为 `chang2 cheng2`。轻声位置保存为 `null`，绝不伪造 `0`、`5` 或一声。长按词、句中的任意字时，云函数仍会实时查询 `known_characters`：在字库内才写入帮助请求表，字库外字直接返回 `skipped`，不留记录。
 
-家长确认后，客户端调用 `save_literacy_tasks` 提交原输入字和未删除的 `items`。服务端会重新读取最新字库用于标记和字词句校验；字库已有字、以及历史上已完成的同字任务，仍可再次写入 `child_literacy_characters`。仅未完成的同字任务会以“待认识”提示跳过，`recognized_characters` 中的同字会以“已认识”提示跳过，删除的整组也不会提交或写入。成功写入后，会立即以异步事件定向触发每条新任务的音频生成；客户端不会等待 MP3 合成完成，原定时扫描不受影响。
+家长确认后，客户端可调用 `save_literacy_tasks` 添加到待认识，或调用 `save_recognized_literacy_tasks` 添加到已认识；两者均提交原输入字和未删除的 `items`。后者仍创建同样的根任务，但会在同一数据库事务中强制复用完成迁移并进入 `recognized_characters`，不会因点读状态进入字库。服务端会重新读取最新字库用于标记和字词句校验；字库已有字、以及历史上已完成的同字任务，仍可再次写入 `child_literacy_characters`。仅未完成的同字任务会以“待认识”提示跳过，`recognized_characters` 中的同字会以“已认识”提示跳过，删除的整组也不会提交或写入。成功写入后，会立即以异步事件定向触发每条新任务的音频生成；客户端不会等待 MP3 合成完成，原定时扫描不受影响。
 
 ```json
 {
@@ -75,6 +75,14 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 ```json
 {
   "action": "save_literacy_tasks",
+  "characters": "春夏秋冬",
+  "items": [{"character":"春","words":[{"text":"春天"}],"sentence":{"text":"春天来了我们一起看花"}}]
+}
+```
+
+```json
+{
+  "action": "save_recognized_literacy_tasks",
   "characters": "春夏秋冬",
   "items": [{"character":"春","words":[{"text":"春天"}],"sentence":{"text":"春天来了我们一起看花"}}]
 }

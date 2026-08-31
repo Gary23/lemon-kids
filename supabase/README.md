@@ -29,6 +29,8 @@
 | `sql/20260811_backfill_recognized_character_audio.sql` | 回填旧版自动收录时遗漏的主字音频元数据 | 已执行 TTS 音频元数据迁移；仅需对受影响历史数据执行一次 |
 | `sql/20260823_literacy_phonetic_assets.sql` | 创建词句腾讯数字拼音资产队列、领取/完成/失败 RPC，并回填历史待认识/已认识内容 | 已执行认字任务与已认识字迁移及本迁移；不向客户端授予资产权限 |
 | `sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql` | 将待认识完成、已认识存库与音素资产迁移/清理合并为原子 RPC | 已执行 `20260823_literacy_phonetic_assets.sql`、`20260807_literacy_tts_cleanup.sql` 及本迁移 |
+| `sql/20260827_smart_add_recognized_literacy_tasks.sql` | 智能添加直接收录已认识：原子创建根任务、完成迁移，并关联后续 TTS 回写 | 已执行音素资产及其生命周期原子迁移；须在部署支持该入口的评测函数前执行 |
+| `sql/20260827_smart_add_recognized_existing_task_fix.sql` | 允许同字已完成历史任务再次创建，仅限制同字待认识任务唯一 | 已执行直接收录已认识迁移；须在启用该入口前执行 |
 | `sql/20260823_literacy_purge_legacy_example_pinyins.sql` | 从待认识、已认识词句 JSON 中物理删除已废弃的 `pinyins` 键 | 已在旧客户端淘汰、音素资产回填完成后执行；脚本末尾四项计数均为 0 |
 
 ## AI 必须遵守的规则

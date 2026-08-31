@@ -12,6 +12,7 @@
  * - archive_recognized_character：将一条已认识字存入字库，并移除其复习卡。
  * - preview_literacy_tasks：基于字库和输入汉字生成可编辑的词、句预览。
  * - save_literacy_tasks：校验家长确认后的预览内容、创建待认识任务，并异步投递音频生成。
+ * - save_recognized_literacy_tasks：先创建任务，再在同一数据库事务内转入已认识字。
  *
  * 所有朗读文字均以 Supabase 数据为准；绝不信任客户端上传的内容。
  */
@@ -573,7 +574,10 @@ async function previewGeneratedLiteracyTasks(childId, rawCharacters) {
   return { tasks, knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
 }
 
-async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
+async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, destination = 'pending') {
+  if (!['pending', 'recognized'].includes(destination)) {
+    throw new HttpError(400, '保存目标不正确');
+  }
   const requestedCharacters = normalizeRequestedCharacters(rawCharacters);
   if (!Array.isArray(rawItems)) throw new HttpError(400, 'items 必须是识字任务数组');
   if (rawItems.some((item) => !requestedCharacters.includes(item?.character))) {
@@ -624,7 +628,14 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
   }));
   // 任务正文与 pending 音素资产必须由同一个 RPC 落库，避免新任务在异步生成器
   // 第一次扫描时丢失固定索引，也避免请求中断留下无法评测的半成品任务。
-  const created = await supabase('rpc/create_literacy_tasks_with_phonetic_assets', {
+  // “已认识”入口仍创建同样的根任务，但数据库 RPC 会在同一事务内固定按
+  // has_character_audio_point_read=true 完成它，复用既有任务→已认识及音素迁移逻辑。
+  // 该值不接受客户端控制，因此绝不会误走“未点读→字库”分支。
+  const created = await supabase(
+    destination === 'recognized'
+      ? 'rpc/create_recognized_literacy_tasks_with_phonetic_assets'
+      : 'rpc/create_literacy_tasks_with_phonetic_assets',
+    {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -632,7 +643,8 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
       p_family_id: familyId,
       p_rows: rows
     })
-  });
+    }
+  );
   return {
     created: (created || []).map((row) => ({ id: row.id, character: row.character })),
     knownCharacters: knownCharactersInRequest,
@@ -1315,6 +1327,14 @@ async function handler(event) {
     const audioGeneration = await triggerNewLiteracyTaskAudio(generated.created);
     const phoneticGeneration = await generatePhoneticAssets(Math.max(1, generated.created.length * 4));
     return response(201, { status: 'created', generated, audioGeneration, phoneticGeneration });
+  }
+  if (body.action === 'save_recognized_literacy_tasks') {
+    const generated = await saveGeneratedLiteracyTasks(childId, body.characters, body.items, 'recognized');
+    // 新建根任务已经在数据库内完成迁移；TTS 仍按根任务生成，迁移脚本中的 trigger
+    // 会将资产同时关联至已认识记录，使生成的 URL 同步回写两张表。
+    const audioGeneration = await triggerNewLiteracyTaskAudio(generated.created);
+    const phoneticGeneration = await generatePhoneticAssets(Math.max(1, generated.created.length * 4));
+    return response(201, { status: 'recognized_created', generated, audioGeneration, phoneticGeneration });
   }
   throw new HttpError(400, '未知 action');
 }
