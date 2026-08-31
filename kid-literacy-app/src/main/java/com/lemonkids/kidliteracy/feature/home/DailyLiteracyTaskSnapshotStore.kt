@@ -37,7 +37,8 @@ class DailyLiteracyTaskSnapshotStore @Inject constructor(
         read(childId)?.takeIf { it.date == today }?.let { snapshot ->
             // 学习任务的字、词、句与顺序当天固定，但 TTS 是异步生成的。必须用服务端
             // 最新的 URL/版本刷新快照，否则早于音频生成创建的当天任务会一直走系统 TTS。
-            return snapshot.withFreshAudio(candidates).also { refreshed ->
+            // 首页任务数量调整为 6 个后，同时裁剪旧快照，确保更新后当日也立即遵守新上限。
+            return snapshot.withFreshAudio(candidates).limitCharacters(DAILY_TASK_CHARACTER_LIMIT).also { refreshed ->
                 if (refreshed != snapshot) write(childId, refreshed)
             }
         }
@@ -76,7 +77,7 @@ class DailyLiteracyTaskSnapshotStore @Inject constructor(
 
     private companion object {
         const val PREFERENCES_NAME = "lemonkids_daily_literacy_task_snapshot"
-        const val DAILY_TASK_CHARACTER_LIMIT = 8
+        const val DAILY_TASK_CHARACTER_LIMIT = 6
     }
 }
 
@@ -86,6 +87,14 @@ data class DailyLiteracyTaskSnapshot(
     val characters: List<ChildLiteracyCharacter>,
     val completedCharacterIds: Set<String> = emptySet()
 )
+
+private fun DailyLiteracyTaskSnapshot.limitCharacters(limit: Int): DailyLiteracyTaskSnapshot {
+    val displayedCharacters = characters.take(limit)
+    return copy(
+        characters = displayedCharacters,
+        completedCharacterIds = completedCharacterIds.intersect(displayedCharacters.map { it.id }.toSet())
+    )
+}
 
 /** 仅同步异步生成的音频元数据，不改变已冻结的教学文本、排序和完成状态。 */
 private fun DailyLiteracyTaskSnapshot.withFreshAudio(
