@@ -12,6 +12,7 @@
  * - archive_recognized_character：将一条已认识字存入字库，并移除其复习卡。
  * - preview_literacy_tasks：基于字库和输入汉字生成可编辑的词、句预览。
  * - save_literacy_tasks：校验家长确认后的预览内容、创建待认识任务，并异步投递音频生成。
+ * - save_recognized_literacy_tasks：先创建任务，再在同一数据库事务内转入已认识字。
  *
  * 所有朗读文字均以 Supabase 数据为准；绝不信任客户端上传的内容。
  */
@@ -48,6 +49,8 @@ const DEEPSEEK_GENERATION_BUDGET_MILLIS = 65_000;
 // Supabase 调用同样必须主动超时。否则鉴权或字库读取连接卡住时，函数仍会被
 // SCF 在 90 秒后强制终止，并在客户端表现为没有业务语义的 433。
 const SUPABASE_REQUEST_TIMEOUT_MILLIS = 15_000;
+const AUDIO_BUCKET = 'literacy-audio';
+const AUDIO_DELETE_MAX_ATTEMPTS = 3;
 // 音频函数保持事件函数形态，名称可按部署环境覆盖；默认与现有函数名一致。
 const LITERACY_AUDIO_GENERATOR_FUNCTION = process.env.LITERACY_AUDIO_GENERATOR_FUNCTION || 'generate-literacy-audio';
 
@@ -188,9 +191,24 @@ async function loadKnownCharacterSet(childId) {
   return knownCharacters;
 }
 
-async function loadExistingLiteracyCharacters(childId) {
+/**
+ * 只有尚未完成的任务才能占用“待认识”位置。
+ *
+ * 已完成任务会保留在 child_literacy_characters 中作为学习历史，但客户端会依据
+ * learned_at 将其从待认识列表隐藏；若这里不同时过滤，就会把已完成字误报成
+ * “已有待认识任务”，导致家长无法重新添加复习任务。
+ */
+async function loadUnlearnedLiteracyCharacters(childId) {
   const rows = await supabase(
-    `child_literacy_characters?child_id=eq.${encodeURIComponent(childId)}&select=character`
+    `child_literacy_characters?child_id=eq.${encodeURIComponent(childId)}&learned_at=is.null&select=character`
+  );
+  return new Set((rows || []).map((row) => row.character).filter((character) => typeof character === 'string'));
+}
+
+/** 已认识字仍在复习表中时不可重新添加；存入字库后该记录会被物理移除，届时允许添加。 */
+async function loadRecognizedLiteracyCharacters(childId) {
+  const rows = await supabase(
+    `recognized_characters?child_id=eq.${encodeURIComponent(childId)}&select=character`
   );
   return new Set((rows || []).map((row) => row.character).filter((character) => typeof character === 'string'));
 }
@@ -534,36 +552,51 @@ async function generateWithDeepSeek(requestedCharacters, allowedCharacters) {
 
 async function previewGeneratedLiteracyTasks(childId, rawCharacters) {
   const requestedCharacters = normalizeRequestedCharacters(rawCharacters);
-  const [knownCharacters, existingCharacters] = await Promise.all([
+  const [knownCharacters, unlearnedCharacters, recognizedCharacters] = await Promise.all([
     loadKnownCharacterSet(childId),
-    loadExistingLiteracyCharacters(childId)
+    loadUnlearnedLiteracyCharacters(childId),
+    loadRecognizedLiteracyCharacters(childId)
   ]);
-  // 字库已有字仍生成可编辑的字词句，只在预览中标记；已有待认识任务的同字才跳过，避免重复创建。
+  // 字库已有字仍生成可编辑的字词句；未完成任务和已认识复习字各自占用同字入口。
   const knownCharactersInRequest = requestedCharacters.filter((character) => knownCharacters.has(character));
-  const skippedExistingCharacters = requestedCharacters.filter((character) => existingCharacters.has(character));
-  const charactersToCreate = requestedCharacters.filter((character) => !existingCharacters.has(character));
+  const skippedRecognizedCharacters = requestedCharacters.filter((character) => recognizedCharacters.has(character));
+  const skippedExistingCharacters = requestedCharacters.filter(
+    (character) => !recognizedCharacters.has(character) && unlearnedCharacters.has(character)
+  );
+  const charactersToCreate = requestedCharacters.filter(
+    (character) => !recognizedCharacters.has(character) && !unlearnedCharacters.has(character)
+  );
   if (!charactersToCreate.length) {
-    return { tasks: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters };
+    return { tasks: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
   }
   const allowedCharacters = new Set([...knownCharacters, ...requestedCharacters]);
   const tasks = await generateWithDeepSeek(charactersToCreate, allowedCharacters);
-  return { tasks, knownCharacters: knownCharactersInRequest, skippedExistingCharacters };
+  return { tasks, knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
 }
 
-async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
+async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, destination = 'pending') {
+  if (!['pending', 'recognized'].includes(destination)) {
+    throw new HttpError(400, '保存目标不正确');
+  }
   const requestedCharacters = normalizeRequestedCharacters(rawCharacters);
   if (!Array.isArray(rawItems)) throw new HttpError(400, 'items 必须是识字任务数组');
   if (rawItems.some((item) => !requestedCharacters.includes(item?.character))) {
     throw new HttpError(400, '提交内容包含未输入的汉字');
   }
-  const [knownCharactersAtStart, existingCharacters] = await Promise.all([
+  const [knownCharactersAtStart, unlearnedCharacters, recognizedCharacters] = await Promise.all([
     loadKnownCharacterSet(childId),
-    loadExistingLiteracyCharacters(childId)
+    loadUnlearnedLiteracyCharacters(childId),
+    loadRecognizedLiteracyCharacters(childId)
   ]);
-  // 字库已有字允许继续创建待认识任务；保存时只跳过已有待认识任务的同字。
+  // 字库已有字及历史已完成任务均允许再次创建；未完成或已认识同字任务不允许覆盖。
   const knownCharactersInRequest = requestedCharacters.filter((character) => knownCharactersAtStart.has(character));
-  const skippedExistingCharacters = requestedCharacters.filter((character) => existingCharacters.has(character));
-  const charactersToCreate = requestedCharacters.filter((character) => !existingCharacters.has(character));
+  const skippedRecognizedCharacters = requestedCharacters.filter((character) => recognizedCharacters.has(character));
+  const skippedExistingCharacters = requestedCharacters.filter(
+    (character) => !recognizedCharacters.has(character) && unlearnedCharacters.has(character)
+  );
+  const charactersToCreate = requestedCharacters.filter(
+    (character) => !recognizedCharacters.has(character) && !unlearnedCharacters.has(character)
+  );
 
   const [familyId, knownCharacters, sortRows] = await Promise.all([
     loadChildFamilyId(childId),
@@ -582,7 +615,7 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
     { allowOutOfLibraryWords: true }
   );
   if (!generatedTasks.length) {
-    return { created: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters };
+    return { created: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
   }
   const nextSortOrder = Number(sortRows?.[0]?.sort_order || 0) + 1;
   const rows = generatedTasks.map((task, index) => ({
@@ -595,7 +628,14 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
   }));
   // 任务正文与 pending 音素资产必须由同一个 RPC 落库，避免新任务在异步生成器
   // 第一次扫描时丢失固定索引，也避免请求中断留下无法评测的半成品任务。
-  const created = await supabase('rpc/create_literacy_tasks_with_phonetic_assets', {
+  // “已认识”入口仍创建同样的根任务，但数据库 RPC 会在同一事务内固定按
+  // has_character_audio_point_read=true 完成它，复用既有任务→已认识及音素迁移逻辑。
+  // 该值不接受客户端控制，因此绝不会误走“未点读→字库”分支。
+  const created = await supabase(
+    destination === 'recognized'
+      ? 'rpc/create_recognized_literacy_tasks_with_phonetic_assets'
+      : 'rpc/create_literacy_tasks_with_phonetic_assets',
+    {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -603,11 +643,13 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems) {
       p_family_id: familyId,
       p_rows: rows
     })
-  });
+    }
+  );
   return {
     created: (created || []).map((row) => ({ id: row.id, character: row.character })),
     knownCharacters: knownCharactersInRequest,
-    skippedExistingCharacters
+    skippedExistingCharacters,
+    skippedRecognizedCharacters
   };
 }
 
@@ -910,13 +952,14 @@ async function completeLiteracyCharacter(childId, literacyCharacterId, hasCharac
 }
 
 /**
- * “存库”是一次服务端受控的转移：数据库 RPC 先幂等写入字库，再投递音频
- * 清理任务。物理删除由独立清理分支重试，不能因 Storage 临时失败阻塞存库。
+ * “存库”是一次服务端受控的转移。只有教学音频全部删除后才提交；若删除失败，
+ * 立即撤销本次新增的字库记录并恢复复习数据，等待孩子再次主动点击“存库”。
  */
 async function archiveRecognizedCharacter(childId, recognizedCharacterId) {
   if (typeof recognizedCharacterId !== 'string' || !recognizedCharacterId.trim()) {
     throw new HttpError(400, 'recognizedCharacterId 必填');
   }
+  const target = await loadRecognizedArchiveTarget(childId, recognizedCharacterId);
   const result = await supabase('rpc/archive_recognized_character_with_phonetic_assets', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -925,7 +968,247 @@ async function archiveRecognizedCharacter(childId, recognizedCharacterId) {
       p_recognized_character_id: recognizedCharacterId
     })
   });
+  // 存库提示只能在教学音频也同步删除完成后返回。失败不进入后台清理队列，
+  // 而是撤销这一次转移；孩子下次点击“存库”才会重新开始。
+  if (target) {
+    try {
+      await deleteArchivedTeachingAudio(target);
+    } catch (cleanupError) {
+      try {
+        await rollbackRecognizedArchive(target);
+      } catch (rollbackError) {
+        console.error('存库音频清理失败后回滚失败', {
+          recognizedCharacterId: target.id,
+          cleanupError: audioCleanupError(cleanupError),
+          rollbackError: audioCleanupError(rollbackError)
+        });
+        throw new HttpError(500, '教学音频清理失败，且存库回滚失败，请联系管理员');
+      }
+      throw cleanupError;
+    }
+  }
   return result || { archived: true };
+}
+
+/**
+ * 将复习字重新排到首页的“新字”队列：只允许孩子本人更新自己的收录时间。
+ * 复习内容、音频和学习记录都不变，首页会据此从当天开始重新计算三天学习期。
+ */
+async function topRecognizedCharacter(childId, recognizedCharacterId) {
+  if (typeof recognizedCharacterId !== 'string' || !recognizedCharacterId.trim()) {
+    throw new HttpError(400, 'recognizedCharacterId 必填');
+  }
+  const recognizedAt = new Date().toISOString();
+  const updated = await supabase(
+    `recognized_characters?id=eq.${encodeURIComponent(recognizedCharacterId)}&child_id=eq.${encodeURIComponent(childId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({ recognized_at: recognizedAt })
+    }
+  );
+  if (!Array.isArray(updated) || updated.length !== 1) {
+    throw new HttpError(404, '未找到该已认识汉字');
+  }
+  return { recognizedAt: updated[0].recognized_at || recognizedAt };
+}
+
+async function loadRecognizedArchiveTarget(childId, recognizedCharacterId) {
+  const recognizedFields = [
+    'id', 'child_id', 'character', 'source_literacy_character_id',
+    'character_audio_url', 'character_audio_version', 'character_audio_hash', 'words', 'sentences'
+  ].join(',');
+  const rows = await supabase(
+    `recognized_characters?select=${recognizedFields}&id=eq.${encodeURIComponent(recognizedCharacterId)}&child_id=eq.${encodeURIComponent(childId)}&limit=1`
+  );
+  const recognized = Array.isArray(rows) ? rows[0] || null : null;
+  if (!recognized) return null;
+
+  const [knownRows, sourceTaskRows, assets] = await Promise.all([
+    supabase(
+      `known_characters?select=character&user_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(recognized.character)}&limit=1`
+    ),
+    recognized.source_literacy_character_id
+      ? supabase(
+        `child_literacy_characters?select=id,character_audio_url,character_audio_version,character_audio_hash,words,sentences&id=eq.${encodeURIComponent(recognized.source_literacy_character_id)}&child_id=eq.${encodeURIComponent(childId)}&limit=1`
+      )
+      : Promise.resolve([]),
+    listArchivedTeachingAudio(recognized)
+  ]);
+  return {
+    ...recognized,
+    knownCharacterExisted: Array.isArray(knownRows) && knownRows.length > 0,
+    sourceTask: Array.isArray(sourceTaskRows) ? sourceTaskRows[0] || null : null,
+    assets
+  };
+}
+
+function archivedAudioMetadata(record) {
+  return {
+    character_audio_url: record.character_audio_url,
+    character_audio_version: record.character_audio_version,
+    character_audio_hash: record.character_audio_hash,
+    words: record.words,
+    sentences: record.sentences
+  };
+}
+
+async function rollbackRecognizedArchive(target, supabaseRequest = supabase) {
+  const restoreOptions = {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' }
+  };
+  const now = new Date().toISOString();
+  const restoreCalls = [
+    supabaseRequest(
+      `recognized_characters?id=eq.${encodeURIComponent(target.id)}&child_id=eq.${encodeURIComponent(target.child_id)}`,
+      { ...restoreOptions, body: JSON.stringify(archivedAudioMetadata(target)) }
+    )
+  ];
+  if (target.sourceTask) {
+    restoreCalls.push(supabaseRequest(
+      `child_literacy_characters?id=eq.${encodeURIComponent(target.sourceTask.id)}&child_id=eq.${encodeURIComponent(target.child_id)}`,
+      { ...restoreOptions, body: JSON.stringify(archivedAudioMetadata(target.sourceTask)) }
+    ));
+  }
+  for (const asset of (target.assets || []).filter((item) => item.status !== 'deleted')) {
+    restoreCalls.push(supabaseRequest(
+      `literacy_tts_assets?id=eq.${encodeURIComponent(asset.id)}&status=neq.deleted`,
+      {
+        ...restoreOptions,
+        body: JSON.stringify({ status: asset.status, last_error: null, updated_at: now })
+      }
+    ));
+  }
+  await Promise.all(restoreCalls);
+
+  // 同字可能在本次操作前已存在于字库；这种历史记录绝不能随回滚删除。
+  if (!target.knownCharacterExisted) {
+    await supabaseRequest(
+      `known_characters?user_id=eq.${encodeURIComponent(target.child_id)}&character=eq.${encodeURIComponent(target.character)}`,
+      { method: 'DELETE', headers: { Prefer: 'return=minimal' } }
+    );
+  }
+}
+
+function teachingAudioPath(asset) {
+  if (asset.object_path) return asset.object_path;
+  const filename = asset.item_type === 'character'
+    ? 'character.mp3'
+    : `${asset.item_type}-${asset.item_order}.mp3`;
+  if (asset.root_literacy_character_id) {
+    return `${asset.voice_version}/task/${asset.root_literacy_character_id}/${filename}`;
+  }
+  if (asset.recognized_character_id) {
+    return `${asset.voice_version}/recognized/${asset.recognized_character_id}/${filename}`;
+  }
+  throw new Error(`教学音频资产 ${asset.id} 缺少归属记录`);
+}
+
+function encodeStoragePath(path) {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function audioCleanupError(error) {
+  const message = String(error?.message || error || '未知错误')
+    .replace(/Bearer\s+[^\s,;]+/ig, 'Bearer [已隐藏]')
+    .replace(/(secret(?:id|key)?|token|apikey)\s*[=:]\s*[^\s,;]+/ig, '$1=[已隐藏]');
+  return message.slice(0, 500);
+}
+
+function audioDeleteRetryable(error) {
+  const status = Number(error?.status || error?.statusCode || 0);
+  return status === 429 || status >= 500 || /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND)$/i.test(String(error?.code || ''));
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function deleteTeachingAudioObject(asset, fetchImpl = fetch) {
+  const objectPath = teachingAudioPath(asset);
+  const result = await fetchImpl(
+    `${SUPABASE_URL}/storage/v1/object/${AUDIO_BUCKET}/${encodeStoragePath(objectPath)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+      }
+    }
+  );
+  const body = await result.text();
+  const alreadyMissing = result.status === 404
+    || /"statusCode"\s*:\s*"?404"?|"code"\s*:\s*"NoSuchKey"|Object not found/i.test(body);
+  if (result.ok || alreadyMissing) return;
+  const error = new Error(`教学音频删除失败，HTTP ${result.status}`);
+  error.status = result.status;
+  throw error;
+}
+
+async function deleteTeachingAudioWithRetry(asset, fetchImpl = fetch, waitFn = wait) {
+  let lastError;
+  for (let attempt = 1; attempt <= AUDIO_DELETE_MAX_ATTEMPTS; attempt++) {
+    try {
+      await deleteTeachingAudioObject(asset, fetchImpl);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!audioDeleteRetryable(error) || attempt === AUDIO_DELETE_MAX_ATTEMPTS) break;
+      await waitFn(250 * (2 ** (attempt - 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function listArchivedTeachingAudio(target, supabaseRequest = supabase) {
+  const fields = 'id,object_path,voice_version,item_type,item_order,root_literacy_character_id,recognized_character_id,status';
+  const queries = [
+    `literacy_tts_assets?select=${fields}&status=neq.deleted&recognized_character_id=eq.${encodeURIComponent(target.id)}`
+  ];
+  if (target.source_literacy_character_id) {
+    queries.push(
+      `literacy_tts_assets?select=${fields}&status=neq.deleted&root_literacy_character_id=eq.${encodeURIComponent(target.source_literacy_character_id)}`
+    );
+  }
+  const pages = await Promise.all(queries.map((query) => supabaseRequest(query)));
+  return [...new Map(pages.flat().filter(Boolean).map((asset) => [asset.id, asset])).values()];
+}
+
+async function deleteArchivedTeachingAudio(target, {
+  supabaseRequest = supabase,
+  fetchImpl = fetch,
+  waitFn = wait
+} = {}) {
+  const assets = await listArchivedTeachingAudio(target, supabaseRequest);
+  for (const asset of assets) {
+    try {
+      await deleteTeachingAudioWithRetry(asset, fetchImpl, waitFn);
+      await supabaseRequest(`literacy_tts_assets?id=eq.${encodeURIComponent(asset.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ status: 'deleted', deleted_at: new Date().toISOString(), last_error: null, updated_at: new Date().toISOString() })
+      });
+    } catch (error) {
+      throw new HttpError(503, '教学音频清理失败，请稍后重试');
+    }
+  }
+
+  const deleteOptions = { method: 'DELETE', headers: { Prefer: 'return=minimal' } };
+  await supabaseRequest(
+    `literacy_tts_assets?recognized_character_id=eq.${encodeURIComponent(target.id)}&status=eq.deleted`,
+    deleteOptions
+  );
+  if (target.source_literacy_character_id) {
+    await supabaseRequest(
+      `literacy_tts_assets?root_literacy_character_id=eq.${encodeURIComponent(target.source_literacy_character_id)}&status=eq.deleted`,
+      deleteOptions
+    );
+  }
+  await supabaseRequest(
+    `recognized_characters?id=eq.${encodeURIComponent(target.id)}`,
+    deleteOptions
+  );
 }
 
 async function handler(event) {
@@ -1026,6 +1309,10 @@ async function handler(event) {
     const archived = await archiveRecognizedCharacter(childId, body.recognizedCharacterId);
     return response(201, { status: 'archived', archived });
   }
+  if (body.action === 'top_recognized_character') {
+    const topped = await topRecognizedCharacter(childId, body.recognizedCharacterId);
+    return response(200, { status: 'topped', topped });
+  }
   if (body.action === 'preview_literacy_tasks') {
     console.info('识字任务预览开始');
     const preview = await previewGeneratedLiteracyTasks(childId, body.characters);
@@ -1041,6 +1328,14 @@ async function handler(event) {
     const phoneticGeneration = await generatePhoneticAssets(Math.max(1, generated.created.length * 4));
     return response(201, { status: 'created', generated, audioGeneration, phoneticGeneration });
   }
+  if (body.action === 'save_recognized_literacy_tasks') {
+    const generated = await saveGeneratedLiteracyTasks(childId, body.characters, body.items, 'recognized');
+    // 新建根任务已经在数据库内完成迁移；TTS 仍按根任务生成，迁移脚本中的 trigger
+    // 会将资产同时关联至已认识记录，使生成的 URL 同步回写两张表。
+    const audioGeneration = await triggerNewLiteracyTaskAudio(generated.created);
+    const phoneticGeneration = await generatePhoneticAssets(Math.max(1, generated.created.length * 4));
+    return response(201, { status: 'recognized_created', generated, audioGeneration, phoneticGeneration });
+  }
   throw new HttpError(400, '未知 action');
 }
 
@@ -1053,6 +1348,12 @@ exports.main_handler = async (event) => {
 };
 
 exports._private = {
+  archiveRecognizedCharacter,
+  topRecognizedCharacter,
+  rollbackRecognizedArchive,
+  deleteArchivedTeachingAudio,
+  deleteTeachingAudioWithRetry,
+  teachingAudioPath,
   triggerNewLiteracyTaskAudio,
   phonemesForText,
   normalizePhonemeTokens,

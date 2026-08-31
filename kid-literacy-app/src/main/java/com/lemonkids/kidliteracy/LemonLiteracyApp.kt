@@ -387,7 +387,6 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
     var recordingTarget by remember { mutableStateOf<ReadingTarget?>(null) }
     var pendingRecordingTarget by remember { mutableStateOf<ReadingTarget?>(null) }
     var selectedStudyCharacter by remember { mutableStateOf<SelectedStudyCharacter?>(null) }
-    var selectedRecognizedCharacter by remember { mutableStateOf<RecognizedCharacter?>(null) }
     var showGenerateLiteracyTasksDialog by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     val homeViewModel: LiteracyHomeViewModel = hiltViewModel()
@@ -601,7 +600,6 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                 Page.KNOWN -> KnownScreen(
                     userId = userId,
                     onBack = { page = Page.PROFILE },
-                    onDetails = { selectedRecognizedCharacter = it },
                     onArchive = { character ->
                         readingEvaluationViewModel.archiveRecognizedCharacter(character.id)
                     },
@@ -690,28 +688,34 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
             )
         }
     }
-    selectedRecognizedCharacter?.let { character ->
-        CharacterDetailDialog(
-            character = character,
-            onDismiss = { selectedRecognizedCharacter = null }
-        )
-    }
     if (showGenerateLiteracyTasksDialog) {
         GenerateLiteracyTasksDialog(
             onDismiss = { showGenerateLiteracyTasksDialog = false },
             onPreview = { characters ->
                 readingEvaluationViewModel.previewLiteracyTasks(characters)
             },
-            onSave = { characters, tasks ->
-                val result = readingEvaluationViewModel.saveLiteracyTasks(characters, tasks)
+            onSave = { destination, characters, tasks ->
+                val result = when (destination) {
+                    LiteracySaveDestination.PENDING -> readingEvaluationViewModel.saveLiteracyTasks(characters, tasks)
+                    LiteracySaveDestination.RECOGNIZED -> readingEvaluationViewModel.saveRecognizedLiteracyTasks(characters, tasks)
+                }
                 if (result.isSuccess) {
                     val generated = result.getOrThrow()
                     homeViewModel.load(userId)
                     val created = generated.createdCharacters.joinToString("、")
                     val knownCharacters = generated.knownCharacters.joinToString("、")
                     val skippedExisting = generated.skippedExistingCharacters.joinToString("、")
+                    val skippedRecognized = generated.skippedRecognizedCharacters.joinToString("、")
                     notice = buildString {
-                        if (created.isNotBlank()) append("已添加待认识字：$created")
+                        if (created.isNotBlank()) {
+                            append(
+                                if (destination == LiteracySaveDestination.RECOGNIZED) {
+                                    "已添加已认识字：$created"
+                                } else {
+                                    "已添加待认识字：$created"
+                                }
+                            )
+                        }
                         if (knownCharacters.isNotBlank()) {
                             if (isNotEmpty()) append("；")
                             append("输入中已在字库：$knownCharacters")
@@ -719,6 +723,10 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                         if (skippedExisting.isNotBlank()) {
                             if (isNotEmpty()) append("；")
                             append("已有待认识任务：$skippedExisting")
+                        }
+                        if (skippedRecognized.isNotBlank()) {
+                            if (isNotEmpty()) append("；")
+                            append("已有已认识字：$skippedRecognized")
                         }
                     }.ifBlank { "没有可添加的识字内容" }
                     Result.success(generated)
@@ -2594,7 +2602,7 @@ private fun ProfileScreen(
 private fun GenerateLiteracyTasksDialog(
     onDismiss: () -> Unit,
     onPreview: suspend (String) -> Result<LiteracyTasksPreview>,
-    onSave: suspend (String, List<GeneratedLiteracyTask>) -> Result<SavedLiteracyTasks>
+    onSave: suspend (LiteracySaveDestination, String, List<GeneratedLiteracyTask>) -> Result<SavedLiteracyTasks>
 ) {
     var characters by remember { mutableStateOf("") }
     var preview by remember { mutableStateOf<LiteracyTasksPreview?>(null) }
@@ -2605,6 +2613,28 @@ private fun GenerateLiteracyTasksDialog(
     val normalizedCharacters = characters.trim()
     val validInput = normalizedCharacters.isNotEmpty() && normalizedCharacters.all { it.isChineseCharacter() }
     val hasTasksToSave = editableTasks.isNotEmpty()
+    val saveEditedTasks: (LiteracySaveDestination) -> Unit = { destination ->
+        coroutineScope.launch {
+            val tasks = editableTasks.map {
+                GeneratedLiteracyTask(
+                    character = it.character,
+                    words = it.wordsText.split(Regex("[、，,\\s]+")).filter(String::isNotBlank).map { text ->
+                        GeneratedLiteracyExample(text = text)
+                    },
+                    sentence = GeneratedLiteracyExample(text = it.sentence.trim())
+                )
+            }
+            validateEditedLiteracyTasks(tasks)?.let {
+                errorMessage = it
+                return@launch
+            }
+            isWorking = true
+            val result = onSave(destination, normalizedCharacters, tasks)
+            if (result.isSuccess) onDismiss()
+            else errorMessage = result.exceptionOrNull()?.message ?: "保存识字任务失败，请稍后重试"
+            isWorking = false
+        }
+    }
 
     Dialog(
         onDismissRequest = { if (!isWorking) onDismiss() },
@@ -2697,6 +2727,20 @@ private fun GenerateLiteracyTasksDialog(
                             )
                         }
                     }
+                    preview?.skippedRecognizedCharacters?.takeIf { it.isNotEmpty() }?.let { skipped ->
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = WheatLight,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                "已存在已认识字，不能重复添加：${skipped.joinToString("、")}",
+                                modifier = Modifier.padding(14.dp),
+                                fontSize = 13.sp,
+                                color = Ink
+                            )
+                        }
+                    }
                     if (hasTasksToSave) {
                         LazyColumn(
                             modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
@@ -2730,10 +2774,10 @@ private fun GenerateLiteracyTasksDialog(
                     }
                 }
                 errorMessage?.let { Text(it, color = Coral, fontSize = 13.sp) }
-                Button(
-                    onClick = {
-                        coroutineScope.launch {
-                            if (preview == null) {
+                if (preview == null) {
+                    Button(
+                        onClick = {
+                            coroutineScope.launch {
                                 if (!validInput) {
                                     errorMessage = "请输入一个或多个汉字"
                                     return@launch
@@ -2753,47 +2797,50 @@ private fun GenerateLiteracyTasksDialog(
                                     errorMessage = result.exceptionOrNull()?.message ?: "生成识字内容失败，请稍后重试"
                                 }
                                 isWorking = false
-                            } else {
-                                val tasks = editableTasks.map {
-                                    GeneratedLiteracyTask(
-                                        character = it.character,
-                                        words = it.wordsText.split(Regex("[、，,\\s]+")).filter(String::isNotBlank).mapIndexed { index, text ->
-                                            GeneratedLiteracyExample(text = text)
-                                        },
-                                        sentence = GeneratedLiteracyExample(text = it.sentence.trim())
-                                    )
-                                }
-                                validateEditedLiteracyTasks(tasks)?.let {
-                                    errorMessage = it
-                                    return@launch
-                                }
-                                isWorking = true
-                                val result = onSave(normalizedCharacters, tasks)
-                                if (result.isSuccess) onDismiss()
-                                else errorMessage = result.exceptionOrNull()?.message ?: "保存识字任务失败，请稍后重试"
-                                isWorking = false
                             }
+                        },
+                        enabled = !isWorking,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Leaf),
+                        shape = RoundedCornerShape(17.dp)
+                    ) {
+                        if (isWorking) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(9.dp))
+                            Text("正在生成…")
+                        } else {
+                            Icon(Icons.Filled.AddCircle, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("生成内容")
                         }
-                    },
-                    enabled = !isWorking && (preview == null || hasTasksToSave),
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-                    shape = RoundedCornerShape(17.dp)
-                ) {
-                    if (isWorking) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(9.dp))
-                        Text(if (preview == null) "正在生成…" else "正在保存…")
-                    } else {
-                        Icon(Icons.Filled.AddCircle, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        Text(if (preview == null) "生成内容" else "确认并添加到待认识")
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = { saveEditedTasks(LiteracySaveDestination.PENDING) },
+                            enabled = !isWorking && hasTasksToSave,
+                            modifier = Modifier.weight(1f).height(52.dp),
+                            shape = RoundedCornerShape(17.dp)
+                        ) {
+                            Text(if (isWorking) "正在保存…" else "确认并添加到待认识", maxLines = 2)
+                        }
+                        Button(
+                            onClick = { saveEditedTasks(LiteracySaveDestination.RECOGNIZED) },
+                            enabled = !isWorking && hasTasksToSave,
+                            modifier = Modifier.weight(1f).height(52.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Leaf),
+                            shape = RoundedCornerShape(17.dp)
+                        ) {
+                            Text(if (isWorking) "正在保存…" else "确认并添加到已认识", maxLines = 2)
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private enum class LiteracySaveDestination { PENDING, RECOGNIZED }
 
 private data class EditableLiteracyTask(
     val character: String,
@@ -3036,7 +3083,6 @@ private fun ProfileMenuCard(title: String, sub: String, icon: ImageVector, color
 private fun KnownScreen(
     userId: String,
     onBack: () -> Unit,
-    onDetails: (RecognizedCharacter) -> Unit,
     onArchive: suspend (RecognizedCharacter) -> Result<Unit>,
     onArchived: (RecognizedCharacter) -> Unit,
     onNotice: (String) -> Unit,
@@ -3045,54 +3091,139 @@ private fun KnownScreen(
     val state by viewModel.uiState.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     var archivingCharacterIds by remember { mutableStateOf(emptySet<String>()) }
+    var archiveConfirmationCharacter by remember { mutableStateOf<RecognizedCharacter?>(null) }
     LaunchedEffect(userId) { viewModel.load(userId) }
+    LaunchedEffect(state.topNotice) {
+        state.topNotice?.let {
+            onNotice(it)
+            viewModel.consumeTopNotice()
+        }
+    }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 28.dp, end = 28.dp, top = 18.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item { BackHeader("已认识的字", "每一粒小麦，都是你的进步", onBack) }
-        item {
-            Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = LeafLight)) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("🎓", fontSize = 30.sp)
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text("已经认识 ${state.characters.size} 个汉字", color = Ink, fontWeight = FontWeight.ExtraBold)
-                        Text("点击学习卡可查看字、词、句详情", color = Leaf, style = MaterialTheme.typography.bodyMedium)
+    if (state.isLoadingPhonetics) {
+        Dialog(onDismissRequest = viewModel::dismissPhonetics) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Sky, strokeWidth = 2.dp)
+                    Text("正在加载发音标注…", color = Ink, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+    state.phoneticDetail?.let { detail ->
+        // 与“待认识的字”页使用同一个弹层：正文只读，数字拼音可逐字修正。
+        PendingPhoneticDetailDialog(
+            detail = detail,
+            savingAssetId = state.savingAssetId,
+            errorMessage = state.phoneticErrorMessage,
+            onDismiss = viewModel::dismissPhonetics,
+            onSave = viewModel::savePhoneticAsset
+        )
+    }
+    state.phoneticErrorMessage?.takeIf { state.phoneticDetail == null && !state.isLoadingPhonetics }?.let { message ->
+        Dialog(onDismissRequest = viewModel::dismissPhonetics) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("无法加载发音标注", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text(message, color = EvaluationErrorRed)
+                    Button(onClick = viewModel::dismissPhonetics, modifier = Modifier.fillMaxWidth()) { Text("知道了") }
+                }
+            }
+        }
+    }
+    archiveConfirmationCharacter?.let { character ->
+        Dialog(onDismissRequest = { archiveConfirmationCharacter = null }) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text("确认存入字库？", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        "“${character.character}”存库后会从已认识的字列表移除，关联的学习内容和教学音频也会清理。",
+                        color = Color(0xFF5F6D72)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+                    ) {
+                        TextButton(onClick = { archiveConfirmationCharacter = null }) { Text("取消") }
+                        Button(
+                            onClick = {
+                                if (character.id.isBlank() || character.id in archivingCharacterIds) {
+                                    archiveConfirmationCharacter = null
+                                    return@Button
+                                }
+                                archiveConfirmationCharacter = null
+                                archivingCharacterIds = archivingCharacterIds + character.id
+                                coroutineScope.launch {
+                                    onArchive(character)
+                                        .onSuccess {
+                                            viewModel.removeCharacter(character.id)
+                                            onArchived(character)
+                                        }
+                                        .onFailure { error ->
+                                            onNotice(error.message ?: "存入字库失败，请稍后重试")
+                                        }
+                                    archivingCharacterIds = archivingCharacterIds - character.id
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Leaf)
+                        ) { Text("确认存库") }
                     }
                 }
             }
         }
-        if (state.characters.isEmpty() && !state.isLoading) {
-            item {
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
+        BackHeader("已认识的字", "每一粒小麦，都是你的进步", onBack)
+        Spacer(Modifier.height(15.dp))
+        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = LeafLight)) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("🎓", fontSize = 30.sp)
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("已经认识 ${state.characters.size} 个汉字", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("置顶后，该字会从今天起重新学习 3 天", color = Leaf, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        when {
+            state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingContent() }
+            state.characters.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyContent(
                     title = "还没有已认识的字",
                     subtitle = state.errorMessage ?: "完成一个认字任务后，它会出现在这里",
                     emoji = "🌱"
                 )
             }
-        } else {
-            items(state.characters, key = { it.id.ifBlank { it.character } }) { character ->
-                RecognizedCharacterCard(
-                    character = character,
-                    isArchiving = character.id in archivingCharacterIds,
-                    onDetails = { onDetails(character) },
-                    onArchive = {
-                        if (character.id.isBlank() || character.id in archivingCharacterIds) return@RecognizedCharacterCard
-                        archivingCharacterIds = archivingCharacterIds + character.id
-                        coroutineScope.launch {
-                            onArchive(character)
-                                .onSuccess {
-                                    viewModel.removeCharacter(character.id)
-                                    onArchived(character)
-                                }
-                                .onFailure { error ->
-                                    onNotice(error.message ?: "存入字库失败，请稍后重试")
-                                }
-                            archivingCharacterIds = archivingCharacterIds - character.id
+            else -> LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp)
+            ) {
+                items(state.characters, key = { it.id.ifBlank { it.character } }) { character ->
+                    RecognizedCharacterCard(
+                        character = character,
+                        isArchiving = character.id in archivingCharacterIds,
+                        isTopping = state.toppingCharacterId == character.id,
+                        onDetails = { viewModel.showPhonetics(character) },
+                        onTop = { viewModel.topCharacter(character) },
+                        onArchive = {
+                            if (character.id.isNotBlank() && character.id !in archivingCharacterIds) {
+                                archiveConfirmationCharacter = character
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
         }
     }
@@ -3111,51 +3242,49 @@ private fun BackHeader(title: String, subtitle: String, onBack: () -> Unit) {
 private fun RecognizedCharacterCard(
     character: RecognizedCharacter,
     isArchiving: Boolean,
+    isTopping: Boolean,
     onDetails: () -> Unit,
+    onTop: () -> Unit,
     onArchive: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
-        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = RoundedCornerShape(16.dp), color = LeafLight, modifier = Modifier.size(60.dp)) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(character.character, fontSize = 34.sp, color = Ink, fontWeight = FontWeight.ExtraBold)
-                }
+        Column(
+            modifier = Modifier.padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            Surface(shape = RoundedCornerShape(16.dp), color = LeafLight, modifier = Modifier.size(58.dp)) {
+                Box(contentAlignment = Alignment.Center) { Text(character.character, fontSize = 33.sp, color = Ink, fontWeight = FontWeight.ExtraBold) }
             }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("收录于 ${character.recognizedAt?.take(10) ?: "未知日期"}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF7D898C))
-                Text(
-                    text = character.words.takeIf { it.isNotEmpty() }?.joinToString("、") { it.text }?.let { "词：$it" } ?: "词：暂无",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Ink,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = character.sentences.firstOrNull()?.text?.let { "句：$it" } ?: "句：暂无",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF7D898C),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(Modifier.width(10.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("收录于 ${character.recognizedAt?.take(10) ?: "未知日期"}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF7D898C))
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(
                     onClick = onDetails,
-                    modifier = Modifier.width(64.dp).height(32.dp),
+                    enabled = !isArchiving && !isTopping,
+                    modifier = Modifier.weight(1f).height(34.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Sky),
                     shape = RoundedCornerShape(11.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
                 ) { Text("查看", fontSize = 12.sp) }
                 Button(
+                    onClick = onTop,
+                    enabled = !isArchiving && !isTopping,
+                    modifier = Modifier.weight(1f).height(34.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Wheat, contentColor = Ink),
+                    shape = RoundedCornerShape(11.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp)
+                ) {
+                    if (isTopping) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Ink, strokeWidth = 2.dp)
+                    else Text("置顶", fontSize = 12.sp)
+                }
+                Button(
                     onClick = onArchive,
-                    enabled = !isArchiving,
-                    modifier = Modifier.width(64.dp).height(32.dp),
+                    enabled = !isArchiving && !isTopping,
+                    modifier = Modifier.weight(1f).height(34.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Leaf),
                     shape = RoundedCornerShape(11.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
@@ -3166,44 +3295,6 @@ private fun RecognizedCharacterCard(
                         Text("存库", fontSize = 12.sp)
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CharacterDetailDialog(character: RecognizedCharacter, onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Card(modifier = Modifier.fillMaxWidth(.92f).widthIn(max = 760.dp).padding(18.dp), shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-            Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(character.character, style = MaterialTheme.typography.headlineLarge, color = Ink)
-                        Text("收录于 ${character.recognizedAt?.take(10) ?: "未知日期"}", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF859193))
-                    }
-                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "关闭") }
-                }
-                Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFFFFEF9), border = androidx.compose.foundation.BorderStroke(1.dp, Line), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("🌾 学习卡 · 字、词、句", fontWeight = FontWeight.ExtraBold, color = Ink)
-                        HorizontalDivider(color = Line)
-                        Text("字", color = Leaf, fontWeight = FontWeight.Bold)
-                        Text(character.character, fontSize = 42.sp, color = Ink, fontWeight = FontWeight.ExtraBold)
-                        HorizontalDivider(color = Line)
-                        Text("词", color = Leaf, fontWeight = FontWeight.Bold)
-                        Text(
-                            character.words.takeIf { it.isNotEmpty() }?.joinToString(" · ") { it.text } ?: "暂无词语",
-                            color = Ink
-                        )
-                        HorizontalDivider(color = Line)
-                        Text("句", color = Leaf, fontWeight = FontWeight.Bold)
-                        Text(
-                            character.sentences.takeIf { it.isNotEmpty() }?.joinToString("\n") { it.text } ?: "暂无句子",
-                            color = Ink
-                        )
-                    }
-                }
-                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F3F2), contentColor = Ink), shape = RoundedCornerShape(17.dp)) { Text("关闭") }
             }
         }
     }

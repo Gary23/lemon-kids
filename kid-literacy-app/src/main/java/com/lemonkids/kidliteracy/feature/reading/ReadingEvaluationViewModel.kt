@@ -1,8 +1,8 @@
 package com.lemonkids.kidliteracy.feature.reading
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import android.util.Log
 import com.lemonkids.shared.auth.SessionRecoveryCoordinator
 import com.lemonkids.shared.model.ChildLiteracyCharacter
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -89,13 +89,15 @@ data class PreparedEvaluation(val refText: String, val textMode: Int)
 data class LiteracyTasksPreview(
     val tasks: List<GeneratedLiteracyTask>,
     val knownCharacters: List<String>,
-    val skippedExistingCharacters: List<String>
+    val skippedExistingCharacters: List<String>,
+    val skippedRecognizedCharacters: List<String>
 )
 
 data class SavedLiteracyTasks(
     val createdCharacters: List<String>,
     val knownCharacters: List<String>,
-    val skippedExistingCharacters: List<String>
+    val skippedExistingCharacters: List<String>,
+    val skippedRecognizedCharacters: List<String>
 )
 
 @HiltViewModel
@@ -308,11 +310,38 @@ class ReadingEvaluationViewModel @Inject constructor(
             ?.jsonArray
             ?.mapNotNull { it.jsonPrimitive.contentOrNull }
             .orEmpty()
-        LiteracyTasksPreview(tasks, knownCharacters, skippedExistingCharacters)
+        val skippedRecognizedCharacters = preview["skippedRecognizedCharacters"]
+            ?.jsonArray
+            ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+            .orEmpty()
+        LiteracyTasksPreview(tasks, knownCharacters, skippedExistingCharacters, skippedRecognizedCharacters)
     }
 
     /** 家长确认或修改预览后，服务端校验内容及最新字库，再写入待认识任务。 */
     suspend fun saveLiteracyTasks(
+        characters: String,
+        tasks: List<GeneratedLiteracyTask>
+    ): Result<SavedLiteracyTasks> = saveGeneratedLiteracyTasks(
+        action = "save_literacy_tasks",
+        characters = characters,
+        tasks = tasks
+    )
+
+    /**
+     * 智能添加的“已认识”入口。服务端会先创建根任务，再在同一数据库事务内强制
+     * 迁移为已认识字；客户端不传点读状态，因此不会误写入字库。
+     */
+    suspend fun saveRecognizedLiteracyTasks(
+        characters: String,
+        tasks: List<GeneratedLiteracyTask>
+    ): Result<SavedLiteracyTasks> = saveGeneratedLiteracyTasks(
+        action = "save_recognized_literacy_tasks",
+        characters = characters,
+        tasks = tasks
+    )
+
+    private suspend fun saveGeneratedLiteracyTasks(
+        action: String,
         characters: String,
         tasks: List<GeneratedLiteracyTask>
     ): Result<SavedLiteracyTasks> = runCatching {
@@ -323,7 +352,7 @@ class ReadingEvaluationViewModel @Inject constructor(
             """{"character":"${task.character.jsonEscape()}","words":$words,"sentence":${task.sentence.toRequestJson()}}"""
         }
         val response = request(
-            """{"action":"save_literacy_tasks","characters":"${characters.jsonEscape()}","items":$serializedTasks}"""
+            """{"action":"$action","characters":"${characters.jsonEscape()}","items":$serializedTasks}"""
         )
         val generated = response.requiredObject("generated")
         val createdCharacters = generated["created"]
@@ -338,7 +367,11 @@ class ReadingEvaluationViewModel @Inject constructor(
             ?.jsonArray
             ?.mapNotNull { it.jsonPrimitive.contentOrNull }
             .orEmpty()
-        SavedLiteracyTasks(createdCharacters, knownCharacters, skippedExistingCharacters)
+        val skippedRecognizedCharacters = generated["skippedRecognizedCharacters"]
+            ?.jsonArray
+            ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+            .orEmpty()
+        SavedLiteracyTasks(createdCharacters, knownCharacters, skippedExistingCharacters, skippedRecognizedCharacters)
     }
 
     private suspend fun request(

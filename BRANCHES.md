@@ -7,6 +7,7 @@
 | `main` | 稳定主线与基础版本。 | 已推送。 |
 | `product` | 产品集成与发布分支。 | 已推送；认字端发布标签见下表。 |
 | `feature/kid-task-desktop-widget` | 任务端 App 开发：新增响应式桌面卡片。 | 开发中，尚未合并到 `product`。 |
+| `fix/known-character-save-removal` | 认字端修复：已认识字存库后再次进入页面仍显示。 | 开发中，尚未合并到 `product`。 |
 
 ## `product` 认字端发布标签
 
