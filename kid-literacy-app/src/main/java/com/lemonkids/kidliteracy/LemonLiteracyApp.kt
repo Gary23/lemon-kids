@@ -911,7 +911,7 @@ private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Text(
                                         char,
-                                        fontSize = 28.sp,
+                                        fontSize = 32.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = if (isCompleted) Leaf else Ink
                                     )
