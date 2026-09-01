@@ -5,9 +5,8 @@
 | 分支 | 用途 | 当前状态 |
 | --- | --- | --- |
 | `main` | 稳定主线与基础版本。 | 已推送。 |
-| `product` | 产品集成与发布分支。 | 已合并 `fix/known-character-save-removal` 的已认识字保存优化；认字端发布标签见下表。 |
+| `product` | 产品集成与发布分支。 | 已合并 `fix/known-character-save-removal` 的已认识字保存优化及 `feature/kid-literacy-app` 的认字端 v1.2 体验优化；认字端发布标签见下表。 |
 | `feature/kid-task-desktop-widget` | 任务端 App 开发：新增响应式桌面卡片。 | 开发中，尚未合并到 `product`。 |
-| `feature/kid-literacy-app` | 认字端 App 开发：后续功能迭代与体验优化。 | 开发中，尚未合并到 `product`。 |
 
 ## `product` 认字端发布标签
 
@@ -15,3 +14,4 @@
 | --- | --- | --- |
 | `认字端appv1.0` | `e72154a` | 合并已提交的认字评测改造后的产品基线。 |
 | `认字端appv1.1` | `f4886a5` | 合并认字端文档整理与复习优化后的产品版本。 |
+| `r认字端v1.2` | `7ee7cfb` | 合并认字端首页字形、列表布局与缓存优化后的产品版本。 |
