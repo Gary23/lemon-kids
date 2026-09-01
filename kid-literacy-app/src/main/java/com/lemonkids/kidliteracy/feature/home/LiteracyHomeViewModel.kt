@@ -35,8 +35,8 @@ data class LiteracyCharacterGroup(
     /**
      * 已认识字复习时主字需要读对的次数。
      *
-     * 首页按入库日期从近到远分成三组：最近 8 个字读 3 次，随后 8 个读 2 次，
-     * 最后 8 个读 1 次。待认识字仍固定沿用自身的三次规则。
+     * 首页按入库日期从近到远分成三组：最近 6 个字读 3 次，随后 6 个读 2 次，
+     * 最后 6 个读 1 次。待认识字仍固定沿用自身的三次规则。
      */
     val recognizedCharacterRequiredReadings: Int = 3,
     /** 当日任务完成后仍保留在原任务中的完成态。 */
@@ -100,7 +100,7 @@ private fun todayStartInChina() = LocalDate.now(CHINA_ZONE).atStartOfDay(CHINA_Z
 private val CHINA_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
 
 private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGroup> =
-    take(24).chunked(8).mapIndexed { index, characters ->
+    take(18).chunked(6).mapIndexed { index, characters ->
         LiteracyCharacterGroup(
             type = LiteracyGroupType.KNOWN,
             groupNumber = index + 1,

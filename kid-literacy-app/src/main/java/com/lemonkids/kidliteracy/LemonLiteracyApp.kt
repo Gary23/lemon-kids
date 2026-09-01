@@ -890,9 +890,9 @@ private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(lesson.title, style = MaterialTheme.typography.titleMedium, color = Ink)
                 }
-                // 字格永远按一行 8 个计算。任务不足 8 个时保留右侧空白，避免少量字被拉宽。
+                // 每组一行固定 6 个字，六格均分卡片宽度；任务不足 6 个时保留右侧空白。
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    val characterCellSize = (maxWidth - 8.dp * 7) / 8
+                    val characterCellSize = (maxWidth - 8.dp * 5) / 6
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         lesson.characters.forEachIndexed { index, char ->
                             val isCompleted = lesson.characterIds.getOrNull(index) in lesson.completedCharacterIds
@@ -911,7 +911,8 @@ private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Text(
                                         char,
-                                        style = MaterialTheme.typography.titleLarge,
+                                        fontSize = 32.sp,
+                                        fontWeight = FontWeight.Bold,
                                         color = if (isCompleted) Leaf else Ink
                                     )
                                 }
