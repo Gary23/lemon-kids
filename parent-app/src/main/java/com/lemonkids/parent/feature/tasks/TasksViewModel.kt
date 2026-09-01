@@ -6,10 +6,12 @@ import android.content.Context
 import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.model.TaskRecurrenceType
+import com.lemonkids.shared.model.TaskTemplate
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.CategoryRepository
 import com.lemonkids.shared.repository.ChildUserInfo
 import com.lemonkids.shared.repository.TaskRepository
+import com.lemonkids.shared.repository.TaskTemplateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +37,7 @@ data class TasksUiState(
     /** 日历下方选中的日任务列表 */
     val selectedDateTasks: List<TaskUiItem> = emptyList(),
     val categories: List<Category> = emptyList(),
+    val taskTemplates: List<TaskTemplate> = emptyList(),
     val expandedCategories: Set<String> = emptySet(),
     val isManageMode: Boolean = false,
     val selectedTaskIds: Set<String> = emptySet()
@@ -79,6 +82,7 @@ class TasksViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val authRepository: AuthRepository,
     private val categoryRepository: CategoryRepository,
+    private val taskTemplateRepository: TaskTemplateRepository,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -86,6 +90,7 @@ class TasksViewModel @Inject constructor(
     val uiState: StateFlow<TasksUiState> = _uiState.asStateFlow()
 
     private var hasLoadedOnce = false
+    private var defaultCategoryRequested = false
 
     init {
         loadData()
@@ -112,14 +117,17 @@ class TasksViewModel @Inject constructor(
                 // 首次加载时确保"默认"分类存在
                 val existing = categoryRepository.observeCategories(familyId)
                 // 用一个临时 collect 检查是否存在，不存在则创建
-                var hasDefault = false
                 existing.collect { list ->
-                    hasDefault = list.any { it.name == "默认" }
-                    if (!hasDefault && list.isNotEmpty()) {
-                        // 有分类但没有"默认"，补建
+                    if (list.none { it.name == "默认" } && !defaultCategoryRequested) {
+                        defaultCategoryRequested = true
                         categoryRepository.createCategory(Category(familyId = familyId, name = "默认"))
                     }
                     _uiState.value = _uiState.value.copy(categories = list)
+                }
+            }
+            launch {
+                taskTemplateRepository.observeTemplates(familyId).collect { templates ->
+                    _uiState.value = _uiState.value.copy(taskTemplates = templates)
                 }
             }
         }
@@ -276,15 +284,10 @@ class TasksViewModel @Inject constructor(
 
     /** 创建单次或重复任务。重复日程展开为独立日任务，以保留逐日完成历史。 */
     fun createTask(
-        title: String,
-        description: String,
+        template: TaskTemplate,
         endDate: String,
-        rewardPoints: Int,
-        penaltyPoints: Int,
         dueDate: String,
-        dueTime: String?,
         childId: String,
-        categoryName: String,
         recurrenceType: TaskRecurrenceType,
         recurrenceWeekdays: Set<Int>,
         onDone: () -> Unit
@@ -316,16 +319,16 @@ class TasksViewModel @Inject constructor(
             for (date in dates) {
                 val task = Task(
                     familyId = familyId,
-                    title = title,
-                    description = description,
+                    title = template.title,
+                    description = template.description,
                     childId = childId,
                     createdBy = user.uid,
-                    category = categoryName,
-                    rewardPoints = rewardPoints,
-                    penaltyPoints = penaltyPoints,
+                    category = template.category,
+                    rewardPoints = template.rewardPoints,
+                    penaltyPoints = template.penaltyPoints,
                     dueDate = date.toString(),
                     endDate = null,
-                    dueTime = dueTime,
+                    dueTime = null,
                     recurrenceSeriesId = seriesId,
                     recurrenceType = recurrenceType,
                     recurrenceWeekdays = recurrenceWeekdays.sorted(),

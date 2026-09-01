@@ -10,4 +10,5 @@ interface CategoryRepository {
     suspend fun deleteCategory(categoryId: String): Result<Unit>
     /** 查询某个分类下的任务数量（按状态），用于删除前校验 */
     suspend fun getTaskCountByCategory(familyId: String, categoryName: String): Result<Pair<Int, Int>> // (未完成数量, 已完成数量)
+    suspend fun getTaskTemplateCountByCategory(familyId: String, categoryName: String): Result<Int>
 }

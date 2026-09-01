@@ -154,6 +154,11 @@ class CategoryManageViewModel @Inject constructor(
                 onBlocked("该分类下有 ${count.first} 个未完成任务，无法删除")
                 return@launch
             }
+            val templateCount = categoryRepository.getTaskTemplateCountByCategory(familyId, category.name).getOrNull() ?: 0
+            if (templateCount > 0) {
+                onBlocked("该分类下有 ${templateCount} 个任务，无法删除")
+                return@launch
+            }
             // 乐观更新：立即从本地列表移除
             _uiState.value = _uiState.value.copy(
                 categories = _uiState.value.categories.filter { it.id != category.id }

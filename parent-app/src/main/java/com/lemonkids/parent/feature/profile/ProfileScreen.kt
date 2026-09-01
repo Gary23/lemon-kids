@@ -47,6 +47,7 @@ import com.lemonkids.shared.ui.auth.AuthViewModel
 @Composable
 fun ProfileScreen(
     onFamilyManageClick: () -> Unit,
+    onTaskManageClick: () -> Unit,
     onCategoryManageClick: () -> Unit,
     onRecycleBinClick: () -> Unit,
     onDeviceStatusLogClick: () -> Unit,
@@ -164,6 +165,24 @@ fun ProfileScreen(
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                    Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { onTaskManageClick() }
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("任务管理", fontWeight = FontWeight.Bold)
+                        Text("创建和维护可安排的任务", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

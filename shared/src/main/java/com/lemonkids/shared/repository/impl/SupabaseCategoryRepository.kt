@@ -2,6 +2,7 @@ package com.lemonkids.shared.repository.impl
 
 import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.Task
+import com.lemonkids.shared.model.TaskTemplate
 import com.lemonkids.shared.repository.CategoryRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
@@ -55,5 +56,11 @@ class SupabaseCategoryRepository @Inject constructor(
         val pending = allTasks.count { it.status.name == "PENDING" || it.status.name == "REJECTED" }
         val done = allTasks.count { it.status.name == "DONE" || it.status.name == "VERIFIED" || it.status.name == "EXPIRED" }
         Pair(pending, done)
+    }
+
+    override suspend fun getTaskTemplateCountByCategory(familyId: String, categoryName: String): Result<Int> = runCatching {
+        postgrest.from("task_templates").select {
+            filter { eq("family_id", familyId); eq("category", categoryName) }
+        }.decodeList<TaskTemplate>().size
     }
 }

@@ -45,6 +45,18 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_child_date ON tasks(child_id, due_date);
 CREATE INDEX IF NOT EXISTS idx_tasks_family ON tasks(family_id);
 
+CREATE TABLE IF NOT EXISTS task_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    family_id UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL,
+    reward_points INT NOT NULL DEFAULT 5 CHECK (reward_points > 0),
+    penalty_points INT NOT NULL DEFAULT 2,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_task_templates_family ON task_templates(family_id);
+
 CREATE TABLE IF NOT EXISTS messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     family_id UUID NOT NULL REFERENCES families(id),
@@ -192,6 +204,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 ALTER TABLE families ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE point_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rewards ENABLE ROW LEVEL SECURITY;
@@ -203,6 +216,11 @@ CREATE POLICY "users_self_access" ON users
     FOR ALL USING (uid = auth.uid());
 
 CREATE POLICY "tasks_family_access" ON tasks
+    FOR ALL USING (family_id IN (
+        SELECT family_id FROM users WHERE uid = auth.uid()
+    ));
+
+CREATE POLICY "task_templates_family_access" ON task_templates
     FOR ALL USING (family_id IN (
         SELECT family_id FROM users WHERE uid = auth.uid()
     ));

@@ -10,6 +10,8 @@
 | `sql/patch.sql` | 邀请码、RLS、限时字段、设备日志等增量 | 已有初始表；重复执行约束语句前需检查状态 |
 | `sql/functions-fix.sql` | 重新创建任务/奖励 RPC 的历史修复 | 已有相关表；会覆盖函数定义 |
 | `sql/binding-codes-patch.sql` | 绑定码 RPC 修复 | `binding_codes` 表及相关 RPC 已由既有环境创建 |
+| `sql/20260901_task_templates.sql` | 创建家庭任务模板表和 RLS 策略 | 已有 `families`、`users` 表；家长端任务管理上线前执行 |
+| `sql/20260901_reset_tasks_and_child_points.sql` | 清空全部任务、孩子积分及其积分流水 | 破坏性维护脚本；执行前确认目标环境与备份 |
 | `sql/20260731_literacy_pronunciation_evaluation.sql` | 已废弃的旧版认字评测建表脚本 | 勿执行；已由 20260802 清理迁移替代 |
 | `sql/20260731_literacy_pronunciation_batch_upgrade.sql` | 已废弃的旧版评测表升级脚本 | 勿执行 |
 | `sql/20260731_literacy_pronunciation_pending_attempt.sql` | 已废弃的旧版评测状态升级脚本 | 勿执行 |
