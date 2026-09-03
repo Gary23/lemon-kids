@@ -8,18 +8,20 @@
     android:padding="18dp">
 
     <TextView
+        android:id="@+id/widget_title"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="今日任务 · 4 项待完成"
+        android:text="今日任务"
         android:textColor="#2B210B"
         android:textSize="22sp"
         android:textStyle="bold" />
 
     <TextView
+        android:id="@+id/widget_subtitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
-        android:text="拖动卡片宽度可切换单列与双列展示"
+        android:text="正在同步任务…"
         android:textColor="#786B43"
         android:textSize="13sp" />
 
@@ -37,23 +39,27 @@
             android:orientation="vertical">
 
             <TextView
+                android:id="@+id/widget_task_1"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="@drawable/task_widget_task_background"
                 android:padding="14dp"
-                android:text="08:30\n整理书包"
+                android:text=""
                 android:textColor="#2B210B"
-                android:textSize="17sp" />
+                android:textSize="17sp"
+                android:visibility="gone" />
 
             <TextView
+                android:id="@+id/widget_task_2"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/task_widget_task_background"
                 android:padding="14dp"
-                android:text="16:30\n完成数学练习"
+                android:text=""
                 android:textColor="#2B210B"
-                android:textSize="17sp" />
+                android:textSize="17sp"
+                android:visibility="gone" />
         </LinearLayout>
 
         <LinearLayout
@@ -64,23 +70,27 @@
             android:orientation="vertical">
 
             <TextView
+                android:id="@+id/widget_task_3"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="@drawable/task_widget_task_background"
                 android:padding="14dp"
-                android:text="19:00\n阅读 10 分钟"
+                android:text=""
                 android:textColor="#2B210B"
-                android:textSize="17sp" />
+                android:textSize="17sp"
+                android:visibility="gone" />
 
             <TextView
+                android:id="@+id/widget_task_4"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/task_widget_task_background"
                 android:padding="14dp"
-                android:text="20:30\n整理明日课本"
+                android:text=""
                 android:textColor="#2B210B"
-                android:textSize="17sp" />
+                android:textSize="17sp"
+                android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>

@@ -1,15 +1,18 @@
 package com.lemonkids.shared.repository.impl
 
+import android.util.Log
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.repository.TaskRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.gotrue.Auth
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.rpc
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.channels.awaitClose
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,8 +22,14 @@ class SupabaseTaskRepository @Inject constructor(
     private val supabase: SupabaseClient
 ) : TaskRepository {
 
+    companion object {
+        private const val TAG = "SupabaseTaskRepo"
+    }
+
     private val postgrest get() = supabase.pluginManager.getPlugin(Postgrest)
     private val auth get() = supabase.pluginManager.getPlugin(Auth)
+    /** 本进程内任务写入后的即时刷新信号，避免界面只能等待轮询。 */
+    private val taskRefreshEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     /**
      * 检查 auth session 是否有效，RLS 在 session 无效时会返回空列表而非报错，
@@ -40,26 +49,31 @@ class SupabaseTaskRepository @Inject constructor(
                 } catch (_: Exception) {}
             }
             fetch()
-            while (true) { delay(60_000); fetch() }
+            launch { taskRefreshEvents.collect { fetch() } }
+            launch { while (true) { delay(60_000); fetch() } }
+            awaitClose { }
         }
 
     override fun observeTasksForDate(childId: String, date: String): Flow<List<Task>> =
         observeTodayTasks(childId, date)
 
-    override fun observeChildTasks(childId: String): Flow<List<Task>> =
-        callbackFlow {
-            suspend fun fetch() {
-                try {
-                    if (!isSessionValid()) return
-                    val tasks = postgrest.from("tasks").select {
-                        filter { eq("child_id", childId) }
-                    }.decodeList<Task>()
-                    trySend(tasks.filter { it.deletedAt == null })
-                } catch (_: Exception) {}
+    override fun observeChildTasks(childId: String): Flow<List<Task>> = callbackFlow {
+        suspend fun fetch() {
+            try {
+                if (!isSessionValid()) return
+                val tasks = postgrest.from("tasks").select {
+                    filter { eq("child_id", childId) }
+                }.decodeList<Task>()
+                trySend(tasks.filter { it.deletedAt == null })
+            } catch (_: Exception) {
+                // 保留上一次已展示的数据，下一次轮询或写入信号会重试。
             }
-            fetch()
-            while (true) { delay(60_000); fetch() }
         }
+        fetch()
+        launch { taskRefreshEvents.collect { fetch() } }
+        launch { while (true) { delay(60_000); fetch() } }
+        awaitClose { }
+    }
 
     override fun observeDeletedTasks(familyId: String): Flow<List<Task>> =
         callbackFlow {
@@ -87,6 +101,16 @@ class SupabaseTaskRepository @Inject constructor(
 
     override suspend fun createTask(task: Task): Result<String> = runCatching {
         postgrest.from("tasks").insert(task) { select() }.decodeSingle<Task>().id
+    }.onSuccess { taskId ->
+        Log.i(TAG, "任务创建成功 taskId=$taskId childId=${task.childId} dueDate=${task.dueDate}")
+    }.onFailure { error ->
+        // 不记录标题和描述，避免将家庭内容写入设备日志；保留服务端异常用于排查鉴权、RLS 与字段校验问题。
+        Log.e(
+            TAG,
+            "任务创建失败 familyId=${task.familyId} childId=${task.childId} dueDate=${task.dueDate} " +
+                "recurrence=${task.recurrenceType} seriesId=${task.recurrenceSeriesId}",
+            error
+        )
     }
 
     override suspend fun updateTask(task: Task): Result<Unit> = runCatching {
@@ -147,34 +171,39 @@ class SupabaseTaskRepository @Inject constructor(
                 function = "complete_task",
                 parameters = mapOf("p_task_id" to taskId, "p_child_id" to childId)
             )
-        }
+            Unit
+        }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun undoCompleteTask(taskId: String, childId: String, rewardPoints: Int): Result<Unit> =
         runCatching {
             // 1) 任务状态恢复为 pending
-            postgrest.from("tasks").update(mapOf(
-                "status" to "pending",
-                "completed_at" to null
-            )) { filter { eq("id", taskId) } }
-            // 2) 积分扣回
-            // 先读取当前积分
+            // 先读取当前积分；其余三个互不依赖的操作并行执行，减少网络往返等待。
             val user = postgrest.from("users").select {
                 filter { eq("uid", childId) }
             }.decodeSingle<com.lemonkids.shared.model.User>()
             val newPoints = (user.totalPoints - rewardPoints).coerceAtLeast(0)
-            postgrest.from("users").update(mapOf("total_points" to newPoints)) {
-                filter { eq("uid", childId) }
+            kotlinx.coroutines.coroutineScope {
+                launch {
+                    postgrest.from("tasks").update(mapOf(
+                        "status" to "pending",
+                        "completed_at" to null,
+                        "verified_at" to null
+                    )) { filter { eq("id", taskId) } }
+                }
+                launch {
+                    postgrest.from("users").update(mapOf("total_points" to newPoints)) {
+                        filter { eq("uid", childId) }
+                    }
+                }
+                launch {
+                    // 一个任务只保留一条完成积分记录，直接按关联任务删除即可，免去一次查询。
+                    postgrest.from("point_records").delete {
+                        filter { eq("child_id", childId); eq("type", "task_complete"); eq("related_task_id", taskId) }
+                    }
+                }
             }
-            // 3) 删除该任务产生的 task_complete 积分记录
-            val records = postgrest.from("point_records").select {
-                filter { eq("child_id", childId); eq("type", "task_complete"); eq("related_task_id", taskId) }
-                order("timestamp", io.github.jan.supabase.postgrest.query.Order.DESCENDING)
-                limit(1)
-            }.decodeList<com.lemonkids.shared.model.PointRecord>()
-            records.firstOrNull()?.let { record ->
-                postgrest.from("point_records").delete { filter { eq("id", record.id) } }
-            }
-        }
+            Unit
+        }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun verifyTask(taskId: String): Result<Unit> = runCatching {
         postgrest.from("tasks").update(mapOf("status" to "verified")) {

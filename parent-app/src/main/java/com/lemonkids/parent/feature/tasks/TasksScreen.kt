@@ -112,10 +112,18 @@ fun TasksScreen(
             if (uiState.childUsers.size > 1) {
                 ChildFilterRow(
                     children = uiState.childUsers,
-                    selectedId = uiState.childUsers.firstOrNull()?.uid ?: "",
+                    selectedId = uiState.selectedChildId,
                     onChildSelected = { viewModel.loadTasksForChild(it) }
                 )
                 Spacer(Modifier.height(8.dp))
+            }
+
+            uiState.errorMessage?.let { message ->
+                Text(
+                    text = message,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
             }
 
             when {
