@@ -74,6 +74,22 @@ data class HelpPronunciation(
     val contextText: String
 )
 
+/** 当天已由云端确认的字、词、句朗读次数。 */
+data class SyncedPracticeProgress(
+    val contentSource: ReadingContentSource,
+    val literacyCharacterId: String,
+    val targetType: String,
+    val itemOrder: Int,
+    val correctReadings: Int
+) {
+    fun syncKey(): String = listOf(
+        contentSource.wireValue,
+        literacyCharacterId,
+        targetType,
+        itemOrder.toString()
+    ).joinToString("\u001F")
+}
+
 data class GeneratedLiteracyTask(
     val character: String,
     val words: List<GeneratedLiteracyExample>,
@@ -210,6 +226,35 @@ class ReadingEvaluationViewModel @Inject constructor(
             character = help.requiredString("character"),
             contextText = help.requiredString("contextText")
         )
+    }
+
+    /** 首页加载时读取同一绑定码在其他设备产生的当天朗读进度。 */
+    suspend fun loadPracticeProgress(): Result<List<SyncedPracticeProgress>> = runCatching {
+        val progress = request("""{"action":"get_literacy_practice_progress"}""")
+            .getValue("progress")
+            .jsonArray
+        progress.map { item ->
+            val value = item.jsonObject
+            SyncedPracticeProgress(
+                contentSource = ReadingContentSource.entries.firstOrNull {
+                    it.wireValue == value.requiredString("contentSource")
+                } ?: error("云端返回了未知内容来源"),
+                literacyCharacterId = value.requiredString("literacyCharacterId"),
+                targetType = value.requiredString("targetType"),
+                itemOrder = value.requiredString("itemOrder").toInt(),
+                correctReadings = value.requiredString("correctReadings").toInt()
+            )
+        }
+    }
+
+    /**
+     * 后台写入当天的累计次数。服务端按最大值合并，因此多设备并发上传不会使星数倒退。
+     */
+    suspend fun syncPracticeProgress(target: ReadingTarget, correctReadings: Int): Result<Int> = runCatching {
+        val response = request(
+            """{"action":"record_literacy_practice_progress","literacyCharacterId":"${target.literacyCharacterId.jsonEscape()}","targetType":"${target.targetType.jsonEscape()}","contentSource":"${target.contentSource.wireValue}","itemOrder":${target.itemOrder},"correctReadings":$correctReadings${target.sentenceText?.let { ",\"sentenceText\":\"${it.jsonEscape()}\"" }.orEmpty()}${target.wordText?.let { ",\"wordText\":\"${it.jsonEscape()}\"" }.orEmpty()}}"""
+        )
+        response.requiredString("correctReadings").toInt()
     }
 
     /**

@@ -35,7 +35,7 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-当前部署包为 `evaluate-reading-web-20260831-smart-add-recognized.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`；后两个迁移让智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+当前部署包为 `evaluate-reading-web-20260903-practice-progress-sync.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`、`supabase/sql/20260903_literacy_practice_progress_sync.sql`；后两个迁移让智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；最后一个迁移创建同码多设备共享的当天朗读进度表。TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
 
 待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
 [`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
@@ -103,7 +103,19 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 
 词组逐词评测时，客户端会额外携带 `wordText`，例如 `"白霜"`。该字段只能精确匹配当前识字任务数据库内已有的一项词语；云函数会只为这一个词生成 `REF_TEXT`。这样三个词会使用三个独立的腾讯会话，不会再把连续朗读音频交给同一次评测。
 
-每次朗读的对错、星星及“已读/未读”只按天保存在孩子端本地，应用次日启动会清理。未学习任务中主字读对 3 次、每个词读对 2 次、每个句子读对 1 次；全部达标后客户端调用 `complete_literacy_character`，并首次写入 `child_literacy_characters.learned_at`。若本次学习中曾长按**主字**播放音频，云函数会复制主字及其音频元数据、字词句，幂等写入 `recognized_characters`；若未长按主字，则直接幂等写入 `known_characters`。词、句中的长按不影响该判断。已认识字复习仅展示字、词：列表按 `recognized_at` 从近到远取最近 24 个，前 8 个主字读 3 次、中间 8 个读 2 次、后 8 个读 1 次；每个词始终读 1 次，不调用此完成接口或更新数据表。
+每次朗读的原始对错结果不持久化；当天的星星及“已读/未读”先按天保存在孩子端本地，并静默调用 `record_literacy_practice_progress` 写入数据库。上传失败会留在本地并于下次首页加载时重试，上传请求不会阻塞下一轮朗读；首页同时调用 `get_literacy_practice_progress` 合并同一绑定码其他设备的当天进度。应用次日启动会清理本地当天进度，服务端读取也只返回北京时间当天的数据。未学习任务中主字读对 3 次、每个词读对 2 次、每个句子读对 1 次；全部达标后客户端调用 `complete_literacy_character`，并首次写入 `child_literacy_characters.learned_at`。若本次学习中曾长按**主字**播放音频，云函数会复制主字及其音频元数据、字词句，幂等写入 `recognized_characters`；若未长按主字，则直接幂等写入 `known_characters`。词、句中的长按不影响该判断。已认识字复习仅展示字、词：列表按 `recognized_at` 从近到远取最近 24 个，前 8 个主字读 3 次、中间 8 个读 2 次、后 8 个读 1 次；每个词始终读 1 次，不调用此完成接口或更新数据表。
+
+当天朗读进度接口：
+
+```json
+{"action":"get_literacy_practice_progress"}
+```
+
+```json
+{"action":"record_literacy_practice_progress","literacyCharacterId":"字任务或已认识字 UUID","contentSource":"task","targetType":"word","itemOrder":0,"wordText":"春天","correctReadings":2}
+```
+
+记录接口会从数据库重新校验字、词、句及其顺序，并以最大值合并同一学习项的累计次数，避免多设备请求使进度倒退。
 
 ```json
 {

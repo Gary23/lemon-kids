@@ -9,7 +9,7 @@ import java.util.Locale
 /**
  * 认字练习的本地进度。
  *
- * 星星和“已读/未读”均是孩子端当天的即时学习体验，不上传逐次评测历史。
+ * 星星和“已读/未读”先在本地即时生效；联网后由调用方静默同步到云端。
  * 每次启动应用都会清理昨天及更早的进度；未学习任务整体完成并写入已认识字表后，
  * 其当天的进度仍会由首页快照保持完成展示。
  */
@@ -20,7 +20,11 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         clearExpiredEntries()
         return preferences.all
             .asSequence()
-            .filter { (key, value) -> key.startsWith(entryPrefix()) && value is Int }
+            .filter { (key, value) ->
+                key.startsWith(entryPrefix()) &&
+                    !key.startsWith(pendingEntryPrefix()) &&
+                    value is Int
+            }
             .associate { (key, value) -> decodeKey(key.removePrefix(entryPrefix())) to (value as Int) }
     }
 
@@ -35,8 +39,63 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         val progressKey = target.practiceProgressKey()
         val nextCount = ((snapshot()[progressKey] ?: 0) + correctReadings.coerceAtLeast(0))
             .coerceAtMost(target.requiredCorrectReadings())
-        preferences.edit().putInt(entryPrefix() + encodeKey(progressKey), nextCount).apply()
+        preferences.edit()
+            .putInt(entryPrefix() + encodeKey(progressKey), nextCount)
+            // 上传失败时保留这一项。下次首页加载后会自动重试，不能让离线朗读丢失。
+            .putInt(pendingEntryPrefix() + encodeKey(progressKey), nextCount)
+            .apply()
         return nextCount
+    }
+
+    /** 将同一绑定码下其他设备已经上传的当天进度合并到本地，取较大值避免回退星数。 */
+    fun mergeRemoteProgress(remoteProgress: Map<String, Int>, targets: Collection<ReadingTarget>) {
+        if (remoteProgress.isEmpty() || targets.isEmpty()) return
+        clearExpiredEntries()
+        val local = snapshot()
+        val editor = preferences.edit()
+        targets.forEach { target ->
+            val remoteCount = remoteProgress[target.practiceProgressSyncKey()] ?: return@forEach
+            val progressKey = target.practiceProgressKey()
+            val merged = maxOf(local[progressKey] ?: 0, remoteCount.coerceAtMost(target.requiredCorrectReadings()))
+            if (merged > (local[progressKey] ?: 0)) {
+                // 云端已确认的数据不能重新标记为待上传。
+                editor.putInt(entryPrefix() + encodeKey(progressKey), merged)
+            }
+        }
+        editor.apply()
+    }
+
+    /** 仅返回本设备尚未成功上传的当天进度。 */
+    fun pendingProgress(): Map<String, Int> {
+        clearExpiredEntries()
+        return preferences.all
+            .asSequence()
+            .filter { (key, value) -> key.startsWith(pendingEntryPrefix()) && value is Int }
+            .associate { (key, value) ->
+                decodeKey(key.removePrefix(pendingEntryPrefix())) to (value as Int)
+            }
+    }
+
+    /**
+     * 兼容本次云同步上线前已经仅存于本机的当天星星：首次进入首页时全部排入静默队列。
+     * 标记按天保存，次日的全新记录会在写入时自然进入队列。
+     */
+    fun queueExistingProgressForSync() {
+        if (preferences.getBoolean(initialSyncQueuedKey(), false)) return
+        val editor = preferences.edit()
+        snapshot().forEach { (progressKey, count) ->
+            val pendingKey = pendingEntryPrefix() + encodeKey(progressKey)
+            if (!preferences.contains(pendingKey)) editor.putInt(pendingKey, count)
+        }
+        editor.putBoolean(initialSyncQueuedKey(), true).apply()
+    }
+
+    /** 成功上传后清除不晚于本次确认值的待同步标记，避免竞态覆盖后续朗读。 */
+    fun markProgressSynced(progressKey: String, confirmedCount: Int) {
+        val key = pendingEntryPrefix() + encodeKey(progressKey)
+        if ((preferences.getInt(key, 0)) <= confirmedCount) {
+            preferences.edit().remove(key).apply()
+        }
     }
 
     /**
@@ -59,6 +118,9 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         snapshot().keys
             .filter { key -> key.split(KEY_SEPARATOR).getOrNull(1) == literacyCharacterId }
             .forEach { key -> editor.remove(entryPrefix() + encodeKey(key)) }
+        pendingProgress().keys
+            .filter { key -> key.split(KEY_SEPARATOR).getOrNull(1) == literacyCharacterId }
+            .forEach { key -> editor.remove(pendingEntryPrefix() + encodeKey(key)) }
         editor.apply()
     }
 
@@ -78,6 +140,10 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
 
     private fun entryPrefix() = "v2:$childId:${today()}:"
 
+    private fun pendingEntryPrefix() = entryPrefix() + PENDING_PROGRESS_PREFIX
+
+    private fun initialSyncQueuedKey() = entryPrefix() + INITIAL_SYNC_QUEUED_KEY
+
     private fun characterPointReadKey(literacyCharacterId: String) =
         entryPrefix() + CHARACTER_POINT_READ_PREFIX + encodeKey(literacyCharacterId)
 
@@ -93,6 +159,8 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         const val PREFERENCES_NAME = "lemonkids_literacy_practice_progress"
         const val KEY_SEPARATOR = "\u001F"
         const val CHARACTER_POINT_READ_PREFIX = "character-point-read:"
+        const val PENDING_PROGRESS_PREFIX = "pending-progress:"
+        const val INITIAL_SYNC_QUEUED_KEY = "initial-sync-queued"
     }
 }
 
@@ -117,4 +185,12 @@ fun ReadingTarget.practiceProgressKey(): String = listOf(
     targetType,
     itemOrder.toString(),
     wordText ?: sentenceText ?: displayText
+).joinToString("\u001F")
+
+/** 云端唯一定位不含教学文本，避免服务端音频或文案刷新导致同一学习项产生两份进度。 */
+fun ReadingTarget.practiceProgressSyncKey(): String = listOf(
+    contentSource.wireValue,
+    literacyCharacterId,
+    targetType,
+    itemOrder.toString()
 ).joinToString("\u001F")
