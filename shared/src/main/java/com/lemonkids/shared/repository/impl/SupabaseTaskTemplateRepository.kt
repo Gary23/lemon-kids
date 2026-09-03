@@ -9,8 +9,19 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import javax.inject.Inject
 import javax.inject.Singleton
+
+@Serializable
+private data class TaskTemplateUpdate(
+    @SerialName("title") val title: String,
+    @SerialName("description") val description: String,
+    @SerialName("category") val category: String,
+    @SerialName("reward_points") val rewardPoints: Int,
+    @SerialName("penalty_points") val penaltyPoints: Int
+)
 
 @Singleton
 class SupabaseTaskTemplateRepository @Inject constructor(
@@ -38,15 +49,20 @@ class SupabaseTaskTemplateRepository @Inject constructor(
     }
 
     override suspend fun updateTemplate(template: TaskTemplate): Result<Unit> = runCatching {
+        // 使用有明确序列化器的载荷；Map<String, Any> 在 Supabase 序列化失败时会导致请求未发出。
+        // select() 同时保证 RLS 拦截或未命中记录时不会被误判为保存成功。
         postgrest.from("task_templates").update(
-            mapOf(
-                "title" to template.title,
-                "description" to template.description,
-                "category" to template.category,
-                "reward_points" to template.rewardPoints,
-                "penalty_points" to template.penaltyPoints
+            TaskTemplateUpdate(
+                title = template.title,
+                description = template.description,
+                category = template.category,
+                rewardPoints = template.rewardPoints,
+                penaltyPoints = template.penaltyPoints
             )
-        ) { filter { eq("id", template.id) } }
+        ) {
+            filter { eq("id", template.id) }
+            select()
+        }.decodeSingle<TaskTemplate>()
     }
 
     override suspend fun deleteTemplate(templateId: String): Result<Unit> = runCatching {

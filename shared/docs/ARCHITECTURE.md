@@ -360,6 +360,8 @@ ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "family_access" ON categories FOR ALL
     USING (family_id IN (SELECT family_id FROM users WHERE uid = auth.uid()));
 
+-- 创建请求不得提交 id、created_at 等数据库生成列；乐观更新使用的临时 ID 仅限本地 UI。
+
 -- 删除旧的 category 枚举约束，允许自定义分类名
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_category_check;
 

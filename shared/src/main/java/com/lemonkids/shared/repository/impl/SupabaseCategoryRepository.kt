@@ -1,5 +1,6 @@
 package com.lemonkids.shared.repository.impl
 
+import android.util.Log
 import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.model.TaskTemplate
@@ -19,6 +20,10 @@ class SupabaseCategoryRepository @Inject constructor(
     private val supabase: SupabaseClient
 ) : CategoryRepository {
 
+    companion object {
+        private const val TAG = "CategoryRepo"
+    }
+
     private val postgrest get() = supabase.pluginManager.getPlugin(Postgrest)
 
     override fun observeCategories(familyId: String): Flow<List<Category>> = callbackFlow {
@@ -29,14 +34,26 @@ class SupabaseCategoryRepository @Inject constructor(
                     order("created_at", Order.ASCENDING)
                 }.decodeList<Category>()
                 trySend(list)
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.e(TAG, "分类查询失败 familyId=$familyId", e)
+            }
         }
         fetch()
         while (true) { delay(10000); fetch() }
     }
 
     override suspend fun createCategory(category: Category): Result<String> = runCatching {
-        postgrest.from("categories").insert(category) { select() }.decodeSingle<Category>().id
+        // id 与 created_at 由数据库生成。不能直接序列化 Category：界面的乐观更新会
+        // 使用临时 id，而 categories.id 是 UUID，传给数据库会导致插入被拒绝。
+        postgrest.from("categories").insert(
+            mapOf(
+                "family_id" to category.familyId,
+                "name" to category.name,
+                "color" to category.color
+            )
+        ) { select() }.decodeSingle<Category>().id
+    }.onFailure { e ->
+        Log.e(TAG, "新增分类失败 familyId=${category.familyId}, name=${category.name}", e)
     }
 
     override suspend fun updateCategory(category: Category): Result<Unit> = runCatching {

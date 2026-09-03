@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -65,6 +66,7 @@ data class TaskTemplateManageUiState(
     val templates: List<TaskTemplate> = emptyList(),
     val categories: List<Category> = emptyList(),
     val isLoading: Boolean = true,
+    val isSaving: Boolean = false,
     val errorMessage: String? = null
 )
 
@@ -101,14 +103,29 @@ class TaskTemplateManageViewModel @Inject constructor(
         }
     }
 
-    fun save(template: TaskTemplate) = viewModelScope.launch {
-        val familyId = authRepository.observeCurrentUser().first()?.familyId ?: return@launch
+    fun save(template: TaskTemplate, onSuccess: () -> Unit) = viewModelScope.launch {
+        _uiState.value = _uiState.value.copy(isSaving = true, errorMessage = null)
+        val familyId = authRepository.observeCurrentUser().first()?.familyId ?: run {
+            _uiState.value = _uiState.value.copy(isSaving = false, errorMessage = "未获取到家庭信息，请重新登录后重试")
+            return@launch
+        }
         val result = if (template.id.isBlank()) {
             templateRepository.createTemplate(template.copy(familyId = familyId))
         } else {
             templateRepository.updateTemplate(template)
         }
-        result.onFailure { _uiState.value = _uiState.value.copy(errorMessage = "保存失败，请稍后重试") }
+        result.fold(
+            onSuccess = {
+                _uiState.value = _uiState.value.copy(isSaving = false)
+                onSuccess()
+            },
+            onFailure = { error ->
+                _uiState.value = _uiState.value.copy(
+                    isSaving = false,
+                    errorMessage = error.message ?: "保存失败，请稍后重试"
+                )
+            }
+        )
     }
 
     fun delete(template: TaskTemplate) = viewModelScope.launch {
@@ -140,20 +157,47 @@ fun TaskTemplateManageScreen(
             when {
                 uiState.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(36.dp)) }
                 uiState.templates.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("还没有任务\n点击右上角新增", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(uiState.templates, key = { it.id }) { template ->
                         Card(Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(14.dp)) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    Text(template.title, fontWeight = FontWeight.Bold)
-                                    Text("⭐${template.rewardPoints}", color = MaterialTheme.colorScheme.primary)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            template.title,
+                                            modifier = Modifier.weight(1f),
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            "⭐${template.rewardPoints}",
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    val detail = listOf(template.category, template.description)
+                                        .filter { it.isNotBlank() }
+                                        .joinToString(" · ")
+                                    Text(
+                                        detail,
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
-                                Text(template.category, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (template.description.isNotBlank()) Text(template.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Row(Modifier.align(Alignment.End)) {
-                                    TextButton(onClick = { editing = template }) { Text("编辑") }
-                                    TextButton(onClick = { deleting = template }) { Text("删除", color = Color(0xFFEF5350)) }
-                                }
+                                TextButton(
+                                    modifier = Modifier.height(36.dp),
+                                    onClick = { editing = template }
+                                ) { Text("编辑", fontSize = 13.sp) }
+                                TextButton(
+                                    modifier = Modifier.height(36.dp),
+                                    onClick = { deleting = template }
+                                ) { Text("删除", fontSize = 13.sp, color = Color(0xFFEF5350)) }
                             }
                         }
                     }
@@ -163,7 +207,13 @@ fun TaskTemplateManageScreen(
         }
     }
     editing?.let { template ->
-        TaskTemplateEditDialog(template, uiState.categories, onDismiss = { editing = null }, onSave = { viewModel.save(it); editing = null })
+        TaskTemplateEditDialog(
+            template = template,
+            categories = uiState.categories,
+            isSaving = uiState.isSaving,
+            onDismiss = { if (!uiState.isSaving) editing = null },
+            onSave = { viewModel.save(it) { editing = null } }
+        )
     }
     deleting?.let { template ->
         AlertDialog(
@@ -177,7 +227,13 @@ fun TaskTemplateManageScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TaskTemplateEditDialog(template: TaskTemplate, categories: List<Category>, onDismiss: () -> Unit, onSave: (TaskTemplate) -> Unit) {
+private fun TaskTemplateEditDialog(
+    template: TaskTemplate,
+    categories: List<Category>,
+    isSaving: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (TaskTemplate) -> Unit
+) {
     var title by remember(template.id) { mutableStateOf(template.title) }
     var description by remember(template.id) { mutableStateOf(template.description) }
     var category by remember(template.id) { mutableStateOf(template.category) }
@@ -202,7 +258,19 @@ private fun TaskTemplateEditDialog(template: TaskTemplate, categories: List<Cate
                 OutlinedTextField(points, { if (it.isEmpty() || it.all(Char::isDigit)) points = it }, label = { Text("⭐ 完成可得积分") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         },
-        confirmButton = { TextButton(onClick = { val value = points.toIntOrNull() ?: 0; if (title.isNotBlank() && category.isNotBlank() && value > 0) onSave(template.copy(title = title.trim(), description = description.trim(), category = category, rewardPoints = value)) }) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+        confirmButton = {
+            TextButton(
+                enabled = !isSaving,
+                onClick = {
+                    val value = points.toIntOrNull() ?: 0
+                    if (title.isNotBlank() && category.isNotBlank() && value > 0) {
+                        onSave(template.copy(title = title.trim(), description = description.trim(), category = category, rewardPoints = value))
+                    }
+                }
+            ) {
+                if (isSaving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("保存")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !isSaving) { Text("取消") } }
     )
 }
