@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `main` | 稳定主线与基础版本。 | 已推送。 |
 | `product` | 产品集成与发布分支。 | 已合并 `fix/known-character-save-removal` 的已认识字保存优化及 `feature/kid-literacy-app` 的认字端 v1.2 体验优化；认字端发布标签见下表。 |
+| `feature/reading-progress-cloud-sync` | 认字端 App 开发：当天字、词、句朗读进度按绑定码跨设备同步，并在后台静默上传。 | 开发完成，已推送，尚未合并到 `product`；上线前需执行进度迁移并发布评测云函数。 |
 | `feature/kid-task-desktop-widget` | 任务端 App 开发：新增响应式桌面卡片。 | 开发中，尚未合并到 `product`。 |
 
 ## `product` 认字端发布标签
