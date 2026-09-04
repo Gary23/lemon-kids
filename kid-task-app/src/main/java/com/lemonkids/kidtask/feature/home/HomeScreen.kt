@@ -215,8 +215,12 @@ private fun CategoryTaskList(
     onMarkDone: (String) -> Unit,
     onUndo: (String) -> Unit
 ) {
-    val tasksByCategory = tasks.groupBy { it.category.ifBlank { "默认" } }
+    val completedTasks = tasks.filter { it.status == "DONE" || it.status == "VERIFIED" }
+    val tasksByCategory = tasks
+        .filterNot { it.status == "DONE" || it.status == "VERIFIED" }
+        .groupBy { it.category.ifBlank { "默认" } }
     // 先按家长端分类管理页的顺序显示；历史任务中已被删除的分类放在最后，避免任务丢失。
+    // 已完成是孩子端专用分类，不写回家长端配置，始终置于最后。
     val orderedCategories = buildList {
         categoryNames.filter { tasksByCategory.containsKey(it) }.forEach(::add)
         tasksByCategory.keys.filterNot { it in this }.sorted().forEach(::add)
@@ -233,23 +237,55 @@ private fun CategoryTaskList(
         orderedCategories.forEachIndexed { index, categoryName ->
             val categoryTasks = tasksByCategory.getValue(categoryName)
             val color = colors[index % colors.size]
-            Surface(shape = RoundedCornerShape(22.dp), color = Color.White, shadowElevation = 3.dp) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text("${emojis[index % emojis.size]}  $categoryName", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
-                    Spacer(Modifier.height(8.dp))
-                    categoryTasks.forEachIndexed { taskIndex, task ->
-                            TaskCard(
-                                task = task,
-                                isPlaying = playingTaskId == task.id,
-                                sectionColor = color,
-                                softColor = color.copy(alpha = 0.12f),
-                                onSpeak = { onSpeak(task) },
-                                onMarkDone = onMarkDone,
-                                onUndo = onUndo
-                            )
-                            if (taskIndex != categoryTasks.lastIndex) Spacer(Modifier.height(8.dp))
-                    }
-                }
+            TaskCategoryCard(
+                title = "${emojis[index % emojis.size]}  $categoryName",
+                tasks = categoryTasks,
+                sectionColor = color,
+                playingTaskId = playingTaskId,
+                onSpeak = onSpeak,
+                onMarkDone = onMarkDone,
+                onUndo = onUndo
+            )
+        }
+        if (completedTasks.isNotEmpty()) {
+            TaskCategoryCard(
+                title = "✅  已完成",
+                tasks = completedTasks,
+                sectionColor = Mint,
+                playingTaskId = playingTaskId,
+                onSpeak = onSpeak,
+                onMarkDone = onMarkDone,
+                onUndo = onUndo
+            )
+        }
+    }
+}
+
+@Composable
+private fun TaskCategoryCard(
+    title: String,
+    tasks: List<com.lemonkids.kidtask.ui.components.TaskUiItem>,
+    sectionColor: Color,
+    playingTaskId: String?,
+    onSpeak: (com.lemonkids.kidtask.ui.components.TaskUiItem) -> Unit,
+    onMarkDone: (String) -> Unit,
+    onUndo: (String) -> Unit
+) {
+    Surface(shape = RoundedCornerShape(22.dp), color = Color.White, shadowElevation = 3.dp) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
+            Spacer(Modifier.height(8.dp))
+            tasks.forEachIndexed { taskIndex, task ->
+                TaskCard(
+                    task = task,
+                    isPlaying = playingTaskId == task.id,
+                    sectionColor = sectionColor,
+                    softColor = sectionColor.copy(alpha = 0.12f),
+                    onSpeak = { onSpeak(task) },
+                    onMarkDone = onMarkDone,
+                    onUndo = onUndo
+                )
+                if (taskIndex != tasks.lastIndex) Spacer(Modifier.height(8.dp))
             }
         }
     }

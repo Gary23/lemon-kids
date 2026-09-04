@@ -189,7 +189,12 @@ private class TaskWidgetRemoteViewsFactory(
         val item = items.getOrNull(position) ?: return null
         return when (item) {
             is WidgetListItem.Category -> RemoteViews(context.packageName, R.layout.widget_task_category).apply {
-                setTextViewText(R.id.widget_category_name, "${CATEGORY_EMOJIS[item.index % CATEGORY_EMOJIS.size]}  ${item.name}")
+                val title = if (item.isCompleted) {
+                    "$COMPLETED_CATEGORY_EMOJI  ${item.name}"
+                } else {
+                    "${CATEGORY_EMOJIS[item.index % CATEGORY_EMOJIS.size]}  ${item.name}"
+                }
+                setTextViewText(R.id.widget_category_name, title)
                 setOnClickFillInIntent(R.id.widget_category_name, Intent())
             }
             is WidgetListItem.TaskItem -> RemoteViews(context.packageName, R.layout.widget_task_item).apply {
@@ -234,11 +239,13 @@ private class TaskWidgetRemoteViewsFactory(
 }
 
 private sealed interface WidgetListItem {
-    data class Category(val name: String, val index: Int) : WidgetListItem
+    data class Category(val name: String, val index: Int, val isCompleted: Boolean = false) : WidgetListItem
     data class TaskItem(val task: Task) : WidgetListItem
 }
 
 private val CATEGORY_EMOJIS = listOf("🌸", "💜", "🍊", "🌿", "⭐")
+private const val COMPLETED_CATEGORY_NAME = "已完成"
+private const val COMPLETED_CATEGORY_EMOJI = "✅"
 
 private object TaskWidgetDataLoader {
     suspend fun loadTodayTasks(context: Context, preferCachedSnapshot: Boolean = false): List<Task> {
@@ -278,9 +285,17 @@ private object TaskWidgetDataLoader {
             var previousCategory: String? = null
             var categoryIndex = 0
             tasks.forEach { task ->
-                val category = task.category.ifBlank { "默认" }
+                val isCompleted = task.status == TaskStatus.DONE || task.status == TaskStatus.VERIFIED
+                // 已完成分组仅存在于孩子端展示层，且由排序保证排在所有家长分类之后。
+                val category = if (isCompleted) COMPLETED_CATEGORY_NAME else task.category.ifBlank { "默认" }
                 if (category != previousCategory) {
-                    add(WidgetListItem.Category(category, categoryIndex++))
+                    add(
+                        WidgetListItem.Category(
+                            name = category,
+                            index = categoryIndex++,
+                            isCompleted = isCompleted
+                        )
+                    )
                     previousCategory = category
                 }
                 add(WidgetListItem.TaskItem(task))
@@ -302,7 +317,10 @@ private object TaskWidgetDataLoader {
     private fun orderByCategory(tasks: List<Task>, categoryNames: List<String>): List<Task> {
         val categoryOrder = categoryNames.withIndex().associate { (index, name) -> name to index }
         return tasks.sortedWith(
-            compareBy<Task> { categoryOrder[it.category] ?: Int.MAX_VALUE }
+            compareBy<Task> {
+                if (it.status == TaskStatus.DONE || it.status == TaskStatus.VERIFIED) Int.MAX_VALUE
+                else categoryOrder[it.category] ?: Int.MAX_VALUE - 1
+            }
                 .thenBy { it.category.ifBlank { "默认" } }
                 .thenBy {
                     when (it.status) {

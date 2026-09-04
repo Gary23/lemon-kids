@@ -26,6 +26,10 @@ val LavenderSoft = Color(0xFFE1D5F0)
 val Mint = Color(0xFF66BB6A)
 /** 淡薄荷 */
 val MintSoft = Color(0xFFD4F5E3)
+/** 已完成任务卡片底色，比通用淡薄荷更醒目。 */
+val CompletedTaskBackground = Color(0xFFC8EACF)
+/** 已完成任务卡片边框。 */
+val CompletedTaskBorder = Color(0xFF88C797)
 /** 珊瑚橙 #FF8A80 — 未完成/过期 */
 val Coral = Color(0xFFFF8A80)
 /** 淡珊瑚 */
