@@ -33,11 +33,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
-import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -54,10 +52,10 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.TaskRecurrenceType
+import com.lemonkids.shared.model.TaskTemplate
 import com.lemonkids.shared.repository.ChildUserInfo
 import java.time.Instant
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -77,13 +75,12 @@ fun TaskEditScreen(
     var pointsText by remember { mutableStateOf("5") }
     var dueDate by remember { mutableStateOf(LocalDate.now().toString()) }
     var endDate by remember { mutableStateOf(LocalDate.now().toString()) }
-    var dueTime by remember { mutableStateOf("") }
     var selectedChildId by remember { mutableStateOf("") }
+    var selectedTemplateId by remember { mutableStateOf("") }
     var recurrenceType by remember { mutableStateOf(TaskRecurrenceType.NONE) }
     var recurrenceWeekdays by remember { mutableStateOf(emptySet<Int>()) }
 
     var pickingDateField by remember { mutableStateOf<String?>(null) }
-    var showTimePicker by remember { mutableStateOf(false) }
     var showAddCategoryDialog by remember { mutableStateOf(false) }
     var newCategoryName by remember { mutableStateOf("") }
 
@@ -106,7 +103,6 @@ fun TaskEditScreen(
             pointsText = data.rewardPoints.toString()
             dueDate = data.dueDate.ifEmpty { LocalDate.now().toString() }
             endDate = data.endDate.ifEmpty { data.dueDate.ifEmpty { LocalDate.now().toString() } }
-            dueTime = data.dueTime ?: ""
             selectedChildId = data.childId
             recurrenceType = data.recurrenceType
             recurrenceWeekdays = data.recurrenceWeekdays
@@ -145,23 +141,25 @@ fun TaskEditScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("任务标题") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    label = { Text("任务描述（可选）") },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 3
-                )
-                Spacer(Modifier.height(16.dp))
+                if (isNew) {
+                    TaskTemplateSelector(
+                        templates = uiState.taskTemplates,
+                        selectedTemplateId = selectedTemplateId,
+                        onSelected = { template ->
+                            selectedTemplateId = template.id
+                            title = template.title
+                            description = template.description
+                            selectedCategoryName = template.category
+                            pointsText = template.rewardPoints.toString()
+                        }
+                    )
+                    Spacer(Modifier.height(16.dp))
+                } else {
+                    OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("任务标题") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("任务描述（可选）") }, modifier = Modifier.fillMaxWidth(), maxLines = 3)
+                    Spacer(Modifier.height(16.dp))
+                }
 
                 ChildSelector(
                     children = uiState.childUsers,
@@ -170,28 +168,12 @@ fun TaskEditScreen(
                 )
                 Spacer(Modifier.height(12.dp))
 
-                // 动态分类选择器
-                CategorySelector(
-                    categories = uiState.categories,
-                    selectedName = selectedCategoryName,
-                    onSelected = { selectedCategoryName = it },
-                    onAddNew = { showAddCategoryDialog = true }
-                )
-                Spacer(Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = pointsText,
-                    onValueChange = { newVal ->
-                        if (newVal.isEmpty() || newVal.all { it.isDigit() }) {
-                            pointsText = newVal
-                        }
-                    },
-                    label = { Text("⭐ 完成可得积分") },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(12.dp))
+                if (!isNew) {
+                    CategorySelector(categories = uiState.categories, selectedName = selectedCategoryName, onSelected = { selectedCategoryName = it }, onAddNew = { showAddCategoryDialog = true })
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(value = pointsText, onValueChange = { newVal -> if (newVal.isEmpty() || newVal.all { it.isDigit() }) pointsText = newVal }, label = { Text("⭐ 完成可得积分") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                    Spacer(Modifier.height(12.dp))
+                }
 
                 DateField(label = if (isNew) "开始日期" else "任务日期", dateStr = dueDate, onClick = { pickingDateField = "start" })
                 Spacer(Modifier.height(12.dp))
@@ -205,13 +187,6 @@ fun TaskEditScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                 }
-
-                TimeField(
-                    timeStr = dueTime,
-                    onClick = { showTimePicker = true },
-                    onClear = { dueTime = "" }
-                )
-                Spacer(Modifier.height(12.dp))
 
                 if (isNew) {
                     RecurrenceSelector(
@@ -241,18 +216,14 @@ fun TaskEditScreen(
 
                 Button(
                     onClick = {
-                        if (title.isNotBlank() && selectedChildId.isNotBlank() && points > 0) {
+                        if ((if (isNew) selectedTemplateId.isNotBlank() else title.isNotBlank()) && selectedChildId.isNotBlank() && points > 0) {
                             if (isNew) {
+                                val template = uiState.taskTemplates.find { it.id == selectedTemplateId } ?: return@Button
                                 viewModel.createTask(
-                                    title = title.trim(),
-                                    description = description.trim(),
+                                    template = template,
                                     endDate = endDate,
-                                    rewardPoints = points,
-                                    penaltyPoints = 2,
                                     dueDate = dueDate,
-                                    dueTime = dueTime.ifEmpty { null },
                                     childId = selectedChildId,
-                                    categoryName = selectedCategoryName,
                                     recurrenceType = recurrenceType,
                                     recurrenceWeekdays = recurrenceWeekdays,
                                     onDone = { onBack() }
@@ -266,7 +237,7 @@ fun TaskEditScreen(
                                     rewardPoints = points,
                                     penaltyPoints = 2,
                                     dueDate = dueDate,
-                                    dueTime = dueTime.ifEmpty { null },
+                                    dueTime = null,
                                     childId = selectedChildId,
                                     categoryName = selectedCategoryName,
                                     recurrenceType = recurrenceType,
@@ -277,7 +248,7 @@ fun TaskEditScreen(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = title.isNotBlank() && selectedChildId.isNotBlank() && points > 0 &&
+                    enabled = (if (isNew) selectedTemplateId.isNotBlank() else title.isNotBlank()) && selectedChildId.isNotBlank() && points > 0 &&
                         (recurrenceType != TaskRecurrenceType.WEEKLY || recurrenceWeekdays.isNotEmpty()) && !uiState.isLoading
                 ) {
                     if (uiState.isLoading) {
@@ -325,25 +296,6 @@ fun TaskEditScreen(
                     }
                 }
             }
-        }
-
-        // TimePicker
-        if (showTimePicker) {
-            val tpState = rememberTimePickerState(
-                initialHour = try { LocalTime.parse(dueTime).hour } catch (_: Exception) { 18 },
-                initialMinute = try { LocalTime.parse(dueTime).minute } catch (_: Exception) { 0 },
-                is24Hour = true
-            )
-            DatePickerDialog(
-                onDismissRequest = { showTimePicker = false },
-                confirmButton = {
-                    TextButton(onClick = {
-                        dueTime = "%02d:%02d".format(tpState.hour, tpState.minute)
-                        showTimePicker = false
-                    }) { Text("确定") }
-                },
-                dismissButton = { TextButton(onClick = { showTimePicker = false }) { Text("取消") } }
-            ) { TimePicker(state = tpState) }
         }
 
         // 添加分类对话框
@@ -414,6 +366,34 @@ private fun RecurrenceSelector(
                         label = { Text(label) }
                     )
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TaskTemplateSelector(
+    templates: List<TaskTemplate>,
+    selectedTemplateId: String,
+    onSelected: (TaskTemplate) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = templates.find { it.id == selectedTemplateId }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+        OutlinedTextField(
+            value = selected?.title ?: if (templates.isEmpty()) "请先到「我的 > 任务管理」创建任务" else "请选择任务",
+            onValueChange = {}, readOnly = true, label = { Text("任务") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = templates.isNotEmpty()).fillMaxWidth(),
+            enabled = templates.isNotEmpty()
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            templates.forEach { template ->
+                DropdownMenuItem(
+                    text = { Text("${template.title} · ${template.category} · ⭐${template.rewardPoints}") },
+                    onClick = { onSelected(template); expanded = false }
+                )
             }
         }
     }
@@ -522,25 +502,6 @@ private fun DateField(label: String, dateStr: String, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         trailingIcon = {
             IconButton(onClick = onClick) { Text("📅", fontSize = 20.sp) }
-        }
-    )
-}
-
-@Composable
-private fun TimeField(timeStr: String, onClick: () -> Unit, onClear: () -> Unit) {
-    OutlinedTextField(
-        value = if (timeStr.isEmpty()) "不设置" else timeStr,
-        onValueChange = {},
-        readOnly = true,
-        label = { Text("截止时间（可选）") },
-        modifier = Modifier.fillMaxWidth(),
-        trailingIcon = {
-            Row {
-                if (timeStr.isNotEmpty()) {
-                    IconButton(onClick = onClear) { Text("✕", fontSize = 16.sp) }
-                }
-                IconButton(onClick = onClick) { Text("🕐", fontSize = 20.sp) }
-            }
         }
     )
 }

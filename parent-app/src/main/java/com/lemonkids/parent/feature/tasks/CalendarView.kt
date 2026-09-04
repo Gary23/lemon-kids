@@ -185,6 +185,9 @@ private fun RowScope.DayCell(day: Int, isToday: Boolean, isSelected: Boolean, de
 
 @Composable
 private fun CalendarTaskRow(task: TaskUiItem, onEdit: () -> Unit, onDelete: () -> Unit) {
+    val canCancel = task.status == "PENDING" && runCatching {
+        LocalDate.parse(task.dueDate) >= LocalDate.now()
+    }.getOrDefault(false)
     val statusColor = when (task.status) {
         "DONE", "VERIFIED" -> Color(0xFF4CAF50)
         "EXPIRED" -> Color(0xFF9E9E9E)
@@ -208,7 +211,9 @@ private fun CalendarTaskRow(task: TaskUiItem, onEdit: () -> Unit, onDelete: () -
                     Text(statusText, fontSize = 11.sp, color = statusColor, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.width(8.dp))
                     IconButton(onClick = onEdit, modifier = Modifier.size(30.dp)) { Text("✏️", fontSize = 14.sp) }
-                    IconButton(onClick = onDelete, modifier = Modifier.size(30.dp)) { Text("🗑", fontSize = 14.sp) }
+                    if (canCancel) {
+                        IconButton(onClick = onDelete, modifier = Modifier.size(30.dp)) { Text("🗑", fontSize = 14.sp) }
+                    }
                 }
             }
             if (task.description.isNotBlank()) {

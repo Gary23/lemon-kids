@@ -43,6 +43,7 @@ import com.lemonkids.parent.feature.profile.CategoryManageScreen
 import com.lemonkids.parent.feature.profile.DeviceStatusLogScreen
 import com.lemonkids.parent.feature.profile.FamilyManageScreen
 import com.lemonkids.parent.feature.profile.RecycleBinScreen
+import com.lemonkids.parent.feature.profile.TaskTemplateManageScreen
 import com.lemonkids.parent.feature.profile.ProfileScreen as ParentProfileScreen
 import com.lemonkids.parent.feature.tasks.TaskEditScreen
 import com.lemonkids.parent.feature.tasks.TasksScreen
@@ -172,6 +173,8 @@ private fun ParentMainScreen() {
             composable(ParentTab.Profile.route) {
                 ParentProfileScreen(onFamilyManageClick = {
                     navController.navigate("family_manage")
+                }, onTaskManageClick = {
+                    navController.navigate("task_template_manage")
                 }, onCategoryManageClick = {
                     navController.navigate("category_manage")
                 }, onRecycleBinClick = {
@@ -185,6 +188,9 @@ private fun ParentMainScreen() {
             }
             composable("category_manage") {
                 CategoryManageScreen(onBack = { navController.popBackStack() })
+            }
+            composable("task_template_manage") {
+                TaskTemplateManageScreen(onBack = { navController.popBackStack() })
             }
             composable("recycle_bin") {
                 RecycleBinScreen(onBack = { navController.popBackStack() })

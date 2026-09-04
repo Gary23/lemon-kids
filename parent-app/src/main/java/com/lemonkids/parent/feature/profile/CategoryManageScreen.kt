@@ -111,7 +111,7 @@ class CategoryManageViewModel @Inject constructor(
                     // 回滚乐观更新
                     _uiState.value = _uiState.value.copy(
                         categories = _uiState.value.categories.filter { it.id != tempId },
-                        operationMessage = "添加失败"
+                        operationMessage = "添加失败，请检查网络或分类名称是否重复"
                     )
                 }
             )
@@ -152,6 +152,11 @@ class CategoryManageViewModel @Inject constructor(
             val count = categoryRepository.getTaskCountByCategory(familyId, category.name).getOrNull()
             if (count != null && count.first > 0) {
                 onBlocked("该分类下有 ${count.first} 个未完成任务，无法删除")
+                return@launch
+            }
+            val templateCount = categoryRepository.getTaskTemplateCountByCategory(familyId, category.name).getOrNull() ?: 0
+            if (templateCount > 0) {
+                onBlocked("该分类下有 ${templateCount} 个任务，无法删除")
                 return@launch
             }
             // 乐观更新：立即从本地列表移除
@@ -220,7 +225,7 @@ fun CategoryManageScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     items(uiState.categories, key = { it.id }) { cat ->
                         CategoryItem(
@@ -324,14 +329,14 @@ private fun CategoryItem(
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(category.name, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             Row {
-                TextButton(onClick = onEdit) { Text("编辑", fontSize = 13.sp) }
-                TextButton(onClick = onDelete) {
+                TextButton(modifier = Modifier.height(36.dp), onClick = onEdit) { Text("编辑", fontSize = 13.sp) }
+                TextButton(modifier = Modifier.height(36.dp), onClick = onDelete) {
                     Text("删除", fontSize = 13.sp, color = Color(0xFFEF5350))
                 }
             }

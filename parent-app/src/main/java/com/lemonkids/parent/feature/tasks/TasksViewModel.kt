@@ -3,18 +3,22 @@ package com.lemonkids.parent.feature.tasks
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import android.content.Context
+import android.util.Log
 import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.model.TaskRecurrenceType
+import com.lemonkids.shared.model.TaskTemplate
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.CategoryRepository
 import com.lemonkids.shared.repository.ChildUserInfo
 import com.lemonkids.shared.repository.TaskRepository
+import com.lemonkids.shared.repository.TaskTemplateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -26,6 +30,8 @@ data class TasksUiState(
     val tasks: List<TaskUiItem> = emptyList(),
     val editingTask: TaskEditData? = null,
     val childUsers: List<ChildUserInfo> = emptyList(),
+    /** 列表模式当前正在查看的孩子，用于保持筛选状态和创建后的即时更新。 */
+    val selectedChildId: String = "",
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val viewMode: ViewMode = ViewMode.LIST,
@@ -35,12 +41,15 @@ data class TasksUiState(
     /** 日历下方选中的日任务列表 */
     val selectedDateTasks: List<TaskUiItem> = emptyList(),
     val categories: List<Category> = emptyList(),
+    val taskTemplates: List<TaskTemplate> = emptyList(),
     val expandedCategories: Set<String> = emptySet(),
     val isManageMode: Boolean = false,
     val selectedTaskIds: Set<String> = emptySet()
 )
 
 enum class ViewMode { LIST, CALENDAR }
+
+private const val TASKS_VIEW_MODEL_TAG = "TasksViewModel"
 
 data class TaskUiItem(
     val id: String,
@@ -79,6 +88,7 @@ class TasksViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val authRepository: AuthRepository,
     private val categoryRepository: CategoryRepository,
+    private val taskTemplateRepository: TaskTemplateRepository,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -86,6 +96,7 @@ class TasksViewModel @Inject constructor(
     val uiState: StateFlow<TasksUiState> = _uiState.asStateFlow()
 
     private var hasLoadedOnce = false
+    private var defaultCategoryRequested = false
 
     init {
         loadData()
@@ -112,14 +123,17 @@ class TasksViewModel @Inject constructor(
                 // 首次加载时确保"默认"分类存在
                 val existing = categoryRepository.observeCategories(familyId)
                 // 用一个临时 collect 检查是否存在，不存在则创建
-                var hasDefault = false
                 existing.collect { list ->
-                    hasDefault = list.any { it.name == "默认" }
-                    if (!hasDefault && list.isNotEmpty()) {
-                        // 有分类但没有"默认"，补建
+                    if (list.none { it.name == "默认" } && !defaultCategoryRequested) {
+                        defaultCategoryRequested = true
                         categoryRepository.createCategory(Category(familyId = familyId, name = "默认"))
                     }
                     _uiState.value = _uiState.value.copy(categories = list)
+                }
+            }
+            launch {
+                taskTemplateRepository.observeTemplates(familyId).collect { templates ->
+                    _uiState.value = _uiState.value.copy(taskTemplates = templates)
                 }
             }
         }
@@ -131,29 +145,39 @@ class TasksViewModel @Inject constructor(
 
     private fun observeTasks(childId: String) {
         observeJob?.cancel()
+        currentObservingChildId = childId
         observeJob = viewModelScope.launch {
-            currentObservingChildId = childId
-            taskRepository.observeChildTasks(childId).collect { tasks ->
-                val completedIds = tasks.filter { it.status == com.lemonkids.shared.model.TaskStatus.DONE || it.status == com.lemonkids.shared.model.TaskStatus.VERIFIED }
-                    .map { it.id }.toSet()
-                if (hasLoadedOnce) {
-                    (completedIds - observedCompletedTaskIds).forEach { completedId ->
-                        tasks.find { it.id == completedId }?.let { task ->
-                            TaskCompletionNotifier.notify(appContext, getChildName(task.childId), task.title, task.id.hashCode())
-                        }
-                    }
-                }
-                observedCompletedTaskIds = completedIds
-                // 首次加载必更新；后续轮询时如果返回空则跳过（保留旧数据，防止断网闪现空白）
-                val shouldUpdate = !hasLoadedOnce || tasks.isNotEmpty()
-                if (shouldUpdate) {
-                    hasLoadedOnce = true
+            taskRepository.observeChildTasks(childId)
+                .catch { error ->
+                    Log.e(TASKS_VIEW_MODEL_TAG, "任务列表加载失败 childId=$childId", error)
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        tasks = tasks.map { it.toUiItem(getChildName(it.childId)) }
+                        errorMessage = "任务列表加载失败，请检查网络后重试"
                     )
                 }
-            }
+                .collect { tasks ->
+                    val completedIds = tasks.filter { it.status == com.lemonkids.shared.model.TaskStatus.DONE || it.status == com.lemonkids.shared.model.TaskStatus.VERIFIED }
+                        .map { it.id }.toSet()
+                    if (hasLoadedOnce) {
+                        (completedIds - observedCompletedTaskIds).forEach { completedId ->
+                            tasks.find { it.id == completedId }?.let { task ->
+                                TaskCompletionNotifier.notify(appContext, getChildName(task.childId), task.title, task.id.hashCode())
+                            }
+                        }
+                    }
+                    observedCompletedTaskIds = completedIds
+                    // 首次加载必更新；后续轮询时如果返回空则跳过（保留旧数据，防止断网闪现空白）
+                    val shouldUpdate = !hasLoadedOnce || tasks.isNotEmpty()
+                    if (shouldUpdate) {
+                        hasLoadedOnce = true
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            errorMessage = null,
+                            selectedChildId = childId,
+                            tasks = tasks.map { it.toUiItem(getChildName(it.childId)) }
+                        )
+                    }
+                }
         }
     }
 
@@ -171,7 +195,7 @@ class TasksViewModel @Inject constructor(
 
     fun loadTasksForChild(childId: String) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
+            _uiState.value = _uiState.value.copy(isLoading = true, selectedChildId = childId, errorMessage = null)
             hasLoadedOnce = false
             observeTasks(childId)
         }
@@ -276,27 +300,33 @@ class TasksViewModel @Inject constructor(
 
     /** 创建单次或重复任务。重复日程展开为独立日任务，以保留逐日完成历史。 */
     fun createTask(
-        title: String,
-        description: String,
+        template: TaskTemplate,
         endDate: String,
-        rewardPoints: Int,
-        penaltyPoints: Int,
         dueDate: String,
-        dueTime: String?,
         childId: String,
-        categoryName: String,
         recurrenceType: TaskRecurrenceType,
         recurrenceWeekdays: Set<Int>,
         onDone: () -> Unit
     ) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            val familyId = user.familyId ?: return@launch
+            val user = authRepository.observeCurrentUser().first()
+                ?: run {
+                    _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "登录状态已失效，请重新登录")
+                    return@launch
+                }
+            val familyId = user.familyId
+                ?: run {
+                    _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "未获取到家庭信息，请重新登录后重试")
+                    return@launch
+                }
 
             // 计算需要创建的日期列表
             val start = try { LocalDate.parse(dueDate) } catch (_: Exception) { null }
-                ?: return@launch
+                ?: run {
+                    _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "任务日期无效")
+                    return@launch
+                }
             val end = endDate.takeIf { it.isNotEmpty() }
                 ?.let { try { LocalDate.parse(it) } catch (_: Exception) { null } }
             val recurrenceEnd = if (recurrenceType == TaskRecurrenceType.NONE) end else (end ?: start.plusMonths(3))
@@ -311,36 +341,64 @@ class TasksViewModel @Inject constructor(
                 listOf(start)
             }
             val seriesId = if (recurrenceType == TaskRecurrenceType.NONE) null else UUID.randomUUID().toString()
+            Log.i(
+                TASKS_VIEW_MODEL_TAG,
+                "开始创建任务 familyId=$familyId childId=$childId dates=${dates.size} recurrence=$recurrenceType"
+            )
 
             var hasError = false
+            val createdTasks = mutableListOf<Task>()
             for (date in dates) {
                 val task = Task(
                     familyId = familyId,
-                    title = title,
-                    description = description,
+                    title = template.title,
+                    description = template.description,
                     childId = childId,
                     createdBy = user.uid,
-                    category = categoryName,
-                    rewardPoints = rewardPoints,
-                    penaltyPoints = penaltyPoints,
+                    category = template.category,
+                    rewardPoints = template.rewardPoints,
+                    penaltyPoints = template.penaltyPoints,
                     dueDate = date.toString(),
                     endDate = null,
-                    dueTime = dueTime,
+                    dueTime = null,
                     recurrenceSeriesId = seriesId,
                     recurrenceType = recurrenceType,
                     recurrenceWeekdays = recurrenceWeekdays.sorted(),
                     recurrenceEndDate = recurrenceEnd.toString()
                 )
-                taskRepository.createTask(task).onFailure { hasError = true }
+                taskRepository.createTask(task)
+                    .onSuccess { taskId -> createdTasks += task.copy(id = taskId) }
+                    .onFailure { error ->
+                        hasError = true
+                        Log.e(
+                            TASKS_VIEW_MODEL_TAG,
+                            "创建任务失败 childId=$childId dueDate=${task.dueDate} recurrence=$recurrenceType",
+                            error
+                        )
+                    }
             }
 
             if (hasError) {
+                Log.w(TASKS_VIEW_MODEL_TAG, "任务创建结束：存在失败项 familyId=$familyId childId=$childId")
                 _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "创建失败")
             } else {
+                Log.i(TASKS_VIEW_MODEL_TAG, "任务创建结束：全部成功 familyId=$familyId childId=$childId")
                 if (_uiState.value.viewMode == ViewMode.CALENDAR) {
                     loadMonthData(YearMonth.from(_uiState.value.selectedDate))
                     refreshSelectedDateTasks()
                     _uiState.value = _uiState.value.copy(isLoading = false)
+                } else {
+                    // 不等 60 秒轮询：插入接口已返回每条任务的 ID，直接合并到当前列表。
+                    // 后续轮询仍会以服务端数据为准，处理并发修改或排序变更。
+                    val current = _uiState.value
+                    val updatedTasks = if (childId == currentObservingChildId) {
+                        (current.tasks + createdTasks.map { it.toUiItem(getChildName(it.childId)) })
+                            .distinctBy { it.id }
+                            .sortedBy { it.dueDate }
+                    } else {
+                        current.tasks
+                    }
+                    _uiState.value = current.copy(isLoading = false, tasks = updatedTasks)
                 }
                 onDone()
             }
@@ -427,17 +485,6 @@ class TasksViewModel @Inject constructor(
         }
     }
 
-    /** 默认完成即通过；仅允许家长把已完成任务驳回，并自动回退对应积分。 */
-    fun rejectTask(taskId: String) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            taskRepository.rejectTask(taskId).fold(
-                onSuccess = { _uiState.value = _uiState.value.copy(isLoading = false) },
-                onFailure = { _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "驳回失败，请稍后重试") }
-            )
-        }
-    }
-
     fun toggleManageMode() {
         _uiState.value = _uiState.value.copy(
             isManageMode = !_uiState.value.isManageMode,
@@ -446,6 +493,8 @@ class TasksViewModel @Inject constructor(
     }
 
     fun toggleTaskSelection(taskId: String) {
+        val task = _uiState.value.tasks.find { it.id == taskId } ?: return
+        if (!task.isCancellableByParent()) return
         val current = _uiState.value.selectedTaskIds.toMutableSet()
         if (current.contains(taskId)) current.remove(taskId) else current.add(taskId)
         _uiState.value = _uiState.value.copy(selectedTaskIds = current)
@@ -453,7 +502,9 @@ class TasksViewModel @Inject constructor(
 
     fun batchDeleteTasks() {
         viewModelScope.launch {
-            val ids = _uiState.value.selectedTaskIds.toList()
+            val ids = _uiState.value.selectedTaskIds.filter { taskId ->
+                _uiState.value.tasks.find { it.id == taskId }?.isCancellableByParent() == true
+            }
             if (ids.isEmpty()) return@launch
             _uiState.value = _uiState.value.copy(isLoading = true, selectedTaskIds = emptySet())
             ids.forEach { taskRepository.deleteTask(it) }
@@ -521,3 +572,6 @@ class TasksViewModel @Inject constructor(
         TaskRecurrenceType.NONE -> true
     }
 }
+
+private fun TaskUiItem.isCancellableByParent(): Boolean =
+    status == "PENDING" && runCatching { LocalDate.parse(dueDate) >= LocalDate.now() }.getOrDefault(false)

@@ -37,9 +37,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.BorderStroke
 import com.lemonkids.kidtask.ui.theme.Coral
+import com.lemonkids.kidtask.ui.theme.CompletedTaskBackground
+import com.lemonkids.kidtask.ui.theme.CompletedTaskBorder
 import com.lemonkids.kidtask.ui.theme.InkBrown
 import com.lemonkids.kidtask.ui.theme.Mint
-import com.lemonkids.kidtask.ui.theme.MintSoft
 import com.lemonkids.kidtask.ui.theme.MutedGray
 import com.lemonkids.kidtask.ui.theme.Pink
 import com.lemonkids.kidtask.ui.theme.PinkSoft
@@ -183,7 +184,8 @@ fun DoneTaskCard(task: TaskUiItem, onUndo: (String) -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        color = MintSoft.copy(alpha = 0.4f)
+        color = CompletedTaskBackground,
+        border = BorderStroke(1.dp, CompletedTaskBorder)
     ) {
         Row(
             modifier = Modifier.padding(16.dp),

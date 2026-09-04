@@ -70,6 +70,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.lemonkids.kidtask.di.KidTtsEntryPoint
 import com.lemonkids.kidtask.ui.theme.Coral
 import com.lemonkids.kidtask.ui.theme.CoralSoft
@@ -96,11 +99,20 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
     val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val ttsManager = remember {
         EntryPointAccessors.fromApplication(appContext, KidTtsEntryPoint::class.java).ttsManager()
     }
     var playingTaskId by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshAfterForeground()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     DisposableEffect(ttsManager) {
         ttsManager.onSpeakingChanged = { taskId -> playingTaskId = taskId }
@@ -117,8 +129,6 @@ fun HomeScreen(
                 )
 
                 val hasAnyTask = uiState.todayTasks.isNotEmpty()
-                    || uiState.overdueTasks.isNotEmpty()
-                    || uiState.upcomingTasks.isNotEmpty()
 
                 if (uiState.isLoading && !hasAnyTask) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -141,69 +151,16 @@ fun HomeScreen(
                             CelebrationCard()
                         }
 
-                        // 今日时间轴：任务按上午、下午、晚上呈现，无时间任务放入上午以避免遗漏。
+                        // 首页仅按家长端配置的任务分类展示，不再按上午、下午、晚上或日期分段。
                         if (uiState.todayTasks.isNotEmpty()) {
-                            TodayTimeline(
+                            CategoryTaskList(
                                 tasks = uiState.todayTasks,
+                                categoryNames = uiState.categoryNames,
                                 playingTaskId = playingTaskId,
                                 onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
                                 onMarkDone = { viewModel.markTaskDone(it) },
                                 onUndo = { viewModel.markTaskUndo(it) }
                             )
-                        }
-
-                        // 忘记做的任务
-                        if (uiState.overdueTasks.isNotEmpty()) {
-                            TaskSection(
-                                emoji = "🍊",
-                                title = "忘记做的任务",
-                                countLabel = "过期 ${uiState.overdueTasks.size} 个",
-                                isExpanded = uiState.overdueExpanded,
-                                barColor = Coral,
-                                softColor = CoralSoft.copy(alpha = 0.25f),
-                                chipBg = CoralSoft.copy(alpha = 0.4f),
-                                chipText = Coral,
-                                onToggle = { viewModel.toggleOverdueExpand() }
-                            ) {
-                                uiState.overdueTasks.forEach { task ->
-                                    TaskCard(
-                                        task = task,
-                                        isPlaying = playingTaskId == task.id,
-                                        sectionColor = Coral,
-                                        softColor = CoralSoft.copy(alpha = 0.15f),
-                                        onSpeak = { ttsManager.speak(task.id, task.title, task.description) },
-                                        onMarkDone = { viewModel.markTaskDone(it) },
-                                        onUndo = { viewModel.markTaskUndo(it) }
-                                    )
-                                }
-                            }
-                        }
-
-                        // 之后的小任务
-                        if (uiState.upcomingTasks.isNotEmpty()) {
-                            TaskSection(
-                                emoji = "💜",
-                                title = "之后的小任务",
-                                countLabel = "未来 ${uiState.upcomingTasks.size} 个",
-                                isExpanded = uiState.upcomingExpanded,
-                                barColor = Lavender,
-                                softColor = LavenderSoft.copy(alpha = 0.25f),
-                                chipBg = LavenderSoft.copy(alpha = 0.5f),
-                                chipText = Lavender,
-                                onToggle = { viewModel.toggleUpcomingExpand() }
-                            ) {
-                                uiState.upcomingTasks.forEach { task ->
-                                    TaskCard(
-                                        task = task,
-                                        isPlaying = playingTaskId == task.id,
-                                        sectionColor = Lavender,
-                                        softColor = LavenderSoft.copy(alpha = 0.15f),
-                                        onSpeak = { ttsManager.speak(task.id, task.title, task.description) },
-                                        onMarkDone = { viewModel.markTaskDone(it) },
-                                        onUndo = { viewModel.markTaskUndo(it) }
-                                    )
-                                }
-                            }
                         }
 
                         Spacer(Modifier.height(16.dp))
@@ -250,62 +207,92 @@ fun HomeScreen(
 }
 
 @Composable
-private fun TodayTimeline(
+private fun CategoryTaskList(
     tasks: List<com.lemonkids.kidtask.ui.components.TaskUiItem>,
+    categoryNames: List<String>,
     playingTaskId: String?,
     onSpeak: (com.lemonkids.kidtask.ui.components.TaskUiItem) -> Unit,
     onMarkDone: (String) -> Unit,
     onUndo: (String) -> Unit
 ) {
-    val periods = listOf(
-        "上午" to "☀️",
-        "下午" to "🌤️",
-        "晚上" to "🌙"
-    )
-    val grouped = tasks.groupBy { task ->
-        val hour = task.dueTime?.substringBefore(":")?.toIntOrNull()
-        when {
-            hour == null || hour < 12 -> "上午"
-            hour < 18 -> "下午"
-            else -> "晚上"
-        }
+    val completedTasks = tasks.filter { it.status == "DONE" || it.status == "VERIFIED" }
+    val tasksByCategory = tasks
+        .filterNot { it.status == "DONE" || it.status == "VERIFIED" }
+        .groupBy { it.category.ifBlank { "默认" } }
+    // 先按家长端分类管理页的顺序显示；历史任务中已被删除的分类放在最后，避免任务丢失。
+    // 已完成是孩子端专用分类，不写回家长端配置，始终置于最后。
+    val orderedCategories = buildList {
+        categoryNames.filter { tasksByCategory.containsKey(it) }.forEach(::add)
+        tasksByCategory.keys.filterNot { it in this }.sorted().forEach(::add)
     }
+    val colors = listOf(Pink, Lavender, Coral, Mint, Sunny)
+    val emojis = listOf("🌸", "💜", "🍊", "🌿", "⭐")
+
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("今天的时间表", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
+            Text("今天的任务", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
             Spacer(Modifier.width(8.dp))
             Text("还有 ${tasks.count { it.status == "PENDING" }} 个", color = Pink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
-        periods.forEach { (period, emoji) ->
-            val periodTasks = grouped[period].orEmpty()
-            Surface(shape = RoundedCornerShape(22.dp), color = Color.White, shadowElevation = 3.dp) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text("$emoji  $period", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
-                    Spacer(Modifier.height(8.dp))
-                    if (periodTasks.isEmpty()) {
-                        Text("这一段先自由安排吧～", fontSize = 14.sp, color = MutedGray, modifier = Modifier.padding(vertical = 8.dp))
-                    } else {
-                        periodTasks.forEachIndexed { index, task ->
-                            TaskCard(
-                                task = task,
-                                isPlaying = playingTaskId == task.id,
-                                sectionColor = Pink,
-                                softColor = PinkSoft.copy(alpha = 0.15f),
-                                onSpeak = { onSpeak(task) },
-                                onMarkDone = onMarkDone,
-                                onUndo = onUndo
-                            )
-                            if (index != periodTasks.lastIndex) Spacer(Modifier.height(8.dp))
-                        }
-                    }
-                }
+        orderedCategories.forEachIndexed { index, categoryName ->
+            val categoryTasks = tasksByCategory.getValue(categoryName)
+            val color = colors[index % colors.size]
+            TaskCategoryCard(
+                title = "${emojis[index % emojis.size]}  $categoryName",
+                tasks = categoryTasks,
+                sectionColor = color,
+                playingTaskId = playingTaskId,
+                onSpeak = onSpeak,
+                onMarkDone = onMarkDone,
+                onUndo = onUndo
+            )
+        }
+        if (completedTasks.isNotEmpty()) {
+            TaskCategoryCard(
+                title = "✅  已完成",
+                tasks = completedTasks,
+                sectionColor = Mint,
+                playingTaskId = playingTaskId,
+                onSpeak = onSpeak,
+                onMarkDone = onMarkDone,
+                onUndo = onUndo
+            )
+        }
+    }
+}
+
+@Composable
+private fun TaskCategoryCard(
+    title: String,
+    tasks: List<com.lemonkids.kidtask.ui.components.TaskUiItem>,
+    sectionColor: Color,
+    playingTaskId: String?,
+    onSpeak: (com.lemonkids.kidtask.ui.components.TaskUiItem) -> Unit,
+    onMarkDone: (String) -> Unit,
+    onUndo: (String) -> Unit
+) {
+    Surface(shape = RoundedCornerShape(22.dp), color = Color.White, shadowElevation = 3.dp) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
+            Spacer(Modifier.height(8.dp))
+            tasks.forEachIndexed { taskIndex, task ->
+                TaskCard(
+                    task = task,
+                    isPlaying = playingTaskId == task.id,
+                    sectionColor = sectionColor,
+                    softColor = sectionColor.copy(alpha = 0.12f),
+                    onSpeak = { onSpeak(task) },
+                    onMarkDone = onMarkDone,
+                    onUndo = onUndo
+                )
+                if (taskIndex != tasks.lastIndex) Spacer(Modifier.height(8.dp))
             }
         }
     }
 }
 
 private fun hasAnyTask(state: HomeUiState) =
-    state.todayTasks.isNotEmpty() || state.overdueTasks.isNotEmpty() || state.upcomingTasks.isNotEmpty()
+    state.todayTasks.isNotEmpty()
 
 // ==================== 顶部 Header ====================
 

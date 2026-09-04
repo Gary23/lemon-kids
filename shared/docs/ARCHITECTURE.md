@@ -360,6 +360,8 @@ ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "family_access" ON categories FOR ALL
     USING (family_id IN (SELECT family_id FROM users WHERE uid = auth.uid()));
 
+-- 创建请求不得提交 id、created_at 等数据库生成列；乐观更新使用的临时 ID 仅限本地 UI。
+
 -- 删除旧的 category 枚举约束，允许自定义分类名
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_category_check;
 
@@ -828,6 +830,8 @@ data class TaskCache(
 ```
 
 **关键认知**：API 写操作的**成功回调不等于 UI 数据更新**。数据更新发生在 observe 流的下一次 emit。
+
+> 家长端在任务列表创建任务是例外：服务端插入响应返回任务 ID 后，立即将已创建任务合并到当前列表并关闭 loading；后续轮询仍负责以服务端数据校准列表。不可在服务端尚未确认写入成功前做此合并。
 
 ### 8.2 标准 ViewModel 模式
 

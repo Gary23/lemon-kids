@@ -6,10 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.model.TaskStatus
 import com.lemonkids.shared.repository.AuthRepository
+import com.lemonkids.shared.repository.CategoryRepository
 import com.lemonkids.shared.repository.RewardRepository
 import com.lemonkids.shared.repository.TaskRepository
 import com.lemonkids.kidtask.ui.components.TaskUiItem
 import com.lemonkids.kidtask.reminder.TaskReminderScheduler
+import com.lemonkids.kidtask.widget.TaskWidgetProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +25,8 @@ import javax.inject.Inject
 data class HomeUiState(
     /** 今日任务 */
     val todayTasks: List<TaskUiItem> = emptyList(),
+    /** 家长端配置的任务分类，保持配置创建顺序。 */
+    val categoryNames: List<String> = emptyList(),
     /** 昨天及以前的未完成任务（PENDING），日期降序 */
     val overdueTasks: List<TaskUiItem> = emptyList(),
     /** 明天及以后的任务，日期升序 */
@@ -35,6 +39,8 @@ data class HomeUiState(
     val allTasksDoneToday: Boolean = false,
     val showCelebration: Boolean = false,
     val isLoading: Boolean = false,
+    /** 已本地反馈、正在同步到服务端的任务；不再用全屏加载遮挡列表。 */
+    val syncingTaskIds: Set<String> = emptySet(),
     val confirmDialogTaskId: String? = null,
     val undoDialogTaskId: String? = null,
     /** 折叠面板展开状态 */
@@ -47,6 +53,7 @@ data class HomeUiState(
 class HomeViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val authRepository: AuthRepository,
+    private val categoryRepository: CategoryRepository,
     private val rewardRepository: RewardRepository,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
@@ -58,6 +65,8 @@ class HomeViewModel @Inject constructor(
     private var lastCelebrateDate: String = ""
     /** 首次加载是否完成（至少收到一次非空数据或超时确认） */
     private var firstLoadDone = false
+    /** 等待仓库返回新快照期间保留本地状态，避免旧的轮询结果把卡片改回去。 */
+    private val optimisticTaskStatuses = mutableMapOf<String, TaskStatus>()
 
     init {
         loadData()
@@ -69,18 +78,35 @@ class HomeViewModel @Inject constructor(
             val user = authRepository.observeCurrentUser().first() ?: return@launch
             val today = LocalDate.now()
 
+            user.familyId?.takeIf { it.isNotBlank() }?.let { familyId ->
+                launch {
+                    categoryRepository.observeCategories(familyId).collect { categories ->
+                        _uiState.value = _uiState.value.copy(
+                            categoryNames = categories.map { it.name }.filter { it.isNotBlank() }
+                        )
+                    }
+                }
+            }
+
             launch {
                 // 观察所有任务（非删除），在内存中分类过滤
                 taskRepository.observeChildTasks(userId).collect { tasks ->
                     TaskReminderScheduler.schedule(appContext, tasks)
                     val todayStr = today.toString()
+                    reconcileOptimisticStatuses(tasks)
+                    val displayedTasks = tasks.map { task ->
+                        optimisticTaskStatuses[task.id]?.let { task.copy(status = it) } ?: task
+                    }
 
-                    val todayTasks = tasks
+                    val todayTasks = displayedTasks
                         .filter { it.dueDate == todayStr }
                         .map { it.toUiItem() }
                         .sortedWith(taskSort)
 
-                    val overdueTasks = tasks
+                    // 桌面任务卡片与首页使用同一份实时任务源，避免继续展示演示数据。
+                    TaskWidgetProvider.updateAll(appContext)
+
+                    val overdueTasks = displayedTasks
                         .filter { t ->
                             val d = try { LocalDate.parse(t.dueDate) } catch (_: Exception) { null }
                             d != null && d < today && t.status == TaskStatus.PENDING
@@ -88,17 +114,13 @@ class HomeViewModel @Inject constructor(
                         .map { it.toUiItem() }
                         .sortedByDescending { it.dueDate }
 
-                    val upcomingTasks = tasks
+                    val upcomingTasks = displayedTasks
                         .filter { t ->
                             val d = try { LocalDate.parse(t.dueDate) } catch (_: Exception) { null }
                             d != null && d > today
                         }
                         .map { it.toUiItem() }
                         .sortedBy { it.dueDate }
-
-                    val allEmpty = todayTasks.isEmpty() && overdueTasks.isEmpty() && upcomingTasks.isEmpty()
-                    // 首次加载收到空列表时保持 loading，避免 auth session 未恢复时 RLS 返回空导致误显示"没有任务"
-                    if (allEmpty && !firstLoadDone) return@collect
 
                     firstLoadDone = true
 
@@ -154,6 +176,7 @@ class HomeViewModel @Inject constructor(
             ?: _uiState.value.upcomingTasks.find { it.id == taskId }
 
     fun markTaskDone(taskId: String) {
+        if (taskId in _uiState.value.syncingTaskIds) return
         _uiState.value = _uiState.value.copy(confirmDialogTaskId = taskId)
     }
 
@@ -161,22 +184,29 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val oldPoints = _uiState.value.points
             val taskPoints = findTaskById(taskId)?.rewardPoints ?: 0
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            taskRepository.completeTask(taskId, user.uid).fold(
+            val userId = authRepository.currentUserId ?: authRepository.observeCurrentUser().first()?.uid
+                ?: return@launch
+            applyOptimisticStatus(taskId, TaskStatus.VERIFIED)
+            _uiState.value = _uiState.value.copy(
+                confirmDialogTaskId = null,
+                syncingTaskIds = _uiState.value.syncingTaskIds + taskId,
+                points = oldPoints + taskPoints,
+                previousPoints = oldPoints,
+                earnedPoints = taskPoints,
+                showPointsAnimation = true
+            )
+            taskRepository.completeTask(taskId, userId).fold(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        points = oldPoints + taskPoints,
-                        confirmDialogTaskId = null,
-                        previousPoints = oldPoints,
-                        earnedPoints = taskPoints,
-                        showPointsAnimation = true
+                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId
                     )
                 },
                 onFailure = {
+                    optimisticTaskStatuses.remove(taskId)
+                    updateTaskStatusInUi(taskId, TaskStatus.PENDING)
                     _uiState.value = _uiState.value.copy(
-                        points = oldPoints, isLoading = false, confirmDialogTaskId = null
+                        points = oldPoints,
+                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId
                     )
                 }
             )
@@ -184,23 +214,35 @@ class HomeViewModel @Inject constructor(
     }
 
     fun markTaskUndo(taskId: String) {
+        if (taskId in _uiState.value.syncingTaskIds) return
         _uiState.value = _uiState.value.copy(undoDialogTaskId = taskId)
     }
 
     fun confirmTaskUndo(taskId: String) {
         viewModelScope.launch {
             val taskPoints = findTaskById(taskId)?.rewardPoints ?: 0
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            taskRepository.undoCompleteTask(taskId, user.uid, taskPoints).fold(
+            val oldPoints = _uiState.value.points
+            val userId = authRepository.currentUserId ?: authRepository.observeCurrentUser().first()?.uid
+                ?: return@launch
+            applyOptimisticStatus(taskId, TaskStatus.PENDING)
+            _uiState.value = _uiState.value.copy(
+                undoDialogTaskId = null,
+                syncingTaskIds = _uiState.value.syncingTaskIds + taskId,
+                points = (oldPoints - taskPoints).coerceAtLeast(0)
+            )
+            taskRepository.undoCompleteTask(taskId, userId, taskPoints).fold(
                 onSuccess = {
                     _uiState.value = _uiState.value.copy(
-                        points = (_uiState.value.points - taskPoints).coerceAtLeast(0),
-                        undoDialogTaskId = null
+                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId
                     )
                 },
                 onFailure = {
-                    _uiState.value = _uiState.value.copy(isLoading = false, undoDialogTaskId = null)
+                    optimisticTaskStatuses.remove(taskId)
+                    updateTaskStatusInUi(taskId, TaskStatus.VERIFIED)
+                    _uiState.value = _uiState.value.copy(
+                        points = oldPoints,
+                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId
+                    )
                 }
             )
         }
@@ -211,9 +253,47 @@ class HomeViewModel @Inject constructor(
     fun dismissCelebration() { _uiState.value = _uiState.value.copy(showCelebration = false) }
     fun dismissPointsAnimation() { _uiState.value = _uiState.value.copy(showPointsAnimation = false) }
 
+    /** 前台恢复时重新建立有效会话并刷新任务；无论请求结果如何都不能无限显示加载动画。 */
+    fun refreshAfterForeground() {
+        viewModelScope.launch {
+            if (_uiState.value.todayTasks.isEmpty()) {
+                _uiState.value = _uiState.value.copy(isLoading = true)
+            }
+            taskRepository.refreshTasks()
+            kotlinx.coroutines.delay(8_000)
+            if (_uiState.value.isLoading) {
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+        }
+    }
+
     fun toggleTodayExpand() { _uiState.value = _uiState.value.copy(todayExpanded = !_uiState.value.todayExpanded) }
     fun toggleOverdueExpand() { _uiState.value = _uiState.value.copy(overdueExpanded = !_uiState.value.overdueExpanded) }
     fun toggleUpcomingExpand() { _uiState.value = _uiState.value.copy(upcomingExpanded = !_uiState.value.upcomingExpanded) }
+
+    private fun reconcileOptimisticStatuses(tasks: List<Task>) {
+        val latestStatusById = tasks.associate { it.id to it.status }
+        optimisticTaskStatuses.entries.removeAll { (taskId, expectedStatus) ->
+            latestStatusById[taskId] == expectedStatus ||
+                (expectedStatus == TaskStatus.VERIFIED && latestStatusById[taskId] == TaskStatus.DONE)
+        }
+    }
+
+    private fun applyOptimisticStatus(taskId: String, status: TaskStatus) {
+        optimisticTaskStatuses[taskId] = status
+        updateTaskStatusInUi(taskId, status)
+    }
+
+    private fun updateTaskStatusInUi(taskId: String, status: TaskStatus) {
+        fun List<TaskUiItem>.withUpdatedStatus() = map { task ->
+            if (task.id == taskId) task.copy(status = status.name) else task
+        }
+        _uiState.value = _uiState.value.copy(
+            todayTasks = _uiState.value.todayTasks.withUpdatedStatus(),
+            overdueTasks = _uiState.value.overdueTasks.withUpdatedStatus(),
+            upcomingTasks = _uiState.value.upcomingTasks.withUpdatedStatus()
+        )
+    }
 
     private fun calculateStreakDays(records: List<com.lemonkids.shared.model.PointRecord>): Int {
         val dates = records

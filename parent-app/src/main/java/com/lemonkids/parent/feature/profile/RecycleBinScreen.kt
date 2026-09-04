@@ -55,6 +55,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 import javax.inject.Inject
 
 data class RecycleBinUiState(
@@ -156,7 +157,7 @@ fun RecycleBinScreen(
                 actions = {
                     if (uiState.deletedTasks.isNotEmpty()) {
                         TextButton(onClick = { showEmptyConfirm = true }) {
-                            Text("清空", color = Color(0xFFEF5350))
+                            Text("清理可删除项", color = Color(0xFFEF5350))
                         }
                     }
                 },
@@ -194,12 +195,12 @@ fun RecycleBinScreen(
             AlertDialog(
                 onDismissRequest = { showEmptyConfirm = false },
                 title = { Text("清空回收站") },
-                text = { Text("确定要彻底删除回收站中所有任务吗？此操作不可撤销。") },
+                text = { Text("只会彻底删除今天及之后未完成、且没有积分或完成历史的任务；历史任务会继续保留。") },
                 confirmButton = {
                     TextButton(onClick = {
                         viewModel.emptyAll()
                         showEmptyConfirm = false
-                    }) { Text("确定清空", color = Color(0xFFEF5350)) }
+                    }) { Text("确定清理", color = Color(0xFFEF5350)) }
                 },
                 dismissButton = {
                     TextButton(onClick = { showEmptyConfirm = false }) { Text("取消") }
@@ -215,6 +216,8 @@ private fun DeletedTaskCard(
     onRestore: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val isRecyclable = task.status.name == "PENDING" && task.completedAt == null && task.verifiedAt == null &&
+        runCatching { LocalDate.parse(task.dueDate) >= LocalDate.now() }.getOrDefault(false)
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -237,9 +240,13 @@ private fun DeletedTaskCard(
                 Spacer(Modifier.height(4.dp))
                 Text("⭐${task.rewardPoints}  ${task.dueDate}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Row {
-                TextButton(onClick = onRestore) { Text("还原", color = Color(0xFF4CAF50), fontSize = 13.sp) }
-                TextButton(onClick = onDelete) { Text("删除", color = Color(0xFFEF5350), fontSize = 13.sp) }
+            if (isRecyclable) {
+                Row {
+                    TextButton(onClick = onRestore) { Text("还原", color = Color(0xFF4CAF50), fontSize = 13.sp) }
+                    TextButton(onClick = onDelete) { Text("删除", color = Color(0xFFEF5350), fontSize = 13.sp) }
+                }
+            } else {
+                Text("历史已保留", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

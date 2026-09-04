@@ -16,7 +16,7 @@
 1. `model` 是 Android 三端的字段契约；改字段前同步检查 SQL 表、序列化字段、所有 Repository 与页面。
 2. 任务完成与奖励兑换分别通过 `complete_task`、`redeem_reward` RPC 保持积分事务性；不要在 UI 层直接增减积分。
 3. 绑定码只有 `task` 与 `monitor` 两种类型。任务码可复用；监控码涉及设备占用与强制重绑，具体协议在 `AuthRepository.exchangeBindingCode`。
-4. `callbackFlow` 观察接口可能包含轮询/Realtime 细节；不要把其生命周期迁到 Composable 中。
+4. Repository 的 `Flow` 观察接口可能包含轮询/Realtime 细节；不要把其生命周期迁到 Composable 中。
 5. Supabase 认证会话保存在各应用私有数据中；认字端还会保存已验证的 `task` 绑定码以静默恢复会话。刷新凭证失败或业务请求发现 token 缺失时，由单例 `auth/SessionRecoveryCoordinator` 通知认字端根层阻断业务并执行刷新或绑定码恢复；恢复成功后必须调用 `markRecovered()` 解除阻断。清除应用数据或主动退出才应要求重新绑定。
 
 ## 配置与安全

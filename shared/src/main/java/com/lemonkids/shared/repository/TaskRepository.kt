@@ -8,14 +8,16 @@ interface TaskRepository {
     fun observeTasksForDate(childId: String, date: String): Flow<List<Task>>
     fun observeChildTasks(childId: String): Flow<List<Task>>
     fun observeDeletedTasks(familyId: String): Flow<List<Task>>
+    /** 应用回到前台后刷新鉴权会话并立即重新拉取任务。 */
+    suspend fun refreshTasks()
     suspend fun getMonthTasks(childId: String, year: Int, month: Int): List<Task>
     suspend fun createTask(task: Task): Result<String>
     suspend fun updateTask(task: Task): Result<Unit>
     /** 更新同一重复系列中尚未完成的未来任务。 */
     suspend fun updateFutureTasksInSeries(seriesId: String, fromDate: String, task: Task): Result<Unit>
-    /** 软删除：标记 deleted_at */
+    /** 取消今日及未来的待完成任务：标记 deleted_at，历史任务不会被修改。 */
     suspend fun deleteTask(taskId: String): Result<Unit>
-    /** 彻底删除 */
+    /** 仅彻底删除未完成、未产生积分且尚未发生的已取消任务。 */
     suspend fun permanentlyDeleteTask(taskId: String): Result<Unit>
     /** 从回收站还原 */
     suspend fun restoreTask(taskId: String): Result<Unit>
@@ -24,6 +26,5 @@ interface TaskRepository {
     suspend fun completeTask(taskId: String, childId: String): Result<Unit>
     suspend fun undoCompleteTask(taskId: String, childId: String, rewardPoints: Int): Result<Unit>
     suspend fun verifyTask(taskId: String): Result<Unit>
-    suspend fun rejectTask(taskId: String): Result<Unit>
     suspend fun getTaskById(taskId: String): Result<Task>
 }

@@ -10,6 +10,10 @@
 | `sql/patch.sql` | 邀请码、RLS、限时字段、设备日志等增量 | 已有初始表；重复执行约束语句前需检查状态 |
 | `sql/functions-fix.sql` | 重新创建任务/奖励 RPC 的历史修复 | 已有相关表；会覆盖函数定义 |
 | `sql/binding-codes-patch.sql` | 绑定码 RPC 修复 | `binding_codes` 表及相关 RPC 已由既有环境创建 |
+| `sql/20260901_task_templates.sql` | 创建家庭任务模板表和 RLS 策略 | 已有 `families`、`users` 表；家长端任务管理上线前执行 |
+| `sql/20260904_task_history_and_cancellation.sql` | 将任务删除改为受控取消；保留历史任务，并提供完成/撤销完成的原子 RPC | 已有任务、用户、积分流水及 `20260812_task_calendar_core.sql` 的任务状态/RPC |
+| `sql/20260904_remove_task_rejection.sql` | 移除已完成任务的家长驳回 RPC；保留既有驳回历史及积分流水 | 已执行创建 `reject_task` 的旧脚本 |
+| `sql/20260901_reset_tasks_and_child_points.sql` | 清空全部任务、孩子积分及其积分流水 | 破坏性维护脚本；执行前确认目标环境与备份 |
 | `sql/20260731_literacy_pronunciation_evaluation.sql` | 已废弃的旧版认字评测建表脚本 | 勿执行；已由 20260802 清理迁移替代 |
 | `sql/20260731_literacy_pronunciation_batch_upgrade.sql` | 已废弃的旧版评测表升级脚本 | 勿执行 |
 | `sql/20260731_literacy_pronunciation_pending_attempt.sql` | 已废弃的旧版评测状态升级脚本 | 勿执行 |
@@ -48,6 +52,8 @@
 - 部署 `cloud-functions/generate-literacy-audio/` 前，审查并执行 `sql/20260806_literacy_tts_generator_rpc.sql`。该脚本仅给 `service_role` 授予生成器 RPC 权限；不要给 anon、authenticated 或客户端增加资产表/Storage 写权限。
 - 已在目标 Supabase 审查并执行 `sql/20260807_literacy_tts_cleanup.sql` 和 `sql/20260809_literacy_tts_purge_deleted_assets.sql`。为 `generate-literacy-audio` 配置每 5 分钟一次的 `{ "action": "cleanup", "limit": 50, "concurrency": 3 }` 事件触发器，以及每天一次的 `{ "action": "reconcile", "limit": 1000, "concurrency": 3 }` 对账触发器。清理器按资产精确删除对象，并在关联对象全部删除成功后自动物理删除资产记录；对账器会删除专用 bucket 中没有非 `deleted` 资产记录的孤儿对象，并输出可告警日志。
 - Realtime replication 的启用仍需在 Dashboard 核对；以脚本注释和实际控制台状态为准。
+- 上线任务历史保留规则前，在目标项目的 SQL Editor 审查并执行 `sql/20260904_task_history_and_cancellation.sql`。执行后，删除只会取消上海时区当天及之后的待完成任务；回收站只可物理清理没有完成或积分历史的已取消任务。
+- 移除任务驳回能力前，在目标项目的 SQL Editor 审查并执行 `sql/20260904_remove_task_rejection.sql`。该脚本会删除 `reject_task` RPC，但不会删除既有的已驳回任务和积分流水。
 - 已执行初版求助表脚本的环境，先执行 `sql/20260801_literacy_help_content.sql`，再依次执行两个 `20260802` 认字迁移、`sql/20260804_literacy_learning_items.sql`、`sql/20260804_recognized_characters.sql`、`sql/20260805_literacy_help_request_sources.sql`、`sql/20260806_literacy_help_request_clicked_character.sql` 和 `sql/20260806_literacy_tts_assets.sql`；完成后不要再执行旧评测或旧建表脚本。
 
 ## 后续迁移规范

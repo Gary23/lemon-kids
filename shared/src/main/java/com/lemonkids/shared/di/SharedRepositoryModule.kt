@@ -10,6 +10,7 @@ import com.lemonkids.shared.repository.ChildLiteracyCharacterRepository
 import com.lemonkids.shared.repository.RecognizedCharacterRepository
 import com.lemonkids.shared.repository.RewardRepository
 import com.lemonkids.shared.repository.TaskRepository
+import com.lemonkids.shared.repository.TaskTemplateRepository
 import com.lemonkids.shared.repository.impl.SupabaseAppUsageRepository
 import com.lemonkids.shared.repository.impl.SupabaseAuthRepository
 import com.lemonkids.shared.repository.impl.SupabaseCategoryRepository
@@ -20,6 +21,7 @@ import com.lemonkids.shared.repository.impl.SupabaseChildLiteracyCharacterReposi
 import com.lemonkids.shared.repository.impl.SupabaseRecognizedCharacterRepository
 import com.lemonkids.shared.repository.impl.SupabaseRewardRepository
 import com.lemonkids.shared.repository.impl.SupabaseTaskRepository
+import com.lemonkids.shared.repository.impl.SupabaseTaskTemplateRepository
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -34,6 +36,9 @@ abstract class SharedRepositoryModule {
 
     @Binds
     abstract fun bindTaskRepository(impl: SupabaseTaskRepository): TaskRepository
+
+    @Binds
+    abstract fun bindTaskTemplateRepository(impl: SupabaseTaskTemplateRepository): TaskTemplateRepository
 
     @Binds
     abstract fun bindRewardRepository(impl: SupabaseRewardRepository): RewardRepository
