@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.awaitClose
-import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -37,6 +36,16 @@ class SupabaseTaskRepository @Inject constructor(
      */
     private fun isSessionValid(): Boolean = auth.currentSessionOrNull() != null
 
+    override suspend fun refreshTasks() {
+        // 应用长时间后台后 access token 可能已过期；先完成 SDK 初始化并刷新 token，
+        // 再通知所有正在观察任务的页面立即重试，避免只能等下一次一分钟轮询。
+        runCatching {
+            auth.awaitInitialization()
+            if (auth.currentSessionOrNull() != null) auth.refreshCurrentSession()
+        }.onFailure { Log.w(TAG, "前台刷新任务会话失败", it) }
+        taskRefreshEvents.tryEmit(Unit)
+    }
+
     override fun observeTodayTasks(childId: String, date: String): Flow<List<Task>> =
         callbackFlow {
             suspend fun fetch() {
@@ -46,7 +55,9 @@ class SupabaseTaskRepository @Inject constructor(
                         filter { eq("child_id", childId); eq("due_date", date) }
                     }.decodeList<Task>()
                     trySend(tasks.filter { it.deletedAt == null })
-                } catch (_: Exception) {}
+                } catch (error: Exception) {
+                    Log.w(TAG, "读取当日任务失败 childId=$childId", error)
+                }
             }
             fetch()
             launch { taskRefreshEvents.collect { fetch() } }
@@ -65,9 +76,10 @@ class SupabaseTaskRepository @Inject constructor(
                     filter { eq("child_id", childId) }
                 }.decodeList<Task>()
                 trySend(tasks.filter { it.deletedAt == null })
-            } catch (_: Exception) {
-                // 保留上一次已展示的数据，下一次轮询或写入信号会重试。
-            }
+                } catch (error: Exception) {
+                    // 保留上一次已展示的数据，下一次轮询或写入信号会重试。
+                    Log.w(TAG, "读取孩子任务失败 childId=$childId", error)
+                }
         }
         fetch()
         launch { taskRefreshEvents.collect { fetch() } }
@@ -84,10 +96,14 @@ class SupabaseTaskRepository @Inject constructor(
                         filter { eq("family_id", familyId) }
                     }.decodeList<Task>()
                     trySend(tasks.filter { it.deletedAt != null })
-                } catch (_: Exception) {}
+                } catch (error: Exception) {
+                    Log.w(TAG, "读取回收站任务失败 familyId=$familyId", error)
+                }
             }
             fetch()
-            while (true) { delay(60_000); fetch() }
+            launch { taskRefreshEvents.collect { fetch() } }
+            launch { while (true) { delay(60_000); fetch() } }
+            awaitClose { }
         }
 
     override suspend fun getMonthTasks(childId: String, year: Int, month: Int): List<Task> {
@@ -140,30 +156,27 @@ class SupabaseTaskRepository @Inject constructor(
     }
 
     override suspend fun deleteTask(taskId: String): Result<Unit> = runCatching {
-        postgrest.from("tasks").update(mapOf("deleted_at" to Instant.now().toString())) {
-            filter { eq("id", taskId) }
-        }
-    }
+        postgrest.rpc(function = "cancel_task", parameters = mapOf("p_task_id" to taskId))
+        Unit
+    }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun permanentlyDeleteTask(taskId: String): Result<Unit> = runCatching {
-        postgrest.from("tasks").delete { filter { eq("id", taskId) } }
-    }
+        postgrest.rpc(function = "permanently_delete_recyclable_task", parameters = mapOf("p_task_id" to taskId))
+        Unit
+    }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun restoreTask(taskId: String): Result<Unit> = runCatching {
-        postgrest.from("tasks").update(mapOf("deleted_at" to null)) {
-            filter { eq("id", taskId) }
-        }
-    }
+        postgrest.rpc(function = "restore_cancelled_task", parameters = mapOf("p_task_id" to taskId))
+        Unit
+    }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun emptyRecycleBin(familyId: String): Result<Unit> = runCatching {
-        // 先查询所有已删除任务，再逐个彻底删除
-        val deleted = postgrest.from("tasks").select {
-            filter { eq("family_id", familyId) }
-        }.decodeList<Task>().filter { it.deletedAt != null }
-        for (task in deleted) {
-            postgrest.from("tasks").delete { filter { eq("id", task.id) } }
-        }
-    }
+        postgrest.rpc(
+            function = "permanently_delete_recyclable_tasks",
+            parameters = mapOf("p_family_id" to familyId)
+        )
+        Unit
+    }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun completeTask(taskId: String, childId: String): Result<Unit> =
         runCatching {
@@ -176,32 +189,10 @@ class SupabaseTaskRepository @Inject constructor(
 
     override suspend fun undoCompleteTask(taskId: String, childId: String, rewardPoints: Int): Result<Unit> =
         runCatching {
-            // 1) 任务状态恢复为 pending
-            // 先读取当前积分；其余三个互不依赖的操作并行执行，减少网络往返等待。
-            val user = postgrest.from("users").select {
-                filter { eq("uid", childId) }
-            }.decodeSingle<com.lemonkids.shared.model.User>()
-            val newPoints = (user.totalPoints - rewardPoints).coerceAtLeast(0)
-            kotlinx.coroutines.coroutineScope {
-                launch {
-                    postgrest.from("tasks").update(mapOf(
-                        "status" to "pending",
-                        "completed_at" to null,
-                        "verified_at" to null
-                    )) { filter { eq("id", taskId) } }
-                }
-                launch {
-                    postgrest.from("users").update(mapOf("total_points" to newPoints)) {
-                        filter { eq("uid", childId) }
-                    }
-                }
-                launch {
-                    // 一个任务只保留一条完成积分记录，直接按关联任务删除即可，免去一次查询。
-                    postgrest.from("point_records").delete {
-                        filter { eq("child_id", childId); eq("type", "task_complete"); eq("related_task_id", taskId) }
-                    }
-                }
-            }
+            postgrest.rpc(
+                function = "undo_task_completion",
+                parameters = mapOf("p_task_id" to taskId, "p_child_id" to childId)
+            )
             Unit
         }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
@@ -209,10 +200,6 @@ class SupabaseTaskRepository @Inject constructor(
         postgrest.from("tasks").update(mapOf("status" to "verified")) {
             filter { eq("id", taskId) }
         }
-    }
-
-    override suspend fun rejectTask(taskId: String): Result<Unit> = runCatching {
-        postgrest.rpc(function = "reject_task", parameters = mapOf("p_task_id" to taskId))
     }
 
     override suspend fun getTaskById(taskId: String): Result<Task> = runCatching {

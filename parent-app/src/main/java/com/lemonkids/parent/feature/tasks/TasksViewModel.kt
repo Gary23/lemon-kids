@@ -485,17 +485,6 @@ class TasksViewModel @Inject constructor(
         }
     }
 
-    /** 默认完成即通过；仅允许家长把已完成任务驳回，并自动回退对应积分。 */
-    fun rejectTask(taskId: String) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            taskRepository.rejectTask(taskId).fold(
-                onSuccess = { _uiState.value = _uiState.value.copy(isLoading = false) },
-                onFailure = { _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "驳回失败，请稍后重试") }
-            )
-        }
-    }
-
     fun toggleManageMode() {
         _uiState.value = _uiState.value.copy(
             isManageMode = !_uiState.value.isManageMode,
@@ -504,6 +493,8 @@ class TasksViewModel @Inject constructor(
     }
 
     fun toggleTaskSelection(taskId: String) {
+        val task = _uiState.value.tasks.find { it.id == taskId } ?: return
+        if (!task.isCancellableByParent()) return
         val current = _uiState.value.selectedTaskIds.toMutableSet()
         if (current.contains(taskId)) current.remove(taskId) else current.add(taskId)
         _uiState.value = _uiState.value.copy(selectedTaskIds = current)
@@ -511,7 +502,9 @@ class TasksViewModel @Inject constructor(
 
     fun batchDeleteTasks() {
         viewModelScope.launch {
-            val ids = _uiState.value.selectedTaskIds.toList()
+            val ids = _uiState.value.selectedTaskIds.filter { taskId ->
+                _uiState.value.tasks.find { it.id == taskId }?.isCancellableByParent() == true
+            }
             if (ids.isEmpty()) return@launch
             _uiState.value = _uiState.value.copy(isLoading = true, selectedTaskIds = emptySet())
             ids.forEach { taskRepository.deleteTask(it) }
@@ -579,3 +572,6 @@ class TasksViewModel @Inject constructor(
         TaskRecurrenceType.NONE -> true
     }
 }
+
+private fun TaskUiItem.isCancellableByParent(): Boolean =
+    status == "PENDING" && runCatching { LocalDate.parse(dueDate) >= LocalDate.now() }.getOrDefault(false)

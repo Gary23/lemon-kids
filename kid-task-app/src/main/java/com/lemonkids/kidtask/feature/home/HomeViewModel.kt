@@ -122,10 +122,6 @@ class HomeViewModel @Inject constructor(
                         .map { it.toUiItem() }
                         .sortedBy { it.dueDate }
 
-                    val allEmpty = todayTasks.isEmpty() && overdueTasks.isEmpty() && upcomingTasks.isEmpty()
-                    // 首次加载收到空列表时保持 loading，避免 auth session 未恢复时 RLS 返回空导致误显示"没有任务"
-                    if (allEmpty && !firstLoadDone) return@collect
-
                     firstLoadDone = true
 
                     val allDone = todayTasks.isNotEmpty() && todayTasks.all {
@@ -256,6 +252,20 @@ class HomeViewModel @Inject constructor(
     fun dismissUndoDialog() { _uiState.value = _uiState.value.copy(undoDialogTaskId = null) }
     fun dismissCelebration() { _uiState.value = _uiState.value.copy(showCelebration = false) }
     fun dismissPointsAnimation() { _uiState.value = _uiState.value.copy(showPointsAnimation = false) }
+
+    /** 前台恢复时重新建立有效会话并刷新任务；无论请求结果如何都不能无限显示加载动画。 */
+    fun refreshAfterForeground() {
+        viewModelScope.launch {
+            if (_uiState.value.todayTasks.isEmpty()) {
+                _uiState.value = _uiState.value.copy(isLoading = true)
+            }
+            taskRepository.refreshTasks()
+            kotlinx.coroutines.delay(8_000)
+            if (_uiState.value.isLoading) {
+                _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+        }
+    }
 
     fun toggleTodayExpand() { _uiState.value = _uiState.value.copy(todayExpanded = !_uiState.value.todayExpanded) }
     fun toggleOverdueExpand() { _uiState.value = _uiState.value.copy(overdueExpanded = !_uiState.value.overdueExpanded) }

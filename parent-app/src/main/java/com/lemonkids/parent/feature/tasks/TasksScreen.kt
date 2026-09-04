@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +63,8 @@ fun TasksScreen(
     viewModel: TasksViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // 列表页是家长端首页，只聚焦今天；历史和未来任务统一在日历中查看。
+    val todayTasks = uiState.tasks.filter { it.dueDate == LocalDate.now().toString() }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -138,19 +141,19 @@ fun TasksScreen(
                         viewModel = viewModel
                     )
                 }
-                uiState.tasks.isEmpty() && !uiState.isLoading -> {
+                todayTasks.isEmpty() && !uiState.isLoading -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("\uD83D\uDCCB", fontSize = 40.sp)
                             Spacer(Modifier.height(8.dp))
-                            Text("还没有创建过任务\n点击右上角 + 添加第一个任务吧", fontSize = 15.sp,
+                            Text("今天还没有任务\n可在日历视图查看其他日期的任务", fontSize = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                         }
                     }
                 }
                 else -> {
                     Box(Modifier.fillMaxSize()) {
-                        val grouped = uiState.tasks.groupBy { it.categoryName }
+                        val grouped = todayTasks.groupBy { it.categoryName }
                             // 按 categories 列表的创建顺序排序，保证折叠项顺序稳定
                             val catNames = uiState.categories.map { it.name }
                             val orderedKeys = catNames.filter { it in grouped.keys } +
@@ -198,8 +201,7 @@ fun TasksScreen(
                                             isSelected = uiState.selectedTaskIds.contains(task.id),
                                             onToggleSelect = { viewModel.toggleTaskSelection(task.id) },
                                             onEdit = { onEditTask(task.id) },
-                                            onDelete = { viewModel.deleteTask(task.id) },
-                                            onReject = { viewModel.rejectTask(task.id) }
+                                            onDelete = { viewModel.deleteTask(task.id) }
                                         )
                                     }
                                 }
@@ -276,9 +278,11 @@ private fun TaskRow(
     isSelected: Boolean = false,
     onToggleSelect: () -> Unit = {},
     onEdit: () -> Unit,
-    onDelete: () -> Unit,
-    onReject: () -> Unit
+    onDelete: () -> Unit
 ) {
+    val canCancel = task.status == "PENDING" && runCatching {
+        LocalDate.parse(task.dueDate) >= LocalDate.now()
+    }.getOrDefault(false)
     val statusColor = when (task.status) {
         "DONE", "VERIFIED" -> Color(0xFF4CAF50)
         "EXPIRED" -> Color(0xFF9E9E9E)
@@ -298,7 +302,7 @@ private fun TaskRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = if (isManageMode) 0.dp else 12.dp)
-            .clickable(enabled = isManageMode) { onToggleSelect() },
+            .clickable(enabled = isManageMode && canCancel) { onToggleSelect() },
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
             else MaterialTheme.colorScheme.surface
@@ -309,7 +313,7 @@ private fun TaskRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 管理模式下的选择框
-            if (isManageMode) {
+            if (isManageMode && canCancel) {
                 Checkbox(
                     checked = isSelected,
                     onCheckedChange = { onToggleSelect() },
@@ -343,12 +347,9 @@ private fun TaskRow(
                             IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
                                 Text("✏️", fontSize = 16.sp)
                             }
-                            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                                Text("🗑", fontSize = 16.sp)
-                            }
-                            if (task.status == "DONE" || task.status == "VERIFIED") {
-                                TextButton(onClick = onReject, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)) {
-                                    Text("驳回", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                            if (canCancel) {
+                                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                                    Text("🗑", fontSize = 16.sp)
                                 }
                             }
                         }

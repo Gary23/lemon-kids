@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     require_photo BOOLEAN DEFAULT false,
     completed_at TIMESTAMPTZ,
     verified_at TIMESTAMPTZ,
+    -- 已取消的未发生任务保留在回收站；历史任务永不写入此字段。
+    deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_child_date ON tasks(child_id, due_date);

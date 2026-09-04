@@ -28,10 +28,28 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.time.LocalDate
 
 /** 今日任务小部件：首页当日任务的只读镜像，点按任意区域进入任务端首页。 */
 class TaskWidgetProvider : AppWidgetProvider() {
+
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        // 华为等桌面会在锁屏后解除 RemoteViewsService 的绑定，解锁时不会自动请求小部件更新。
+        // 此处主动重建适配器并通知数据集，避免桌面留下空白列表。
+        when (intent.action) {
+            Intent.ACTION_USER_PRESENT,
+            Intent.ACTION_DATE_CHANGED,
+            Intent.ACTION_TIME_CHANGED,
+            Intent.ACTION_TIMEZONE_CHANGED -> {
+                val pendingResult = goAsync()
+                updateAll(context) { pendingResult.finish() }
+            }
+        }
+    }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         val pendingResult = goAsync()
@@ -55,10 +73,10 @@ class TaskWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
-        fun updateAll(context: Context) {
+        fun updateAll(context: Context, onFinished: (() -> Unit)? = null) {
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, TaskWidgetProvider::class.java)
-            refreshAsync(context, manager, manager.getAppWidgetIds(component))
+            refreshAsync(context, manager, manager.getAppWidgetIds(component), onFinished)
         }
 
         private fun refreshAsync(
@@ -223,7 +241,7 @@ private sealed interface WidgetListItem {
 private val CATEGORY_EMOJIS = listOf("🌸", "💜", "🍊", "🌿", "⭐")
 
 private object TaskWidgetDataLoader {
-    suspend fun loadTodayTasks(context: Context): List<Task> {
+    suspend fun loadTodayTasks(context: Context, preferCachedSnapshot: Boolean = false): List<Task> {
         val entryPoint = EntryPointAccessors.fromApplication(
             context.applicationContext,
             TaskWidgetEntryPoint::class.java
@@ -232,20 +250,29 @@ private object TaskWidgetDataLoader {
         // 小部件可能由桌面在应用进程刚创建时直接启动；此时 AuthRepository 的异步会话恢复
         // 尚未完成，不能把暂时为空的 currentUserId 当成“没有任务”。
         val userId = authRepository.currentUserId
-            ?: authRepository.restoreSession().getOrNull()?.uid
+            ?: withTimeoutOrNull(6_000) { authRepository.restoreSession().getOrNull()?.uid }
             ?: authRepository.currentUserId
-            ?: return emptyList()
-        return withTimeoutOrNull(6_000) {
+            ?: return TaskWidgetCache.loadToday(context, null)
+        if (preferCachedSnapshot) {
+            TaskWidgetCache.loadToday(context, userId).takeIf { it.isNotEmpty() }?.let { return it }
+        }
+        val tasks = withTimeoutOrNull(6_000) {
             // 与首页一致：先读取孩子的全量任务流，再在本地筛选当天任务和排序。
             entryPoint.taskRepository().observeChildTasks(userId).first()
                 .filter { it.dueDate == LocalDate.now().toString() }
-        }.orEmpty().let { tasks ->
-            orderByCategory(tasks, loadCategoryNames(entryPoint, authRepository))
+        } ?: return TaskWidgetCache.loadToday(context, userId)
+
+        return orderByCategory(tasks, loadCategoryNames(entryPoint, authRepository)).also {
+            // 小部件进程在后台被系统回收后，先用最近一次成功同步的当天快照恢复列表；
+            // 网络请求随后会覆盖该快照，因此不会牺牲数据的新鲜度。
+            TaskWidgetCache.saveToday(context, userId, it)
         }
     }
 
     suspend fun loadListItems(context: Context): List<WidgetListItem> {
-        val tasks = loadTodayTasks(context)
+        // RemoteViewsService 经常在桌面恢复时先于网络初始化。优先读取快照，
+        // 随后的 Provider 刷新会触发 notifyAppWidgetViewDataChanged 并换成最新数据。
+        val tasks = loadTodayTasks(context, preferCachedSnapshot = true)
         if (tasks.isEmpty()) return emptyList()
         return buildList {
             var previousCategory: String? = null
@@ -285,6 +312,37 @@ private object TaskWidgetDataLoader {
                     }
                 }
         )
+    }
+}
+
+/** 小部件专用的短期快照；按日期和当前孩子账号隔离，避免显示过期或错账号的数据。 */
+private object TaskWidgetCache {
+    private const val PREFERENCES_NAME = "task_widget_cache"
+    private const val KEY_DATE = "date"
+    private const val KEY_USER_ID = "user_id"
+    private const val KEY_TASKS = "tasks"
+    private val json = Json { ignoreUnknownKeys = true }
+
+    fun loadToday(context: Context, userId: String?): List<Task> {
+        if (userId.isNullOrBlank()) return emptyList()
+        val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        if (preferences.getString(KEY_DATE, null) != LocalDate.now().toString() ||
+            preferences.getString(KEY_USER_ID, null) != userId
+        ) return emptyList()
+
+        return runCatching {
+            json.decodeFromString<List<Task>>(preferences.getString(KEY_TASKS, null).orEmpty())
+                .filter { it.dueDate == LocalDate.now().toString() && it.deletedAt == null }
+        }.getOrElse { emptyList() }
+    }
+
+    fun saveToday(context: Context, userId: String, tasks: List<Task>) {
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_DATE, LocalDate.now().toString())
+            .putString(KEY_USER_ID, userId)
+            .putString(KEY_TASKS, json.encodeToString(tasks))
+            .apply()
     }
 }
 
