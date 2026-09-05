@@ -13,6 +13,7 @@
 | `sql/20260901_task_templates.sql` | 创建家庭任务模板表和 RLS 策略 | 已有 `families`、`users` 表；家长端任务管理上线前执行 |
 | `sql/20260904_task_history_and_cancellation.sql` | 将任务删除改为受控取消；保留历史任务，并提供完成/撤销完成的原子 RPC | 已有任务、用户、积分流水及 `20260812_task_calendar_core.sql` 的任务状态/RPC |
 | `sql/20260904_remove_task_rejection.sql` | 移除已完成任务的家长驳回 RPC；保留既有驳回历史及积分流水 | 已执行创建 `reject_task` 的旧脚本 |
+| `sql/20260906_family_video_library.sql` | 家庭动画 App 的云盘连接、分类、剧集、视频、播放记录和同步日志表及家长端 RLS | 已有 `users`、`families`；上线家庭动画前执行。令牌与云盘密码不得入库。 |
 | `sql/20260901_reset_tasks_and_child_points.sql` | 清空全部任务、孩子积分及其积分流水 | 破坏性维护脚本；执行前确认目标环境与备份 |
 | `sql/20260731_literacy_pronunciation_evaluation.sql` | 已废弃的旧版认字评测建表脚本 | 勿执行；已由 20260802 清理迁移替代 |
 | `sql/20260731_literacy_pronunciation_batch_upgrade.sql` | 已废弃的旧版评测表升级脚本 | 勿执行 |

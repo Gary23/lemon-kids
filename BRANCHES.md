@@ -7,6 +7,7 @@
 | `main` | 稳定主线与基础版本。 | 已推送。 |
 | `product` | 产品集成与发布分支。 | 已合并认字端 v1.2、任务端桌面卡片与任务首页、家长端任务管理改动；发布标签见下表。 |
 | `feature/reading-progress-cloud-sync` | 认字端 App 开发：当天字、词、句朗读进度按绑定码跨设备同步，并在后台静默上传。 | 开发完成，已推送，尚未合并到 `product`；上线前需执行进度迁移并发布评测云函数。 |
+| `feature/family-video-app` | 家庭动画视频 App：复用家长端邮箱密码登录，新增 Supabase 家庭媒体库数据模型，并提供首页、同步、分类、详情和在线播放的 Android/Compose 基础实现。 | 开发中；首次部署前须在 Supabase SQL Editor 执行 `20260906_family_video_library.sql`，并完成 123 云盘 OpenAPI OAuth 服务端回调配置。 |
 
 ## `product` 发布标签
 
