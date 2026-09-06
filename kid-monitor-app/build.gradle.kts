@@ -83,6 +83,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.coil.compose)
     implementation(libs.vico.compose.m3)
 

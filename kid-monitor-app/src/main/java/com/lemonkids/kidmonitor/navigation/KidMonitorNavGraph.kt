@@ -218,7 +218,7 @@ private fun KidMonitorWelcomeScreen() {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(text = "\uD83D\uDD12", fontSize = 56.sp)
             Spacer(Modifier.height(16.dp))
-            Text("柠檬监控", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text("柠檬闹钟管家", fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text("正在准备监控服务...", fontSize = 14.sp, color = Color.Gray)
             Spacer(Modifier.height(24.dp))

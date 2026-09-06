@@ -2,7 +2,7 @@
 
 ## 当前职责
 
-采集设备使用情况、执行应用限时、显示使用详情和设备资料。它依赖 `:shared`，并使用 Android 的使用情况统计、前台服务、悬浮窗和无障碍能力。
+采集设备使用情况、执行应用限时、显示使用详情和设备资料；同时作为绑定 Pad 的远程闹钟执行端。它依赖 `:shared`，并使用 Android 的使用情况统计、前台服务、悬浮窗和无障碍能力。
 
 ## AI 定位入口
 
@@ -10,6 +10,7 @@
 | --- | --- |
 | 启动调度 | `KidMonitorApp.kt` |
 | 路由 | `navigation/KidMonitorNavGraph.kt` |
+| 远程闹钟 | `alarm/`；完整协议见 [远程闹钟设计](docs/remote-alarm-design.md) |
 | 监控执行 | `monitor/LimitEnforcementService.kt`、`AppLimitAccessibilityService.kt`、`AppLimitEvaluator.kt` |
 | 数据采集/保活 | `monitor/UsageCollectWorker.kt`、`KeepAliveWorker.kt`、`DeviceStatusWorker.kt`、`BootReceiver.kt` |
 | 悬浮与拦截 UI | `UsageFloatingService.kt`、`LimitBlockActivity.kt` |
@@ -21,6 +22,7 @@
 2. Manifest 中的 `PACKAGE_USAGE_STATS`、悬浮窗、前台服务、无障碍服务及开机广播均为功能前提。删除/收紧权限前，须验证真机授权流程。
 3. 绑定页使用 `type = "monitor"`；同一码通常只绑定一台设备，重绑经共享 `BindingCodeScreen` 的确认路径处理。
 4. 不能以普通 UI 状态替代限时拦截；限制决策必须经过 `AppLimitEvaluator`，并评估服务、无障碍和拦截页的协作。
+5. 闹钟准点触发必须经过 `AlarmScheduler`，不得以 `LimitEnforcementService`、轮询或 `WorkManager` 代替；远程下发必须经过 `RemoteAlarmApplier`，以保留本地持久化和版本幂等。
 
 ## 修改后验证
 
@@ -29,4 +31,3 @@
 ```
 
 构建成功不等于监控可用。涉及权限、服务、Worker 或拦截行为时，必须在 API 26+ 真机验证授权、重启恢复和限时命中。
-
