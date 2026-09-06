@@ -31,8 +31,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_by UUID NOT NULL REFERENCES users(uid),
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'done', 'verified', 'expired', 'rejected')),
-    category TEXT NOT NULL DEFAULT 'other'
-        CHECK (category IN ('study', 'chore', 'reading', 'exercise', 'other')),
+    -- 已安排任务的展示分组快照；任务端依此分组，不依赖任务模板的分类关系。
+    category TEXT NOT NULL DEFAULT '其他',
+    source_category_id UUID,
+    source_template_id UUID,
     due_date DATE NOT NULL,
     due_time TEXT,
     reward_points INT DEFAULT 5,
@@ -47,17 +49,40 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_child_date ON tasks(child_id, due_date);
 CREATE INDEX IF NOT EXISTS idx_tasks_family ON tasks(family_id);
 
+CREATE TABLE IF NOT EXISTS categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    family_id UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT DEFAULT '#4CAF50',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(family_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS task_templates (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     family_id UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL,
     reward_points INT NOT NULL DEFAULT 5 CHECK (reward_points > 0),
     penalty_points INT NOT NULL DEFAULT 2,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_task_templates_family ON task_templates(family_id);
+
+ALTER TABLE tasks
+    ADD CONSTRAINT tasks_source_category_fk FOREIGN KEY (source_category_id) REFERENCES categories(id) ON DELETE SET NULL,
+    ADD CONSTRAINT tasks_source_template_fk FOREIGN KEY (source_template_id) REFERENCES task_templates(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS category_task_templates (
+    category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    template_id UUID NOT NULL REFERENCES task_templates(id) ON DELETE CASCADE,
+    family_id UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+    sort_order INT NOT NULL DEFAULT 0 CHECK (sort_order >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (category_id, template_id)
+);
+CREATE INDEX IF NOT EXISTS idx_category_task_templates_family ON category_task_templates(family_id, category_id, sort_order);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_active_child_date_template ON tasks(child_id, due_date, source_template_id) WHERE deleted_at IS NULL AND source_template_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -207,6 +232,8 @@ ALTER TABLE families ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE task_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE category_task_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE point_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rewards ENABLE ROW LEVEL SECURITY;
@@ -223,6 +250,16 @@ CREATE POLICY "tasks_family_access" ON tasks
     ));
 
 CREATE POLICY "task_templates_family_access" ON task_templates
+    FOR ALL USING (family_id IN (
+        SELECT family_id FROM users WHERE uid = auth.uid()
+    ));
+
+CREATE POLICY "categories_family_access" ON categories
+    FOR ALL USING (family_id IN (
+        SELECT family_id FROM users WHERE uid = auth.uid()
+    ));
+
+CREATE POLICY "category_task_templates_family_access" ON category_task_templates
     FOR ALL USING (family_id IN (
         SELECT family_id FROM users WHERE uid = auth.uid()
     ));

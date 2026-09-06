@@ -2,6 +2,8 @@
 .DS_Store
 .idea/
 *.iml
+.codex/
+.qoder/
 
 # Android / Gradle 构建产物与本机配置
 .gradle/

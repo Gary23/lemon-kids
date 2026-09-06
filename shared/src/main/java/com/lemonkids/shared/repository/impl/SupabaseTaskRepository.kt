@@ -2,6 +2,7 @@ package com.lemonkids.shared.repository.impl
 
 import android.util.Log
 import com.lemonkids.shared.model.Task
+import com.lemonkids.shared.model.TaskRecurrenceType
 import com.lemonkids.shared.repository.TaskRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.gotrue.Auth
@@ -13,6 +14,10 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -129,8 +134,54 @@ class SupabaseTaskRepository @Inject constructor(
         )
     }
 
+    override suspend fun createTasksFromSelection(
+        childId: String,
+        categoryId: String?,
+        templateId: String?,
+        dueDate: String,
+        endDate: String,
+        recurrenceType: TaskRecurrenceType,
+        recurrenceWeekdays: List<Int>
+    ): Result<List<Task>> = runCatching {
+        postgrest.rpc(
+            function = "create_tasks_from_selection",
+            // 参数包含字符串、可空 UUID 和整数数组。显式 JSON 避免被推导为
+            // Map<String, Any?>，否则 Supabase 会在请求发出前抛出序列化异常。
+            parameters = JsonObject(
+                mapOf(
+                    "p_child_id" to JsonPrimitive(childId),
+                    "p_category_id" to (categoryId?.let(::JsonPrimitive) ?: JsonNull),
+                    "p_template_id" to (templateId?.let(::JsonPrimitive) ?: JsonNull),
+                    "p_start_date" to JsonPrimitive(dueDate),
+                    "p_end_date" to JsonPrimitive(endDate),
+                    "p_recurrence_type" to JsonPrimitive(recurrenceType.name.lowercase()),
+                    "p_recurrence_weekdays" to JsonArray(recurrenceWeekdays.sorted().map(::JsonPrimitive))
+                )
+            )
+        ).decodeList<Task>()
+    }.onSuccess { tasks ->
+        Log.i(TAG, "从任务来源创建成功 childId=$childId tasks=${tasks.size}")
+        taskRefreshEvents.tryEmit(Unit)
+    }.onFailure { error ->
+        Log.e(TAG, "从任务来源创建失败 childId=$childId categoryId=$categoryId templateId=$templateId", error)
+    }
+
     override suspend fun updateTask(task: Task): Result<Unit> = runCatching {
-        postgrest.from("tasks").update(task) { filter { eq("id", task.id) } }
+        // 编辑具体任务不能抹掉排程来源；source_* 仅在创建日程时由服务端写入。
+        postgrest.from("tasks").update(
+            mapOf(
+                "title" to task.title,
+                "description" to task.description,
+                "category" to task.category,
+                "reward_points" to task.rewardPoints,
+                "penalty_points" to task.penaltyPoints,
+                "due_date" to task.dueDate,
+                "due_time" to task.dueTime,
+                "recurrence_type" to task.recurrenceType.name.lowercase(),
+                "recurrence_weekdays" to task.recurrenceWeekdays,
+                "recurrence_end_date" to task.recurrenceEndDate
+            )
+        ) { filter { eq("id", task.id) } }
     }
 
     override suspend fun updateFutureTasksInSeries(seriesId: String, fromDate: String, task: Task): Result<Unit> = runCatching {

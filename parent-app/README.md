@@ -12,13 +12,15 @@
 | 认证/家庭创建 | `feature/auth/` |
 | 路由 | `navigation/ParentNavGraph.kt` |
 | 任务和日历 | `feature/tasks/TasksScreen.kt`、`TaskEditScreen.kt`、`CalendarView.kt`、`TaskCompletionNotifier.kt` |
-| 任务模板 | `feature/profile/TaskTemplateManageScreen.kt`；模板数据由共享的 `TaskTemplateRepository` 管理 |
+| 任务库 | `feature/profile/TaskTemplateManageScreen.kt`；模板数据由共享的 `TaskTemplateRepository` 管理 |
 | 使用监管 | `feature/monitor/MonitorScreen.kt`、`MonitorViewModel.kt` |
 | 家庭、分类、回收站、日志 | `feature/profile/` |
 
 ## 任务约束
 
-- 在“我的 > 任务管理”创建任务模板（标题、描述、分类、积分，不含日期）；首页创建任务时必须先选模板，再设置执行日期和分配对象。截止时间不再提供。
+- 在“我的 > 任务库”创建任务模板（标题、描述、积分，不含日期）。分类管理页将任务模板多选加入分类任务包；同一个任务可属于多个分类。
+- 首页创建任务时可二选一：选择分类任务包会创建其中全部任务，选择单个任务则创建一条并在任务端显示为“其他”。随后统一设置执行日期和分配对象。截止时间不再提供。
+- 同一孩子、同一日期、同一任务模板只保留一条任务；后一次创建会覆盖该任务的展示分类。分类改名只同步今天及未来尚未完成的任务，既有历史保持原名称。
 - 编辑任务模板时，只有服务端确认返回更新记录后才关闭编辑框；保存失败会保留输入内容并显示错误提示。
 - 创建任务支持单次日期区间和重复日程（每天、工作日、每周指定日）；重复日程生成独立日任务，以保留逐日完成历史。
 - 在任务管理列表创建成功后，使用插入响应的任务 ID 立即合并到当前孩子的列表并结束加载；后台轮询继续以服务端数据校准。列表加载失败时停止加载并显示错误提示。

@@ -12,6 +12,19 @@ interface TaskRepository {
     suspend fun refreshTasks()
     suspend fun getMonthTasks(childId: String, year: Int, month: Int): List<Task>
     suspend fun createTask(task: Task): Result<String>
+    /**
+     * 从一个分类任务包或一个任务模板创建日程。两种来源必须二选一；服务端会原子生成
+     * 全部日期任务，并按“孩子 + 日期 + 模板”去重。
+     */
+    suspend fun createTasksFromSelection(
+        childId: String,
+        categoryId: String?,
+        templateId: String?,
+        dueDate: String,
+        endDate: String,
+        recurrenceType: com.lemonkids.shared.model.TaskRecurrenceType,
+        recurrenceWeekdays: List<Int>
+    ): Result<List<Task>>
     suspend fun updateTask(task: Task): Result<Unit>
     /** 更新同一重复系列中尚未完成的未来任务。 */
     suspend fun updateFutureTasksInSeries(seriesId: String, fromDate: String, task: Task): Result<Unit>

@@ -10,7 +10,6 @@ data class TaskTemplate(
     @SerialName("family_id") val familyId: String = "",
     @SerialName("title") val title: String = "",
     @SerialName("description") val description: String = "",
-    @SerialName("category") val category: String = "默认",
     @SerialName("reward_points") val rewardPoints: Int = 5,
     @SerialName("penalty_points") val penaltyPoints: Int = 2,
     @SerialName("created_at") val createdAt: String = ""

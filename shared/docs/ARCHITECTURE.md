@@ -365,6 +365,15 @@ CREATE POLICY "family_access" ON categories FOR ALL
 -- 删除旧的 category 枚举约束，允许自定义分类名
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_category_check;
 
+-- v2: 分类为任务模板的多对多任务包；具体任务保留 category 作为创建时展示快照
+CREATE TABLE IF NOT EXISTS category_task_templates (
+    category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    task_template_id UUID NOT NULL REFERENCES task_templates(id) ON DELETE CASCADE,
+    PRIMARY KEY (category_id, task_template_id)
+);
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS source_category_id UUID REFERENCES categories(id) ON DELETE SET NULL;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS source_template_id UUID REFERENCES task_templates(id) ON DELETE SET NULL;
+
 -- v1.5: app_limits 新增单次时长和冷却间隔
 ALTER TABLE app_limits ADD COLUMN IF NOT EXISTS single_session_minutes INT DEFAULT 0;
 ALTER TABLE app_limits ADD COLUMN IF NOT EXISTS cooldown_minutes INT DEFAULT 0;

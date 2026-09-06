@@ -18,7 +18,15 @@ import javax.inject.Singleton
 private data class TaskTemplateUpdate(
     @SerialName("title") val title: String,
     @SerialName("description") val description: String,
-    @SerialName("category") val category: String,
+    @SerialName("reward_points") val rewardPoints: Int,
+    @SerialName("penalty_points") val penaltyPoints: Int
+)
+
+@Serializable
+private data class TaskTemplateCreate(
+    @SerialName("family_id") val familyId: String,
+    @SerialName("title") val title: String,
+    @SerialName("description") val description: String,
     @SerialName("reward_points") val rewardPoints: Int,
     @SerialName("penalty_points") val penaltyPoints: Int
 )
@@ -45,7 +53,16 @@ class SupabaseTaskTemplateRepository @Inject constructor(
     }
 
     override suspend fun createTemplate(template: TaskTemplate): Result<String> = runCatching {
-        postgrest.from("task_templates").insert(template) { select() }.decodeSingle<TaskTemplate>().id
+        // 不提交 UI 的空 id/created_at，让数据库生成 UUID 与创建时间。
+        postgrest.from("task_templates").insert(
+            TaskTemplateCreate(
+                familyId = template.familyId,
+                title = template.title,
+                description = template.description,
+                rewardPoints = template.rewardPoints,
+                penaltyPoints = template.penaltyPoints
+            )
+        ) { select() }.decodeSingle<TaskTemplate>().id
     }
 
     override suspend fun updateTemplate(template: TaskTemplate): Result<Unit> = runCatching {
@@ -55,7 +72,6 @@ class SupabaseTaskTemplateRepository @Inject constructor(
             TaskTemplateUpdate(
                 title = template.title,
                 description = template.description,
-                category = template.category,
                 rewardPoints = template.rewardPoints,
                 penaltyPoints = template.penaltyPoints
             )

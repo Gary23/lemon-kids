@@ -1,6 +1,7 @@
 package com.lemonkids.shared.repository
 
 import com.lemonkids.shared.model.Category
+import com.lemonkids.shared.model.CategoryTaskTemplate
 import kotlinx.coroutines.flow.Flow
 
 interface CategoryRepository {
@@ -8,7 +9,9 @@ interface CategoryRepository {
     suspend fun createCategory(category: Category): Result<String>
     suspend fun updateCategory(category: Category): Result<Unit>
     suspend fun deleteCategory(categoryId: String): Result<Unit>
-    /** 查询某个分类下的任务数量（按状态），用于删除前校验 */
-    suspend fun getTaskCountByCategory(familyId: String, categoryName: String): Result<Pair<Int, Int>> // (未完成数量, 已完成数量)
-    suspend fun getTaskTemplateCountByCategory(familyId: String, categoryName: String): Result<Int>
+    fun observeCategoryTaskTemplates(familyId: String): Flow<List<CategoryTaskTemplate>>
+    /** 原子替换一个分类任务包的成员和顺序。 */
+    suspend fun replaceCategoryTaskTemplates(categoryId: String, templateIds: List<String>): Result<Unit>
+    /** 删除前检查仍会受分类改名影响的未来待完成任务。 */
+    suspend fun getPendingTaskCountByCategory(categoryId: String): Result<Int>
 }
