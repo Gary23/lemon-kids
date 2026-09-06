@@ -181,7 +181,7 @@ fun ProfileScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text("任务管理", fontWeight = FontWeight.Bold)
+                        Text("任务库", fontWeight = FontWeight.Bold)
                         Text("创建和维护可安排的任务", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -200,7 +200,7 @@ fun ProfileScreen(
                 ) {
                     Column {
                         Text("分类管理", fontWeight = FontWeight.Bold)
-                        Text("管理任务分类", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("配置分类任务包", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

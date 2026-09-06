@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -19,6 +21,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -48,8 +51,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.Category
+import com.lemonkids.shared.model.CategoryTaskTemplate
+import com.lemonkids.shared.model.TaskTemplate
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.CategoryRepository
+import com.lemonkids.shared.repository.TaskTemplateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,6 +66,8 @@ import javax.inject.Inject
 
 data class CategoryManageUiState(
     val categories: List<Category> = emptyList(),
+    val templates: List<TaskTemplate> = emptyList(),
+    val categoryTaskTemplates: List<CategoryTaskTemplate> = emptyList(),
     val isLoading: Boolean = false,
     val operationMessage: String? = null
 )
@@ -67,6 +75,7 @@ data class CategoryManageUiState(
 @HiltViewModel
 class CategoryManageViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
+    private val taskTemplateRepository: TaskTemplateRepository,
     private val authRepository: AuthRepository
 ) : androidx.lifecycle.ViewModel() {
 
@@ -81,8 +90,20 @@ class CategoryManageViewModel @Inject constructor(
         viewModelScope.launch {
             val user = authRepository.observeCurrentUser().first() ?: return@launch
             val familyId = user.familyId ?: return@launch
-            categoryRepository.observeCategories(familyId).collect { list ->
-                _uiState.value = _uiState.value.copy(isLoading = false, categories = list)
+            launch {
+                categoryRepository.observeCategories(familyId).collect { list ->
+                    _uiState.value = _uiState.value.copy(isLoading = false, categories = list)
+                }
+            }
+            launch {
+                taskTemplateRepository.observeTemplates(familyId).collect { templates ->
+                    _uiState.value = _uiState.value.copy(templates = templates)
+                }
+            }
+            launch {
+                categoryRepository.observeCategoryTaskTemplates(familyId).collect { assignments ->
+                    _uiState.value = _uiState.value.copy(categoryTaskTemplates = assignments)
+                }
             }
         }
     }
@@ -143,20 +164,9 @@ class CategoryManageViewModel @Inject constructor(
 
     fun deleteCategory(category: Category, onBlocked: (String) -> Unit) {
         viewModelScope.launch {
-            if (category.name == "默认") {
-                onBlocked("「默认」分类不可删除")
-                return@launch
-            }
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            val familyId = user.familyId ?: return@launch
-            val count = categoryRepository.getTaskCountByCategory(familyId, category.name).getOrNull()
-            if (count != null && count.first > 0) {
-                onBlocked("该分类下有 ${count.first} 个未完成任务，无法删除")
-                return@launch
-            }
-            val templateCount = categoryRepository.getTaskTemplateCountByCategory(familyId, category.name).getOrNull() ?: 0
-            if (templateCount > 0) {
-                onBlocked("该分类下有 ${templateCount} 个任务，无法删除")
+            val pendingCount = categoryRepository.getPendingTaskCountByCategory(category.id).getOrNull() ?: 0
+            if (pendingCount > 0) {
+                onBlocked("该分类仍有 ${pendingCount} 个待完成任务，请先取消或完成这些任务")
                 return@launch
             }
             // 乐观更新：立即从本地列表移除
@@ -176,6 +186,14 @@ class CategoryManageViewModel @Inject constructor(
         }
     }
 
+    fun saveCategoryTasks(categoryId: String, templateIds: List<String>) {
+        viewModelScope.launch {
+            categoryRepository.replaceCategoryTaskTemplates(categoryId, templateIds).onFailure {
+                _uiState.value = _uiState.value.copy(operationMessage = "保存分类任务失败，请稍后重试")
+            }
+        }
+    }
+
     fun clearMessage() {
         _uiState.value = _uiState.value.copy(operationMessage = null)
     }
@@ -192,6 +210,7 @@ fun CategoryManageScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf<Category?>(null) }
     var showDeleteConfirm by remember { mutableStateOf<Category?>(null) }
+    var configuringTasks by remember { mutableStateOf<Category?>(null) }
     var dialogName by remember { mutableStateOf("") }
     var blockMessage by remember { mutableStateOf<String?>(null) }
 
@@ -230,6 +249,8 @@ fun CategoryManageScreen(
                     items(uiState.categories, key = { it.id }) { cat ->
                         CategoryItem(
                             category = cat,
+                            taskCount = uiState.categoryTaskTemplates.count { it.categoryId == cat.id },
+                            onConfigureTasks = { configuringTasks = cat },
                             onEdit = { dialogName = cat.name; showEditDialog = cat },
                             onDelete = { showDeleteConfirm = cat }
                         )
@@ -319,11 +340,31 @@ fun CategoryManageScreen(
             }
         )
     }
+
+    configuringTasks?.let { category ->
+        val selectedIds = uiState.categoryTaskTemplates
+            .filter { it.categoryId == category.id }
+            .map { it.templateId }
+            .toSet()
+        CategoryTaskPickerDialog(
+            category = category,
+            templates = uiState.templates,
+            selectedIds = selectedIds,
+            onDismiss = { configuringTasks = null },
+            onSave = { ids ->
+                // 按任务库展示顺序保存，确保分类预览和服务端生成顺序稳定。
+                viewModel.saveCategoryTasks(category.id, uiState.templates.filter { it.id in ids }.map { it.id })
+                configuringTasks = null
+            }
+        )
+    }
 }
 
 @Composable
 private fun CategoryItem(
     category: Category,
+    taskCount: Int,
+    onConfigureTasks: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -333,8 +374,12 @@ private fun CategoryItem(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(category.name, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Column {
+                Text(category.name, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text("已配置 $taskCount 个任务", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Row {
+                TextButton(modifier = Modifier.height(36.dp), onClick = onConfigureTasks) { Text("配置任务", fontSize = 13.sp) }
                 TextButton(modifier = Modifier.height(36.dp), onClick = onEdit) { Text("编辑", fontSize = 13.sp) }
                 TextButton(modifier = Modifier.height(36.dp), onClick = onDelete) {
                     Text("删除", fontSize = 13.sp, color = Color(0xFFEF5350))
@@ -342,4 +387,44 @@ private fun CategoryItem(
             }
         }
     }
+}
+
+@Composable
+private fun CategoryTaskPickerDialog(
+    category: Category,
+    templates: List<TaskTemplate>,
+    selectedIds: Set<String>,
+    onDismiss: () -> Unit,
+    onSave: (List<String>) -> Unit
+) {
+    var selected by remember(category.id, selectedIds) { mutableStateOf(selectedIds) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("配置「${category.name}」的任务") },
+        text = {
+            if (templates.isEmpty()) {
+                Text("任务库还没有任务，请先创建任务。")
+            } else {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text("可多选；同一个任务可以加入多个分类。", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    templates.forEach { template ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Checkbox(
+                                checked = template.id in selected,
+                                onCheckedChange = { checked ->
+                                    selected = if (checked) selected + template.id else selected - template.id
+                                }
+                            )
+                            Column {
+                                Text(template.title, fontWeight = FontWeight.Medium)
+                                Text("⭐${template.rewardPoints}${if (template.description.isBlank()) "" else " · ${template.description}"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(selected.toList()) }) { Text("保存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }

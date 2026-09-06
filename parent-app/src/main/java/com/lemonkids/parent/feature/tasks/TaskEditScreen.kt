@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.lemonkids.shared.model.Category
+import com.lemonkids.shared.model.CategoryTaskTemplate
 import com.lemonkids.shared.model.TaskRecurrenceType
 import com.lemonkids.shared.model.TaskTemplate
 import com.lemonkids.shared.repository.ChildUserInfo
@@ -76,14 +77,12 @@ fun TaskEditScreen(
     var dueDate by remember { mutableStateOf(LocalDate.now().toString()) }
     var endDate by remember { mutableStateOf(LocalDate.now().toString()) }
     var selectedChildId by remember { mutableStateOf("") }
+    var selectedCategoryId by remember { mutableStateOf("") }
     var selectedTemplateId by remember { mutableStateOf("") }
     var recurrenceType by remember { mutableStateOf(TaskRecurrenceType.NONE) }
     var recurrenceWeekdays by remember { mutableStateOf(emptySet<Int>()) }
 
     var pickingDateField by remember { mutableStateOf<String?>(null) }
-    var showAddCategoryDialog by remember { mutableStateOf(false) }
-    var newCategoryName by remember { mutableStateOf("") }
-
     LaunchedEffect(taskId) {
         if (!isNew) {
             viewModel.loadTaskForEdit(taskId)
@@ -116,6 +115,9 @@ fun TaskEditScreen(
     }
 
     val points = pointsText.toIntOrNull() ?: 0
+    val selectedCategoryHasTasks = uiState.categoryTaskTemplates.any { it.categoryId == selectedCategoryId }
+    val hasValidSource = selectedTemplateId.isNotBlank() ||
+        (selectedCategoryId.isNotBlank() && selectedCategoryHasTasks)
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -142,15 +144,19 @@ fun TaskEditScreen(
                     .padding(16.dp)
             ) {
                 if (isNew) {
-                    TaskTemplateSelector(
+                    TaskSourceSelector(
+                        categories = uiState.categories,
                         templates = uiState.taskTemplates,
+                        categoryTaskTemplates = uiState.categoryTaskTemplates,
+                        selectedCategoryId = selectedCategoryId,
                         selectedTemplateId = selectedTemplateId,
-                        onSelected = { template ->
-                            selectedTemplateId = template.id
-                            title = template.title
-                            description = template.description
-                            selectedCategoryName = template.category
-                            pointsText = template.rewardPoints.toString()
+                        onCategorySelected = { categoryId ->
+                            selectedCategoryId = categoryId
+                            selectedTemplateId = ""
+                        },
+                        onTemplateSelected = { templateId ->
+                            selectedTemplateId = templateId
+                            selectedCategoryId = ""
                         }
                     )
                     Spacer(Modifier.height(16.dp))
@@ -169,7 +175,14 @@ fun TaskEditScreen(
                 Spacer(Modifier.height(12.dp))
 
                 if (!isNew) {
-                    CategorySelector(categories = uiState.categories, selectedName = selectedCategoryName, onSelected = { selectedCategoryName = it }, onAddNew = { showAddCategoryDialog = true })
+                    OutlinedTextField(
+                        value = selectedCategoryName.ifBlank { "其他" },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("展示分类") },
+                        supportingText = { Text("具体任务创建后不再调整分类") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(value = pointsText, onValueChange = { newVal -> if (newVal.isEmpty() || newVal.all { it.isDigit() }) pointsText = newVal }, label = { Text("⭐ 完成可得积分") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                     Spacer(Modifier.height(12.dp))
@@ -216,11 +229,11 @@ fun TaskEditScreen(
 
                 Button(
                     onClick = {
-                        if ((if (isNew) selectedTemplateId.isNotBlank() else title.isNotBlank()) && selectedChildId.isNotBlank() && points > 0) {
+                        if ((if (isNew) hasValidSource else title.isNotBlank()) && selectedChildId.isNotBlank() && (isNew || points > 0)) {
                             if (isNew) {
-                                val template = uiState.taskTemplates.find { it.id == selectedTemplateId } ?: return@Button
                                 viewModel.createTask(
-                                    template = template,
+                                    categoryId = selectedCategoryId.ifBlank { null },
+                                    templateId = selectedTemplateId.ifBlank { null },
                                     endDate = endDate,
                                     dueDate = dueDate,
                                     childId = selectedChildId,
@@ -248,7 +261,7 @@ fun TaskEditScreen(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = (if (isNew) selectedTemplateId.isNotBlank() else title.isNotBlank()) && selectedChildId.isNotBlank() && points > 0 &&
+                    enabled = (if (isNew) hasValidSource else title.isNotBlank()) && selectedChildId.isNotBlank() && (isNew || points > 0) &&
                         (recurrenceType != TaskRecurrenceType.WEEKLY || recurrenceWeekdays.isNotEmpty()) && !uiState.isLoading
                 ) {
                     if (uiState.isLoading) {
@@ -298,36 +311,6 @@ fun TaskEditScreen(
             }
         }
 
-        // 添加分类对话框
-        if (showAddCategoryDialog) {
-            AlertDialog(
-                onDismissRequest = { showAddCategoryDialog = false },
-                title = { Text("添加分类") },
-                text = {
-                    OutlinedTextField(
-                        value = newCategoryName,
-                        onValueChange = { newCategoryName = it },
-                        label = { Text("分类名称") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        if (newCategoryName.isNotBlank()) {
-                            viewModel.addCategory(newCategoryName.trim())
-                            selectedCategoryName = newCategoryName.trim()
-                            newCategoryName = ""
-                            showAddCategoryDialog = false
-                        }
-                    })
-                    { Text("添加") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showAddCategoryDialog = false }) { Text("取消") }
-                }
-            )
-        }
     }
 }
 
@@ -373,70 +356,72 @@ private fun RecurrenceSelector(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TaskTemplateSelector(
+private fun TaskSourceSelector(
+    categories: List<Category>,
     templates: List<TaskTemplate>,
+    categoryTaskTemplates: List<CategoryTaskTemplate>,
+    selectedCategoryId: String,
     selectedTemplateId: String,
-    onSelected: (TaskTemplate) -> Unit
+    onCategorySelected: (String) -> Unit,
+    onTemplateSelected: (String) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val selected = templates.find { it.id == selectedTemplateId }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
-        OutlinedTextField(
-            value = selected?.title ?: if (templates.isEmpty()) "请先到「我的 > 任务管理」创建任务" else "请选择任务",
-            onValueChange = {}, readOnly = true, label = { Text("任务") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = templates.isNotEmpty()).fillMaxWidth(),
-            enabled = templates.isNotEmpty()
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            templates.forEach { template ->
-                DropdownMenuItem(
-                    text = { Text("${template.title} · ${template.category} · ⭐${template.rewardPoints}") },
-                    onClick = { onSelected(template); expanded = false }
-                )
+    var categoryExpanded by remember { mutableStateOf(false) }
+    var templateExpanded by remember { mutableStateOf(false) }
+    val selectedCategory = categories.find { it.id == selectedCategoryId }
+    val selectedTemplate = templates.find { it.id == selectedTemplateId }
+    val categoryTemplateIds = categoryTaskTemplates
+        .filter { it.categoryId == selectedCategoryId }
+        .map { it.templateId }
+    val categoryTemplates = templates.filter { it.id in categoryTemplateIds }
+
+    Column {
+        Text("创建来源", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        ExposedDropdownMenuBox(expanded = categoryExpanded, onExpandedChange = { categoryExpanded = !categoryExpanded }) {
+            OutlinedTextField(
+                value = selectedCategory?.name ?: "选择分类任务包",
+                onValueChange = {}, readOnly = true, label = { Text("分类") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(categoryExpanded) },
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = categories.isNotEmpty()).fillMaxWidth(),
+                enabled = categories.isNotEmpty()
+            )
+            ExposedDropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
+                categories.forEach { category ->
+                    val count = categoryTaskTemplates.count { it.categoryId == category.id }
+                    DropdownMenuItem(
+                        text = { Text("${category.name}（$count 个任务）") },
+                        onClick = { onCategorySelected(category.id); categoryExpanded = false }
+                    )
+                }
             }
         }
-    }
-}
-
-/** 动态分类选择器：从已有分类列表中选择，或点击"添加"创建新分类 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CategorySelector(
-    categories: List<Category>,
-    selectedName: String,
-    onSelected: (String) -> Unit,
-    onAddNew: () -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = !expanded }
-    ) {
-        OutlinedTextField(
-            value = selectedName,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("分类") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true).fillMaxWidth()
-        )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            categories.forEach { cat ->
-                DropdownMenuItem(
-                    text = { Text(cat.name) },
-                    onClick = { onSelected(cat.name); expanded = false }
-                )
-            }
-            // 分隔
-            DropdownMenuItem(
-                text = { Text("＋ 添加新分类", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
-                onClick = { expanded = false; onAddNew() }
+        if (selectedCategory != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (categoryTemplates.isEmpty()) "该分类尚未配置任务" else "将创建：${categoryTemplates.joinToString("、") { it.title }}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("或", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        ExposedDropdownMenuBox(expanded = templateExpanded, onExpandedChange = { templateExpanded = !templateExpanded }) {
+            OutlinedTextField(
+                value = selectedTemplate?.title ?: "选择单个任务（展示为“其他”）",
+                onValueChange = {}, readOnly = true, label = { Text("单个任务") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(templateExpanded) },
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = templates.isNotEmpty()).fillMaxWidth(),
+                enabled = templates.isNotEmpty()
+            )
+            ExposedDropdownMenu(expanded = templateExpanded, onDismissRequest = { templateExpanded = false }) {
+                templates.forEach { template ->
+                    DropdownMenuItem(
+                        text = { Text("${template.title} · ⭐${template.rewardPoints}") },
+                        onClick = { onTemplateSelected(template.id); templateExpanded = false }
+                    )
+                }
+            }
         }
     }
 }

@@ -2,16 +2,18 @@ package com.lemonkids.shared.repository.impl
 
 import android.util.Log
 import com.lemonkids.shared.model.Category
+import com.lemonkids.shared.model.CategoryTaskTemplate
 import com.lemonkids.shared.model.Task
-import com.lemonkids.shared.model.TaskTemplate
 import com.lemonkids.shared.repository.CategoryRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Order
+import io.github.jan.supabase.postgrest.rpc
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import java.time.LocalDate
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -57,27 +59,56 @@ class SupabaseCategoryRepository @Inject constructor(
     }
 
     override suspend fun updateCategory(category: Category): Result<Unit> = runCatching {
-        postgrest.from("categories").update(mapOf("name" to category.name, "color" to category.color)) {
-            filter { eq("id", category.id) }
-        }
+        // 改名同时由服务端更新未来待完成任务的展示分组，历史任务保持原快照。
+        postgrest.rpc(
+            function = "rename_category",
+            parameters = mapOf(
+                "p_category_id" to category.id,
+                "p_name" to category.name,
+                "p_color" to category.color
+            )
+        )
     }
 
     override suspend fun deleteCategory(categoryId: String): Result<Unit> = runCatching {
         postgrest.from("categories").delete { filter { eq("id", categoryId) } }
     }
 
-    override suspend fun getTaskCountByCategory(familyId: String, categoryName: String): Result<Pair<Int, Int>> = runCatching {
-        val allTasks = postgrest.from("tasks").select {
-            filter { eq("family_id", familyId); eq("category", categoryName) }
-        }.decodeList<Task>()
-        val pending = allTasks.count { it.status.name == "PENDING" || it.status.name == "REJECTED" }
-        val done = allTasks.count { it.status.name == "DONE" || it.status.name == "VERIFIED" || it.status.name == "EXPIRED" }
-        Pair(pending, done)
+    override fun observeCategoryTaskTemplates(familyId: String): Flow<List<CategoryTaskTemplate>> = callbackFlow {
+        suspend fun fetch() {
+            try {
+                val list = postgrest.from("category_task_templates").select {
+                    filter { eq("family_id", familyId) }
+                    order("sort_order", Order.ASCENDING)
+                }.decodeList<CategoryTaskTemplate>()
+                trySend(list)
+            } catch (e: Exception) {
+                Log.e(TAG, "分类任务包查询失败 familyId=$familyId", e)
+            }
+        }
+        fetch()
+        while (true) { delay(10_000); fetch() }
+        awaitClose()
     }
 
-    override suspend fun getTaskTemplateCountByCategory(familyId: String, categoryName: String): Result<Int> = runCatching {
-        postgrest.from("task_templates").select {
-            filter { eq("family_id", familyId); eq("category", categoryName) }
-        }.decodeList<TaskTemplate>().size
+    override suspend fun replaceCategoryTaskTemplates(categoryId: String, templateIds: List<String>): Result<Unit> = runCatching {
+        postgrest.rpc(
+            function = "set_category_task_templates",
+            parameters = mapOf(
+                "p_category_id" to categoryId,
+                "p_template_ids" to templateIds.distinct()
+            )
+        )
+        Unit
+    }
+
+    override suspend fun getPendingTaskCountByCategory(categoryId: String): Result<Int> = runCatching {
+        val tasks = postgrest.from("tasks").select {
+            filter { eq("source_category_id", categoryId) }
+        }.decodeList<Task>()
+        tasks.count {
+            it.status.name == "PENDING" && it.deletedAt == null &&
+                runCatching { LocalDate.parse(it.dueDate) >= LocalDate.now() }.getOrDefault(false)
+        }
     }
 }

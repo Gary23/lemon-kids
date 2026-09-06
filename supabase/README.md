@@ -11,6 +11,7 @@
 | `sql/functions-fix.sql` | 重新创建任务/奖励 RPC 的历史修复 | 已有相关表；会覆盖函数定义 |
 | `sql/binding-codes-patch.sql` | 绑定码 RPC 修复 | `binding_codes` 表及相关 RPC 已由既有环境创建 |
 | `sql/20260901_task_templates.sql` | 创建家庭任务模板表和 RLS 策略 | 已有 `families`、`users` 表；家长端任务管理上线前执行 |
+| `sql/20260906_category_task_bundles.sql` | 分类任务包：模板与分类多对多、原子排程、同日同模板去重及分类改名同步 | **破坏性**：清空孩子积分/积分流水、任务、任务模板和分类；依赖任务模板与任务历史迁移 |
 | `sql/20260904_task_history_and_cancellation.sql` | 将任务删除改为受控取消；保留历史任务，并提供完成/撤销完成的原子 RPC | 已有任务、用户、积分流水及 `20260812_task_calendar_core.sql` 的任务状态/RPC |
 | `sql/20260904_remove_task_rejection.sql` | 移除已完成任务的家长驳回 RPC；保留既有驳回历史及积分流水 | 已执行创建 `reject_task` 的旧脚本 |
 | `sql/20260901_reset_tasks_and_child_points.sql` | 清空全部任务、孩子积分及其积分流水 | 破坏性维护脚本；执行前确认目标环境与备份 |
@@ -52,6 +53,7 @@
 - Realtime replication 的启用仍需在 Dashboard 核对；以脚本注释和实际控制台状态为准。
 - 上线任务历史保留规则前，在目标项目的 SQL Editor 审查并执行 `sql/20260904_task_history_and_cancellation.sql`。执行后，删除只会取消上海时区当天及之后的待完成任务；回收站只可物理清理没有完成或积分历史的已取消任务。
 - 移除任务驳回能力前，在目标项目的 SQL Editor 审查并执行 `sql/20260904_remove_task_rejection.sql`。该脚本会删除 `reject_task` RPC，但不会删除既有的已驳回任务和积分流水。
+- 上线分类任务包前，在目标项目的 SQL Editor 审查并执行 `sql/20260906_category_task_bundles.sql`。该脚本按新版规则清空任务域数据（含孩子积分和积分流水），创建分类-任务模板关联、分类改名与原子排程 RPC；确认目标环境允许清空后才能执行。
 - 已执行初版求助表脚本的环境，先执行 `sql/20260801_literacy_help_content.sql`，再依次执行两个 `20260802` 认字迁移、`sql/20260804_literacy_learning_items.sql`、`sql/20260804_recognized_characters.sql`、`sql/20260805_literacy_help_request_sources.sql`、`sql/20260806_literacy_help_request_clicked_character.sql` 和 `sql/20260806_literacy_tts_assets.sql`；完成后不要再执行旧评测或旧建表脚本。
 
 ## 后续迁移规范

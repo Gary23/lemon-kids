@@ -49,10 +49,8 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.TaskTemplate
 import com.lemonkids.shared.repository.AuthRepository
-import com.lemonkids.shared.repository.CategoryRepository
 import com.lemonkids.shared.repository.TaskTemplateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,7 +62,6 @@ import javax.inject.Inject
 
 data class TaskTemplateManageUiState(
     val templates: List<TaskTemplate> = emptyList(),
-    val categories: List<Category> = emptyList(),
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val errorMessage: String? = null
@@ -73,31 +70,16 @@ data class TaskTemplateManageUiState(
 @HiltViewModel
 class TaskTemplateManageViewModel @Inject constructor(
     private val templateRepository: TaskTemplateRepository,
-    private val categoryRepository: CategoryRepository,
     private val authRepository: AuthRepository
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(TaskTemplateManageUiState())
     val uiState: StateFlow<TaskTemplateManageUiState> = _uiState.asStateFlow()
-    private var defaultCategoryRequested = false
-
     init {
         viewModelScope.launch {
             val familyId = authRepository.observeCurrentUser().first()?.familyId ?: return@launch
             launch {
                 templateRepository.observeTemplates(familyId).collect { templates ->
                     _uiState.value = _uiState.value.copy(templates = templates, isLoading = false)
-                }
-            }
-            launch {
-                categoryRepository.observeCategories(familyId).collect { categories ->
-                    val missingDefault = categories.none { it.name == "默认" }
-                    if (missingDefault && !defaultCategoryRequested) {
-                        defaultCategoryRequested = true
-                        categoryRepository.createCategory(Category(familyId = familyId, name = "默认"))
-                    }
-                    _uiState.value = _uiState.value.copy(
-                        categories = if (missingDefault) categories + Category(familyId = familyId, name = "默认") else categories
-                    )
                 }
             }
         }
@@ -148,7 +130,7 @@ fun TaskTemplateManageScreen(
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize()) {
             TopAppBar(
-                title = { Text("任务管理") },
+                title = { Text("任务库") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } },
                 actions = { TextButton(onClick = { editing = TaskTemplate() }) { Text("＋ 新增") } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
@@ -179,16 +161,15 @@ fun TaskTemplateManageScreen(
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                     }
-                                    val detail = listOf(template.category, template.description)
-                                        .filter { it.isNotBlank() }
-                                        .joinToString(" · ")
-                                    Text(
-                                        detail,
-                                        fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    if (template.description.isNotBlank()) {
+                                        Text(
+                                            template.description,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                                 TextButton(
                                     modifier = Modifier.height(36.dp),
@@ -209,7 +190,6 @@ fun TaskTemplateManageScreen(
     editing?.let { template ->
         TaskTemplateEditDialog(
             template = template,
-            categories = uiState.categories,
             isSaving = uiState.isSaving,
             onDismiss = { if (!uiState.isSaving) editing = null },
             onSave = { viewModel.save(it) { editing = null } }
@@ -229,16 +209,13 @@ fun TaskTemplateManageScreen(
 @Composable
 private fun TaskTemplateEditDialog(
     template: TaskTemplate,
-    categories: List<Category>,
     isSaving: Boolean,
     onDismiss: () -> Unit,
     onSave: (TaskTemplate) -> Unit
 ) {
     var title by remember(template.id) { mutableStateOf(template.title) }
     var description by remember(template.id) { mutableStateOf(template.description) }
-    var category by remember(template.id) { mutableStateOf(template.category) }
     var points by remember(template.id) { mutableStateOf(template.rewardPoints.toString()) }
-    var expanded by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (template.id.isBlank()) "新建任务" else "编辑任务") },
@@ -248,13 +225,6 @@ private fun TaskTemplateEditDialog(
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(description, { description = it }, label = { Text("任务描述（可选）") }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
-                ExposedDropdownMenuBox(expanded, { expanded = !expanded }) {
-                    OutlinedTextField(category, {}, readOnly = true, label = { Text("分类") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth())
-                    ExposedDropdownMenu(expanded, { expanded = false }) {
-                        categories.forEach { item -> DropdownMenuItem({ Text(item.name) }, { category = item.name; expanded = false }) }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(points, { if (it.isEmpty() || it.all(Char::isDigit)) points = it }, label = { Text("⭐ 完成可得积分") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         },
@@ -263,8 +233,8 @@ private fun TaskTemplateEditDialog(
                 enabled = !isSaving,
                 onClick = {
                     val value = points.toIntOrNull() ?: 0
-                    if (title.isNotBlank() && category.isNotBlank() && value > 0) {
-                        onSave(template.copy(title = title.trim(), description = description.trim(), category = category, rewardPoints = value))
+                    if (title.isNotBlank() && value > 0) {
+                        onSave(template.copy(title = title.trim(), description = description.trim(), rewardPoints = value))
                     }
                 }
             ) {

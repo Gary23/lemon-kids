@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import android.content.Context
 import android.util.Log
 import com.lemonkids.shared.model.Category
+import com.lemonkids.shared.model.CategoryTaskTemplate
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.model.TaskRecurrenceType
 import com.lemonkids.shared.model.TaskTemplate
@@ -23,7 +24,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.YearMonth
-import java.util.UUID
 import javax.inject.Inject
 
 data class TasksUiState(
@@ -42,6 +42,7 @@ data class TasksUiState(
     val selectedDateTasks: List<TaskUiItem> = emptyList(),
     val categories: List<Category> = emptyList(),
     val taskTemplates: List<TaskTemplate> = emptyList(),
+    val categoryTaskTemplates: List<CategoryTaskTemplate> = emptyList(),
     val expandedCategories: Set<String> = emptySet(),
     val isManageMode: Boolean = false,
     val selectedTaskIds: Set<String> = emptySet()
@@ -96,8 +97,6 @@ class TasksViewModel @Inject constructor(
     val uiState: StateFlow<TasksUiState> = _uiState.asStateFlow()
 
     private var hasLoadedOnce = false
-    private var defaultCategoryRequested = false
-
     init {
         loadData()
     }
@@ -120,20 +119,18 @@ class TasksViewModel @Inject constructor(
             }
 
             launch {
-                // 首次加载时确保"默认"分类存在
-                val existing = categoryRepository.observeCategories(familyId)
-                // 用一个临时 collect 检查是否存在，不存在则创建
-                existing.collect { list ->
-                    if (list.none { it.name == "默认" } && !defaultCategoryRequested) {
-                        defaultCategoryRequested = true
-                        categoryRepository.createCategory(Category(familyId = familyId, name = "默认"))
-                    }
+                categoryRepository.observeCategories(familyId).collect { list ->
                     _uiState.value = _uiState.value.copy(categories = list)
                 }
             }
             launch {
                 taskTemplateRepository.observeTemplates(familyId).collect { templates ->
                     _uiState.value = _uiState.value.copy(taskTemplates = templates)
+                }
+            }
+            launch {
+                categoryRepository.observeCategoryTaskTemplates(familyId).collect { assignments ->
+                    _uiState.value = _uiState.value.copy(categoryTaskTemplates = assignments)
                 }
             }
         }
@@ -298,9 +295,10 @@ class TasksViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(editingTask = null)
     }
 
-    /** 创建单次或重复任务。重复日程展开为独立日任务，以保留逐日完成历史。 */
+    /** 从一个分类任务包或单个模板创建任务；服务端以事务生成全部日程。 */
     fun createTask(
-        template: TaskTemplate,
+        categoryId: String?,
+        templateId: String?,
         endDate: String,
         dueDate: String,
         childId: String,
@@ -321,67 +319,31 @@ class TasksViewModel @Inject constructor(
                     return@launch
                 }
 
-            // 计算需要创建的日期列表
             val start = try { LocalDate.parse(dueDate) } catch (_: Exception) { null }
                 ?: run {
                     _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "任务日期无效")
                     return@launch
                 }
             val end = endDate.takeIf { it.isNotEmpty() }
-                ?.let { try { LocalDate.parse(it) } catch (_: Exception) { null } }
-            val recurrenceEnd = if (recurrenceType == TaskRecurrenceType.NONE) end else (end ?: start.plusMonths(3))
-            val dates = if (recurrenceType != TaskRecurrenceType.NONE) {
-                generateSequence(start) { it.plusDays(1) }
-                    .takeWhile { !it.isAfter(recurrenceEnd) }
-                    .filter { date -> shouldCreateOn(date, recurrenceType, recurrenceWeekdays) }
-                    .toList()
-            } else if (end != null && end != start) {
-                generateSequence(start) { it.plusDays(1) }.takeWhile { !it.isAfter(end) }.toList()
-            } else {
-                listOf(start)
+                ?.let { try { LocalDate.parse(it) } catch (_: Exception) { null } } ?: start
+            if (end.isBefore(start)) {
+                _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "结束日期不能早于开始日期")
+                return@launch
             }
-            val seriesId = if (recurrenceType == TaskRecurrenceType.NONE) null else UUID.randomUUID().toString()
             Log.i(
                 TASKS_VIEW_MODEL_TAG,
-                "开始创建任务 familyId=$familyId childId=$childId dates=${dates.size} recurrence=$recurrenceType"
+                "开始从任务来源创建 familyId=$familyId childId=$childId recurrence=$recurrenceType"
             )
-
-            var hasError = false
-            val createdTasks = mutableListOf<Task>()
-            for (date in dates) {
-                val task = Task(
-                    familyId = familyId,
-                    title = template.title,
-                    description = template.description,
-                    childId = childId,
-                    createdBy = user.uid,
-                    category = template.category,
-                    rewardPoints = template.rewardPoints,
-                    penaltyPoints = template.penaltyPoints,
-                    dueDate = date.toString(),
-                    endDate = null,
-                    dueTime = null,
-                    recurrenceSeriesId = seriesId,
-                    recurrenceType = recurrenceType,
-                    recurrenceWeekdays = recurrenceWeekdays.sorted(),
-                    recurrenceEndDate = recurrenceEnd.toString()
-                )
-                taskRepository.createTask(task)
-                    .onSuccess { taskId -> createdTasks += task.copy(id = taskId) }
-                    .onFailure { error ->
-                        hasError = true
-                        Log.e(
-                            TASKS_VIEW_MODEL_TAG,
-                            "创建任务失败 childId=$childId dueDate=${task.dueDate} recurrence=$recurrenceType",
-                            error
-                        )
-                    }
-            }
-
-            if (hasError) {
-                Log.w(TASKS_VIEW_MODEL_TAG, "任务创建结束：存在失败项 familyId=$familyId childId=$childId")
-                _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "创建失败")
-            } else {
+            taskRepository.createTasksFromSelection(
+                childId = childId,
+                categoryId = categoryId,
+                templateId = templateId,
+                dueDate = start.toString(),
+                endDate = end.toString(),
+                recurrenceType = recurrenceType,
+                recurrenceWeekdays = recurrenceWeekdays.sorted()
+            ).fold(
+                onSuccess = { createdTasks ->
                 Log.i(TASKS_VIEW_MODEL_TAG, "任务创建结束：全部成功 familyId=$familyId childId=$childId")
                 if (_uiState.value.viewMode == ViewMode.CALENDAR) {
                     loadMonthData(YearMonth.from(_uiState.value.selectedDate))
@@ -401,7 +363,12 @@ class TasksViewModel @Inject constructor(
                     _uiState.value = current.copy(isLoading = false, tasks = updatedTasks)
                 }
                 onDone()
-            }
+                },
+                onFailure = { error ->
+                    Log.e(TASKS_VIEW_MODEL_TAG, "任务创建失败 familyId=$familyId childId=$childId", error)
+                    _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = error.message ?: "创建失败")
+                }
+            )
         }
     }
 
@@ -515,14 +482,6 @@ class TasksViewModel @Inject constructor(
         }
     }
 
-    fun addCategory(name: String) {
-        viewModelScope.launch {
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            val familyId = user.familyId ?: return@launch
-            categoryRepository.createCategory(Category(familyId = familyId, name = name))
-        }
-    }
-
     /** 点击分类标题切换展开/折叠 */
     fun toggleCategoryExpand(categoryName: String) {
         val current = _uiState.value.expandedCategories.toMutableSet()
@@ -561,16 +520,6 @@ class TasksViewModel @Inject constructor(
         categoryName = category
     )
 
-    private fun shouldCreateOn(
-        date: LocalDate,
-        recurrenceType: TaskRecurrenceType,
-        weekdays: Set<Int>
-    ): Boolean = when (recurrenceType) {
-        TaskRecurrenceType.DAILY -> true
-        TaskRecurrenceType.WEEKDAYS -> date.dayOfWeek.value in 1..5
-        TaskRecurrenceType.WEEKLY -> date.dayOfWeek.value in weekdays
-        TaskRecurrenceType.NONE -> true
-    }
 }
 
 private fun TaskUiItem.isCancellableByParent(): Boolean =

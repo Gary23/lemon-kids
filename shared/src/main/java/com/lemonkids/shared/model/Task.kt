@@ -12,7 +12,11 @@ data class Task(
     @SerialName("child_id") val childId: String = "",
     @SerialName("created_by") val createdBy: String = "",
     @SerialName("status") val status: TaskStatus = TaskStatus.PENDING,
+    /** 创建时记录的展示分组；任务端继续仅使用此快照字段分组。 */
     @SerialName("category") val category: String = "默认",
+    /** 创建来源，仅供家长端追溯、分类改名和去重使用；任务端不依赖它们。 */
+    @SerialName("source_category_id") val sourceCategoryId: String? = null,
+    @SerialName("source_template_id") val sourceTemplateId: String? = null,
             @SerialName("due_date") val dueDate: String = "",
     @SerialName("end_date") val endDate: String? = null,
     @SerialName("due_time") val dueTime: String? = null,    @SerialName("reward_points") val rewardPoints: Int = 5,
