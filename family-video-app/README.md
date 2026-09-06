@@ -2,6 +2,8 @@
 
 面向家庭儿童的私有动画媒体库 Android App。采用项目现有 Kotlin/Compose、Hilt 与 Supabase 技术栈；登录直接复用家长端相同的邮箱和密码，不存储 123 云盘密码。
 
+供后续开发与运维使用的完整说明见 [开发维护文档](docs/DEVELOPMENT.md)。其中包含数据模型、服务端接口、部署顺序、调试方法和发布检查项。
+
 ## 当前范围
 
 - 家长端 Supabase 邮箱密码会话复用；
@@ -19,6 +21,7 @@
 | 云盘与 Supabase 数据边界 | `data/FamilyVideoRepository.kt` |
 | 首页/详情/播放器 | `feature/home/`、`feature/library/`、`feature/player/` |
 | 同步和分类管理入口 | `feature/profile/VideoProfileScreen.kt` |
+| 长期开发/运维说明 | `docs/DEVELOPMENT.md` |
 
 ## 约束
 

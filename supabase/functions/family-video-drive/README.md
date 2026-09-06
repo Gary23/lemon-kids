@@ -19,6 +19,14 @@ supabase functions deploy family-video-drive --no-verify-jwt
 
 函数自身会验证客户端传来的 Supabase JWT，并且只允许已加入家庭的用户操作自己家庭的媒体库。`--no-verify-jwt` 是为了由函数显式返回中文鉴权错误；并不意味着匿名访问。
 
+## 发布后的核验
+
+1. 在 Dashboard 的 **Edge Functions** 中确认 `family-video-drive` 状态为 `ACTIVE`，并确认 `Verify JWT` 为关闭状态；这是本函数由代码自行校验并返回中文错误的预期配置。
+2. 不带 `Authorization` 请求函数应收到 HTTP 401 和“请先登录”，而不是 500。该结果表示函数已启动，且没有绕过登录校验。
+3. 在真机使用家庭成员的邮箱密码登录，在“我的”页依次测试连接、选择目录、同步和播放；在 Functions Logs 中确认没有 123 OpenAPI 或数据库错误。
+
+不要使用 `supabase secrets list` 的输出写入文档、日志或工单；日常只需确认 Secret 名称存在即可。
+
 ## 运行边界
 
 - 使用 123 OpenAPI 的 `/api/v1/access_token`、`/api/v2/file/list`、`/api/v1/file/download_info`；视频流始终由手机直连 123 云盘。
