@@ -186,11 +186,31 @@ class CategoryManageViewModel @Inject constructor(
         }
     }
 
-    fun saveCategoryTasks(categoryId: String, templateIds: List<String>) {
+    fun saveCategoryTasks(category: Category, templateIds: List<String>) {
         viewModelScope.launch {
-            categoryRepository.replaceCategoryTaskTemplates(categoryId, templateIds).onFailure {
-                _uiState.value = _uiState.value.copy(operationMessage = "保存分类任务失败，请稍后重试")
-            }
+            val orderedTemplateIds = templateIds.distinct()
+            categoryRepository.replaceCategoryTaskTemplates(category.id, orderedTemplateIds).fold(
+                onSuccess = {
+                    // 关联表的观察流是定时轮询。保存成功后立即写回本地状态，避免弹层关闭后
+                    // 仍显示“已配置 0 个任务”，同时下一次服务端刷新仍会以数据库结果为准。
+                    val savedAssignments = orderedTemplateIds.mapIndexed { index, templateId ->
+                        CategoryTaskTemplate(
+                            categoryId = category.id,
+                            templateId = templateId,
+                            familyId = category.familyId,
+                            sortOrder = index
+                        )
+                    }
+                    _uiState.value = _uiState.value.copy(
+                        categoryTaskTemplates = _uiState.value.categoryTaskTemplates
+                            .filterNot { it.categoryId == category.id } + savedAssignments,
+                        operationMessage = null
+                    )
+                },
+                onFailure = {
+                    _uiState.value = _uiState.value.copy(operationMessage = "保存分类任务失败，请稍后重试")
+                }
+            )
         }
     }
 
@@ -353,7 +373,7 @@ fun CategoryManageScreen(
             onDismiss = { configuringTasks = null },
             onSave = { ids ->
                 // 按任务库展示顺序保存，确保分类预览和服务端生成顺序稳定。
-                viewModel.saveCategoryTasks(category.id, uiState.templates.filter { it.id in ids }.map { it.id })
+                viewModel.saveCategoryTasks(category, uiState.templates.filter { it.id in ids }.map { it.id })
                 configuringTasks = null
             }
         )

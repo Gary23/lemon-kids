@@ -13,6 +13,9 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.time.LocalDate
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -91,16 +94,25 @@ class SupabaseCategoryRepository @Inject constructor(
         awaitClose()
     }
 
-    override suspend fun replaceCategoryTaskTemplates(categoryId: String, templateIds: List<String>): Result<Unit> = runCatching {
-        postgrest.rpc(
-            function = "set_category_task_templates",
-            parameters = mapOf(
-                "p_category_id" to categoryId,
-                "p_template_ids" to templateIds.distinct()
+    override suspend fun replaceCategoryTaskTemplates(categoryId: String, templateIds: List<String>): Result<Unit> =
+        runCatching {
+            postgrest.rpc(
+                function = "set_category_task_templates",
+                // 不能使用混合 String/List 的 Map：Kotlin 会将其推导成 Map<String, Any>，
+                // Supabase 序列化器无法为 Any 生成序列化器，请求会在设备端直接失败。
+                parameters = JsonObject(
+                    mapOf(
+                        "p_category_id" to JsonPrimitive(categoryId),
+                        "p_template_ids" to JsonArray(templateIds.distinct().map(::JsonPrimitive))
+                    )
+                )
             )
-        )
-        Unit
-    }
+            Unit
+        }.onSuccess {
+            Log.i(TAG, "分类任务保存成功 categoryId=$categoryId taskCount=${templateIds.distinct().size}")
+        }.onFailure { error ->
+            Log.e(TAG, "分类任务保存失败 categoryId=$categoryId taskCount=${templateIds.distinct().size}", error)
+        }
 
     override suspend fun getPendingTaskCountByCategory(categoryId: String): Result<Int> = runCatching {
         val tasks = postgrest.from("tasks").select {

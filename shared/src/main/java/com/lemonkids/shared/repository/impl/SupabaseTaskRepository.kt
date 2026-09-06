@@ -14,6 +14,10 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -141,14 +145,18 @@ class SupabaseTaskRepository @Inject constructor(
     ): Result<List<Task>> = runCatching {
         postgrest.rpc(
             function = "create_tasks_from_selection",
-            parameters = mapOf(
-                "p_child_id" to childId,
-                "p_category_id" to categoryId,
-                "p_template_id" to templateId,
-                "p_start_date" to dueDate,
-                "p_end_date" to endDate,
-                "p_recurrence_type" to recurrenceType.name.lowercase(),
-                "p_recurrence_weekdays" to recurrenceWeekdays.sorted()
+            // 参数包含字符串、可空 UUID 和整数数组。显式 JSON 避免被推导为
+            // Map<String, Any?>，否则 Supabase 会在请求发出前抛出序列化异常。
+            parameters = JsonObject(
+                mapOf(
+                    "p_child_id" to JsonPrimitive(childId),
+                    "p_category_id" to (categoryId?.let(::JsonPrimitive) ?: JsonNull),
+                    "p_template_id" to (templateId?.let(::JsonPrimitive) ?: JsonNull),
+                    "p_start_date" to JsonPrimitive(dueDate),
+                    "p_end_date" to JsonPrimitive(endDate),
+                    "p_recurrence_type" to JsonPrimitive(recurrenceType.name.lowercase()),
+                    "p_recurrence_weekdays" to JsonArray(recurrenceWeekdays.sorted().map(::JsonPrimitive))
+                )
             )
         ).decodeList<Task>()
     }.onSuccess { tasks ->
