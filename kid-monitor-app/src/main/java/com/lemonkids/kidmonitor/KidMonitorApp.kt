@@ -5,6 +5,7 @@ import com.lemonkids.kidmonitor.monitor.KeepAliveWorker
 import com.lemonkids.kidmonitor.monitor.LimitEnforcementService
 import com.lemonkids.kidmonitor.monitor.UsageCollectWorker
 import com.lemonkids.kidmonitor.monitor.DeviceStatusWorker
+import com.lemonkids.kidmonitor.alarm.AlarmSyncWorker
 import com.lemonkids.shared.model.DeviceStatusEventType
 import dagger.hilt.android.HiltAndroidApp
 
@@ -17,6 +18,8 @@ class KidMonitorApp : Application() {
         KeepAliveWorker.schedule(this)
         DeviceStatusWorker.schedule(this)
         DeviceStatusWorker.reportNow(this, DeviceStatusEventType.APP_START)
+        AlarmSyncWorker.schedule(this)
+        AlarmSyncWorker.syncNow(this)
         LimitEnforcementService.start(this)
     }
 }

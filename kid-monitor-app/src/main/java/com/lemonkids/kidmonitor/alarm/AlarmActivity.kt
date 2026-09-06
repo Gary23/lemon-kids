@@ -36,6 +36,7 @@ class AlarmActivity : ComponentActivity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val alarmId = intent.getStringExtra(AlarmRingService.EXTRA_ALARM_ID).orEmpty()
+        val revision = intent.getLongExtra(AlarmRingService.EXTRA_REVISION, -1L)
         val title = intent.getStringExtra(EXTRA_TITLE) ?: "闹钟时间到了"
         val message = intent.getStringExtra(EXTRA_MESSAGE) ?: "请完成家长设置的提醒"
         setContent {
@@ -59,7 +60,7 @@ class AlarmActivity : ComponentActivity() {
                         shape = RoundedCornerShape(18.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD84A), contentColor = Color(0xFF173B22)),
                         onClick = {
-                            startService(AlarmRingService.stopIntent(this@AlarmActivity, alarmId))
+                            startService(AlarmRingService.stopIntent(this@AlarmActivity, alarmId, revision))
                             finish()
                         }
                     ) { Text("我知道了，关闭闹钟", fontSize = 18.sp, fontWeight = FontWeight.Bold) }

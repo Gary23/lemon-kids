@@ -37,6 +37,7 @@ class AlarmRingService : Service() {
     @InstallIn(SingletonComponent::class)
     interface AlarmEntryPoint {
         val alarmDao: AlarmDao
+        val remoteAlarmSyncCoordinator: RemoteAlarmSyncCoordinator
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -44,27 +45,36 @@ class AlarmRingService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var audioFocusRequest: AudioFocusRequest? = null
     private var currentAlarmId: String? = null
+    private var currentRevision: Long = -1L
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val alarmId = intent?.getStringExtra(EXTRA_ALARM_ID) ?: return START_NOT_STICKY
+        val revision = intent.getLongExtra(EXTRA_REVISION, -1L)
         if (intent.action == ACTION_STOP) {
-            stopAlarm(alarmId)
+            stopAlarm(alarmId, revision)
             return START_NOT_STICKY
         }
         currentAlarmId = alarmId
+        currentRevision = revision
         startForeground(NOTIFICATION_ID, createNotification(alarmId, "闹钟时间到了", "请查看提醒"))
         acquireWakeLock()
         startAlerting()
         scope.launch {
             val dao = EntryPointAccessors.fromApplication(applicationContext, AlarmEntryPoint::class.java).alarmDao
             val alarm = runCatching { dao.get(alarmId) }.getOrNull()
-            if (alarm == null || !alarm.enabled) {
-                stopAlarm(alarmId)
+            // Direct Boot 时凭据保护的 Room 可能还不可读。此时 boot store 已验证过版本，
+            // 不能因为查库失败把本应响铃的闹钟静默停止。
+            if (alarm?.enabled == false) {
+                stopAlarm(alarmId, revision)
                 return@launch
             }
-            dao.updateState(alarmId, DeviceAlarmEntity.STATE_RINGING)
+            if (alarm != null) dao.updateState(alarmId, DeviceAlarmEntity.STATE_RINGING)
             val manager = getSystemService(NotificationManager::class.java)
-            manager.notify(NOTIFICATION_ID, createNotification(alarmId, alarm.title, alarm.message))
+            manager.notify(NOTIFICATION_ID, createNotification(alarmId, alarm?.title ?: "闹钟时间到了", alarm?.message ?: "请查看提醒"))
+            if (revision > 0) {
+                EntryPointAccessors.fromApplication(applicationContext, AlarmEntryPoint::class.java)
+                    .remoteAlarmSyncCoordinator.reportRinging(alarmId, revision)
+            }
         }
         return START_NOT_STICKY
     }
@@ -111,11 +121,12 @@ class AlarmRingService : Service() {
         }
     }
 
-    private fun stopAlarm(alarmId: String) {
+    private fun stopAlarm(alarmId: String, revision: Long = currentRevision) {
         scope.launch {
             runCatching {
-                EntryPointAccessors.fromApplication(applicationContext, AlarmEntryPoint::class.java)
-                    .alarmDao.updateState(alarmId, DeviceAlarmEntity.STATE_DISMISSED)
+                val entryPoint = EntryPointAccessors.fromApplication(applicationContext, AlarmEntryPoint::class.java)
+                entryPoint.alarmDao.updateState(alarmId, DeviceAlarmEntity.STATE_DISMISSED)
+                if (revision > 0) entryPoint.remoteAlarmSyncCoordinator.reportDismissed(alarmId, revision)
             }
         }
         stopAlerting()
@@ -153,6 +164,7 @@ class AlarmRingService : Service() {
             alarmId.hashCode(),
             Intent(this, AlarmActivity::class.java).apply {
                 putExtra(EXTRA_ALARM_ID, alarmId)
+                putExtra(EXTRA_REVISION, currentRevision)
                 putExtra(AlarmActivity.EXTRA_TITLE, title)
                 putExtra(AlarmActivity.EXTRA_MESSAGE, message)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -162,7 +174,7 @@ class AlarmRingService : Service() {
         val stop = PendingIntent.getService(
             this,
             alarmId.hashCode() xor 0x4A17,
-            stopIntent(this, alarmId),
+            stopIntent(this, alarmId, currentRevision),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -196,14 +208,17 @@ class AlarmRingService : Service() {
         private const val MAX_RING_MILLIS = 10 * 60 * 1000L
         private const val ACTION_STOP = "com.lemonkids.kidmonitor.alarm.STOP"
         const val EXTRA_ALARM_ID = "alarm_id"
+        const val EXTRA_REVISION = "revision"
 
-        fun startIntent(context: Context, alarmId: String) = Intent(context, AlarmRingService::class.java).apply {
+        fun startIntent(context: Context, alarmId: String, revision: Long) = Intent(context, AlarmRingService::class.java).apply {
             putExtra(EXTRA_ALARM_ID, alarmId)
+            putExtra(EXTRA_REVISION, revision)
         }
 
-        fun stopIntent(context: Context, alarmId: String) = Intent(context, AlarmRingService::class.java).apply {
+        fun stopIntent(context: Context, alarmId: String, revision: Long = -1L) = Intent(context, AlarmRingService::class.java).apply {
             action = ACTION_STOP
             putExtra(EXTRA_ALARM_ID, alarmId)
+            putExtra(EXTRA_REVISION, revision)
         }
     }
 }

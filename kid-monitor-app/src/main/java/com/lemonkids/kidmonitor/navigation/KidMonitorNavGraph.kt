@@ -22,6 +22,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -44,6 +45,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.lemonkids.kidmonitor.feature.profile.ProfileScreen
+import com.lemonkids.kidmonitor.alarm.AlarmSyncWorker
 import com.lemonkids.kidmonitor.feature.usage.AppHourlyDetailScreen
 import com.lemonkids.kidmonitor.feature.usage.AppUsageDetailScreen
 import com.lemonkids.kidmonitor.feature.usage.UsageDetailScreen
@@ -75,6 +77,12 @@ fun KidMonitorNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
         return
     }
 
+    // 会话恢复和绑定成功都发生在 Application 首次 Worker 之后；登录态就绪时再立即对账一次，
+    // 避免等待 WorkManager 的下一次退避重试。该操作只同步远程配置，不参与到点触发。
+    LaunchedEffect(uiState.isLoggedIn) {
+        if (uiState.isLoggedIn) AlarmSyncWorker.syncNow(context)
+    }
+
     val navController = rememberNavController()
     val startDest = if (uiState.isLoggedIn) KidMonitorRoutes.MAIN else KidMonitorRoutes.BINDING_CODE
 
@@ -84,6 +92,7 @@ fun KidMonitorNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
                 type = "monitor",
                 deviceId = deviceId,
                 onSuccess = {
+                    AlarmSyncWorker.syncNow(context)
                     navController.navigate(KidMonitorRoutes.MAIN) {
                         popUpTo(0) { inclusive = true }
                     }

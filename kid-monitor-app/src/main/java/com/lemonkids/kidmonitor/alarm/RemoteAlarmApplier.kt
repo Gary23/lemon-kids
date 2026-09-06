@@ -45,4 +45,18 @@ class RemoteAlarmApplier @Inject constructor(
             AlarmTrigger(snapshot.alarmId, snapshot.revision, snapshot.triggerAtMillis)
         )
     }
+
+    /** 远端仍保留启用态但目标时间已过时的本地收敛：不得在恢复网络后补响。 */
+    suspend fun markMissed(snapshot: RemoteAlarmSnapshot) {
+        val current = alarmDao.get(snapshot.alarmId)
+        if (current != null && current.revision > snapshot.revision) return
+        alarmDao.upsert(
+            DeviceAlarmEntity(
+                alarmId = snapshot.alarmId, revision = snapshot.revision,
+                triggerAtMillis = snapshot.triggerAtMillis, title = snapshot.title, message = snapshot.message,
+                enabled = false, requiresConfirmation = snapshot.requiresConfirmation, state = DeviceAlarmEntity.STATE_DISMISSED
+            )
+        )
+        alarmScheduler.cancel(snapshot.alarmId)
+    }
 }

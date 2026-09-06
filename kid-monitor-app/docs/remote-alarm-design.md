@@ -12,7 +12,7 @@
 
 ```text
 家长端保存闹钟 ──> Supabase alarms / alarm_deliveries
-                           │ Realtime + 推送唤醒 + 周期对账
+                           │ 启动、解锁、网络恢复与 15 分钟对账
                            ▼
              监控 Pad：RemoteAlarmApplier
                     │ 先持久化，再登记
@@ -56,13 +56,13 @@
 
 ### 下发与一致性
 
-1. 家长端写入闹钟并递增 `revision`，然后创建或更新对应 `alarm_deliveries`。
-2. Pad 的 Realtime 订阅收到变更后调用 `RemoteAlarmApplier.apply(snapshot)`；首次登录、网络恢复、开机和每 15 分钟对账也调用同一入口。
+1. 家长端写入闹钟并递增 `revision`；数据库触发器原子创建或重置对应 `alarm_deliveries` 为 `pending`。
+2. Pad 在应用启动、正常开机/用户解锁后立即对账，且由有网络约束的 `AlarmSyncWorker` 每 15 分钟兜底调用 `RemoteAlarmApplier.apply(snapshot)`。项目现有数据层以轮询为正式路径，Realtime 即使在控制台开启也只能作为将来的加速通道，不能作为唯一投递手段。
 3. `apply` 先将快照写入 Room，再登记 OS 闹钟；相同/更旧版本直接忽略。取消会先持久化禁用状态，再取消 PendingIntent。
 4. 成功登记后写 `deployed` 回执；缺少精确闹钟、通知或全屏资格则写准确错误码，家长端展示“需在 Pad 授权”。
 5. 到点、展示全屏、用户关闭和自动超时分别追加 `alarm_events`，并更新投递状态。
 
-推送只承担“尽快同步”和网络恢复唤醒；到点执行以 Pad 已落地的 `AlarmManager` 项为准。这样网络在响铃时中断不影响已确认的闹钟。
+未来若接入推送，只承担“尽快同步”和网络恢复唤醒；到点执行始终以 Pad 已落地的 `AlarmManager` 项为准。这样网络在响铃时中断不影响已确认的闹钟。
 
 ## 权限与可靠性策略
 

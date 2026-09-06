@@ -17,7 +17,7 @@ class AlarmReceiver : BroadcastReceiver() {
             Log.w(TAG, "忽略已取消或过期的闹钟 alarmId=$alarmId revision=$revision")
             return
         }
-        ContextCompat.startForegroundService(context, AlarmRingService.startIntent(context, alarmId))
+        ContextCompat.startForegroundService(context, AlarmRingService.startIntent(context, alarmId, revision))
     }
 
     companion object {
