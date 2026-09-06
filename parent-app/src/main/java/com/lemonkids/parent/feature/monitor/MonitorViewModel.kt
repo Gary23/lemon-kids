@@ -7,10 +7,6 @@ import com.lemonkids.shared.model.AppUsageRecord
 import com.lemonkids.shared.repository.AppUsageRepository
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.ChildUserInfo
-import com.lemonkids.shared.repository.RemoteAlarmRepository
-import com.lemonkids.shared.model.MonitorDevice
-import com.lemonkids.shared.model.ParentAlarmStatus
-import com.lemonkids.shared.model.RemoteAlarm
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,8 +14,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import java.time.Instant
-import java.time.ZoneId
 import java.util.UUID
 import javax.inject.Inject
 
@@ -39,11 +33,7 @@ data class MonitorUiState(
     val limitDialogCooldownMinutes: Int = 0,
     val editingLimitId: String? = null,
     val limitDialogError: String? = null,
-    val isSavingLimit: Boolean = false,
-    val monitorDevices: List<MonitorDevice> = emptyList(),
-    val remoteAlarms: List<ParentAlarmStatus> = emptyList(),
-    val remoteAlarmError: String? = null,
-    val isSavingRemoteAlarm: Boolean = false
+    val isSavingLimit: Boolean = false
 )
 
 data class AppUsageUiItem(
@@ -65,8 +55,7 @@ data class AppLimitUiItem(
 @HiltViewModel
 class MonitorViewModel @Inject constructor(
     private val appUsageRepository: AppUsageRepository,
-    private val authRepository: AuthRepository,
-    private val remoteAlarmRepository: RemoteAlarmRepository
+    private val authRepository: AuthRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(MonitorUiState())
@@ -130,21 +119,6 @@ class MonitorViewModel @Inject constructor(
                 todayTotalMinutes = totalSeconds / 60,
                 appUsages = usageItems
             )
-        }
-
-        val fid = familyId
-        if (fid != null) {
-            viewModelScope.launch {
-                remoteAlarmRepository.getMonitorDevices(fid, childId).fold(
-                    onSuccess = { devices -> _uiState.value = _uiState.value.copy(monitorDevices = devices, remoteAlarmError = null) },
-                    onFailure = { error -> _uiState.value = _uiState.value.copy(monitorDevices = emptyList(), remoteAlarmError = "读取监控 Pad 失败：${error.message ?: "请稍后重试"}") }
-                )
-            }
-        }
-        viewModelScope.launch {
-            remoteAlarmRepository.observeParentAlarms(childId).collect { alarms ->
-                _uiState.value = _uiState.value.copy(remoteAlarms = alarms)
-            }
         }
 
         viewModelScope.launch {
@@ -254,53 +228,4 @@ class MonitorViewModel @Inject constructor(
         }
     }
 
-    fun saveRemoteAlarm(
-        existing: RemoteAlarm?,
-        triggerAt: Instant,
-        title: String,
-        message: String,
-        requiresConfirmation: Boolean
-    ) {
-        val state = _uiState.value
-        val child = state.selectedChild ?: return
-        val fid = familyId ?: return
-        val device = state.monitorDevices.firstOrNull() ?: run {
-            _uiState.value = state.copy(remoteAlarmError = "请先在孩子的 Pad 上完成监控端绑定")
-            return
-        }
-        if (triggerAt.isBefore(Instant.now().plusSeconds(30))) {
-            _uiState.value = state.copy(remoteAlarmError = "闹钟时间至少要在 30 秒后")
-            return
-        }
-        val alarm = (existing ?: RemoteAlarm(
-            id = UUID.randomUUID().toString(), familyId = fid, childId = child.uid, targetDeviceId = device.deviceId
-        )).copy(
-            triggerAt = triggerAt.toString(), timezone = ZoneId.systemDefault().id,
-            title = title.trim(), message = message.trim(), enabled = true,
-            requiresConfirmation = requiresConfirmation,
-            revision = if (existing == null) 1 else existing.revision + 1
-        )
-        if (alarm.title.isBlank()) {
-            _uiState.value = state.copy(remoteAlarmError = "请填写闹钟标题")
-            return
-        }
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSavingRemoteAlarm = true, remoteAlarmError = null)
-            val result = if (existing == null) remoteAlarmRepository.createAlarm(alarm) else remoteAlarmRepository.updateAlarm(alarm)
-            result.fold(
-                onSuccess = { _uiState.value = _uiState.value.copy(isSavingRemoteAlarm = false) },
-                onFailure = { error -> _uiState.value = _uiState.value.copy(isSavingRemoteAlarm = false, remoteAlarmError = "保存闹钟失败：${error.message ?: "请稍后重试"}") }
-            )
-        }
-    }
-
-    fun cancelRemoteAlarm(alarm: RemoteAlarm) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSavingRemoteAlarm = true, remoteAlarmError = null)
-            remoteAlarmRepository.updateAlarm(alarm.copy(enabled = false, revision = alarm.revision + 1)).fold(
-                onSuccess = { _uiState.value = _uiState.value.copy(isSavingRemoteAlarm = false) },
-                onFailure = { error -> _uiState.value = _uiState.value.copy(isSavingRemoteAlarm = false, remoteAlarmError = "取消闹钟失败：${error.message ?: "请稍后重试"}") }
-            )
-        }
-    }
 }

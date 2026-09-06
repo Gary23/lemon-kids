@@ -42,7 +42,7 @@
 - 全屏通知打开 `AlarmActivity`，该页在锁屏时点亮屏幕；若系统/用户收回全屏通知资格，通知仍可点击进入，不会静默失败。
 - 已登记闹钟的最小元数据写入 device-protected storage。`BootReceiver` 在开机、解锁或包替换时重新登记，避免普通 App 重启后 AlarmManager 项丢失。
 
-## 云端与家长端待接入合同
+## 云端与家长端实现
 
 ### 数据表
 
@@ -53,6 +53,8 @@
 | `alarm_events` | `id`, `alarm_id`, `device_id`, `revision`, `event_type`, `occurred_at`, `detail` | 不可变审计：下发、触发、全屏失败、关闭、错过和恢复。 |
 
 `target_device_id` 必须是 `monitor` 绑定产生的设备标识，不能使用可多端复用的 `task` 绑定码。RLS 规则应确保家长仅操作自己家庭中孩子的闹钟；监控 Pad 仅能读写自身 `device_id` 的投递与事件。
+
+迁移脚本位于 [`../../supabase/sql/20260906_remote_alarms.sql`](../../supabase/sql/20260906_remote_alarms.sql)，需经人工审查后在目标 Supabase 环境执行。家长端以独立的 `alarm` Tab 提供按孩子切换、新建、编辑、取消和投递状态展示；该页使用 `AlarmViewModel`，与使用情况监控的 `MonitorViewModel` 分离，避免监控页订阅闹钟数据。
 
 ### 下发与一致性
 
