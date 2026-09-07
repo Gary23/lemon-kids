@@ -32,6 +32,7 @@
 | `sql/20260827_smart_add_recognized_literacy_tasks.sql` | 智能添加直接收录已认识：原子创建根任务、完成迁移，并关联后续 TTS 回写 | 已执行音素资产及其生命周期原子迁移；须在部署支持该入口的评测函数前执行 |
 | `sql/20260827_smart_add_recognized_existing_task_fix.sql` | 允许同字已完成历史任务再次创建，仅限制同字待认识任务唯一 | 已执行直接收录已认识迁移；须在启用该入口前执行 |
 | `sql/20260823_literacy_purge_legacy_example_pinyins.sql` | 从待认识、已认识词句 JSON 中物理删除已废弃的 `pinyins` 键 | 已在旧客户端淘汰、音素资产回填完成后执行；脚本末尾四项计数均为 0 |
+| `sql/20260907_literacy_daily_task_snapshot.sql` | 将当天待认识的 6 个任务及顺序存为跨 Pad 共享快照，并提供原子读取/创建 RPC | 已有 `child_literacy_characters` 和孩子端登录；须先审查并在 Supabase SQL Editor 执行 |
 
 ## AI 必须遵守的规则
 
