@@ -134,6 +134,7 @@ class AlarmViewModel @Inject constructor(
 
     fun saveRemoteAlarm(
         existing: RemoteAlarm?,
+        targetDeviceId: String,
         triggerAt: Instant,
         endAt: Instant,
         title: String,
@@ -144,8 +145,15 @@ class AlarmViewModel @Inject constructor(
         val state = _uiState.value
         val child = state.selectedChild ?: return
         val fid = familyId ?: return
-        val device = state.monitorDevices.firstOrNull() ?: run {
-            _uiState.value = state.copy(error = "请先在孩子的 Pad 上完成监控端绑定")
+        val selectedDeviceId = targetDeviceId.trim()
+        if (selectedDeviceId.isBlank()) {
+            _uiState.value = state.copy(error = "请选择要响铃的监控 Pad")
+            return
+        }
+        // 只允许把闹钟发送给本次为当前孩子读取到的有效 monitor 设备，不能再默认
+        // 取列表中的第一台。服务端 RLS 也会在写入时再次校验该设备仍处于有效绑定状态。
+        val device = state.monitorDevices.firstOrNull { it.deviceId == selectedDeviceId } ?: run {
+            _uiState.value = state.copy(error = "所选监控 Pad 已失效或不属于当前孩子，请刷新后重新选择")
             return
         }
         if (endAt.isBefore(Instant.now().plusSeconds(30))) {
@@ -162,6 +170,7 @@ class AlarmViewModel @Inject constructor(
             childId = child.uid,
             targetDeviceId = device.deviceId
         )).copy(
+            targetDeviceId = device.deviceId,
             triggerAt = triggerAt.toString(),
             endAt = endAt.toString(),
             timezone = ZoneId.systemDefault().id,

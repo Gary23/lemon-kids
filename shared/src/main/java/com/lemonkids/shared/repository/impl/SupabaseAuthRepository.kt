@@ -1,5 +1,6 @@
 package com.lemonkids.shared.repository.impl
 
+import android.util.Log
 import com.lemonkids.shared.model.User
 import com.lemonkids.shared.model.UserRole
 import com.lemonkids.shared.repository.AlreadyBoundException
@@ -27,6 +28,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -46,10 +49,15 @@ class SupabaseAuthRepository @Inject constructor(
     private val _currentUser = MutableStateFlow<User?>(null)
     private val avatarCache = ConcurrentHashMap<String, String>()
     private val nameCache = ConcurrentHashMap<String, String>()
+    private val restoreMutex = Mutex()
 
     init {
         CoroutineScope(Dispatchers.IO).launch {
-            restoreSession()
+            restoreSession().onFailure {
+                // 此前这里静默吞掉异常，Auth SDK 已加载会话但应用用户状态仍为 null
+                // 时很难定位，也会导致 Pad 后台任务永久不对账。
+                Log.e(TAG, "恢复 Supabase 会话失败", it)
+            }
         }
     }
 
@@ -63,20 +71,29 @@ class SupabaseAuthRepository @Inject constructor(
         get() = auth.currentSessionOrNull() != null
 
     override suspend fun restoreSession(): Result<User?> = runCatching {
-        auth.awaitInitialization()
-        val session = auth.currentSessionOrNull() ?: run {
-            _currentUser.value = null
-            return@runCatching null
+        restoreMutex.withLock {
+            auth.awaitInitialization()
+            val session = auth.currentSessionOrNull() ?: run {
+                _currentUser.value = null
+                return@withLock null
+            }
+
+            // 不要在每次进程启动时无条件刷新。一个孩子可能绑定多台 Pad，强制刷新会
+            // 轮换 refresh token；而仍有效的 access token 本可立即用于本次后台对账。
+            // 仅在 access token 已过期时才刷新。
+            if (session.expiresAt.toEpochMilliseconds() <= System.currentTimeMillis()) {
+                Log.i(TAG, "已保存的 access token 过期，开始刷新")
+                auth.refreshCurrentSession()
+            } else {
+                runCatching { auth.startAutoRefreshForCurrentSession() }
+                    .onFailure { Log.w(TAG, "启动会话自动刷新失败，将继续使用当前有效会话", it) }
+            }
+
+            val uid = auth.currentUserOrNull()?.id
+                ?: auth.currentSessionOrNull()?.user?.id
+                ?: throw IllegalStateException("已恢复会话但未能获取用户信息")
+            loadCurrentUser(uid)
         }
-
-        // 刷新失败时不能继续拿旧 session.user 把界面判定为“已登录”。
-        // 旧用户资料可留在内存中，但 access token 已可能不可用于任何受保护请求。
-        auth.refreshCurrentSession()
-
-        val uid = auth.currentUserOrNull()?.id
-            ?: auth.currentSessionOrNull()?.user?.id
-            ?: throw Exception("已恢复会话但未能获取用户信息")
-        loadCurrentUser(uid)
     }
 
     private suspend fun loadCurrentUser(uid: String): User {
@@ -360,5 +377,9 @@ class SupabaseAuthRepository @Inject constructor(
         avatarCache[userId] = user.avatarUrl ?: ""
         nameCache[userId] = user.name
         ChildUserInfo(uid = user.uid, name = user.name, totalPoints = user.totalPoints, avatarUrl = user.avatarUrl)
+    }
+
+    private companion object {
+        const val TAG = "SupabaseAuthRepo"
     }
 }

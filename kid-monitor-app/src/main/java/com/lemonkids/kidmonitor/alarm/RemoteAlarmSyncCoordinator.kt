@@ -32,18 +32,24 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
     private val remoteAlarmApplier: RemoteAlarmApplier
 ) {
     suspend fun sync(): Result<Unit> = runCatching {
+        // WorkManager 可以在应用进程刚创建时运行；此时 StateFlow 的初始值仍为 null，
+        // 但 Auth SDK 可能已经在私有存储中持有有效会话。主动恢复一次再判定，避免
+        // 一次启动时序竞争让本轮远程闹钟完全漏同步。
         val user = authRepository.observeCurrentUser().first()
+            ?: authRepository.restoreSession().getOrElse {
+                throw IllegalStateException("监控端会话恢复失败，暂不对账", it)
+            }
             ?: error("监控端尚未完成登录，暂不对账")
         val deviceId = deviceId()
         val alarms = remoteAlarmRepository.getAlarmsForDevice(deviceId).getOrThrow()
         alarms.forEach { alarm ->
-            val triggerAt = runCatching { Instant.parse(alarm.triggerAt).toEpochMilli() }
+            val triggerAt = runCatching { parseServerInstant(alarm.triggerAt).toEpochMilli() }
                 .getOrElse {
                     Log.e(TAG, "忽略时间格式无效的远程闹钟 alarmId=${alarm.id}", it)
                     report(alarm.id, alarm.revision, AlarmDeliveryStatus.MISSED, AlarmEventType.MISSED, "trigger_at 无效")
                     return@forEach
                 }
-            val endAt = runCatching { Instant.parse(alarm.endAt).toEpochMilli() }
+            val endAt = runCatching { parseServerInstant(alarm.endAt).toEpochMilli() }
                 .getOrElse {
                     // 兼容没有日期范围的历史单点闹钟。
                     triggerAt
@@ -127,6 +133,15 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
 
     private fun deviceId(): String = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
         ?: error("无法读取设备标识")
+
+    /**
+     * PostgREST 在当前项目会将 TIMESTAMPTZ 序列化为 `+00:00` 结尾。
+     * 部分旧版 Android 的 desugared `Instant.parse` 只接受 `Z`，会把有效的
+     * UTC 时间误判为无效，导致闹钟完全不下发。
+     */
+    private fun parseServerInstant(value: String): Instant = Instant.parse(
+        if (value.endsWith("+00:00")) value.dropLast("+00:00".length) + "Z" else value
+    )
 
     companion object { private const val TAG = "RemoteAlarmSync" }
 }

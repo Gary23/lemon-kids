@@ -46,6 +46,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.lemonkids.shared.model.MonitorDevice
 import com.lemonkids.shared.model.ParentAlarmStatus
 import com.lemonkids.shared.model.RemoteAlarm
 import java.time.Instant
@@ -123,6 +124,7 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
             item {
                 AlarmListSection(
                     childName = uiState.selectedChild!!.name,
+                    monitorDevices = uiState.monitorDevices,
                     hasMonitorPad = uiState.monitorDevices.isNotEmpty(),
                     alarms = uiState.remoteAlarms,
                     error = uiState.error,
@@ -139,10 +141,11 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
     if (showAlarmDialog) {
         RemoteAlarmEditDialog(
             existing = editingAlarm,
+            monitorDevices = uiState.monitorDevices,
             isSaving = uiState.isSaving,
             onDismiss = { showAlarmDialog = false },
-            onSave = { triggerAt, endAt, title, message, requiresConfirmation ->
-                viewModel.saveRemoteAlarm(editingAlarm, triggerAt, endAt, title, message, requiresConfirmation) {
+            onSave = { targetDeviceId, triggerAt, endAt, title, message, requiresConfirmation ->
+                viewModel.saveRemoteAlarm(editingAlarm, targetDeviceId, triggerAt, endAt, title, message, requiresConfirmation) {
                     showAlarmDialog = false
                 }
             }
@@ -153,6 +156,7 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
 @Composable
 private fun AlarmListSection(
     childName: String,
+    monitorDevices: List<MonitorDevice>,
     hasMonitorPad: Boolean,
     alarms: List<ParentAlarmStatus>,
     error: String?,
@@ -188,11 +192,20 @@ private fun AlarmListSection(
             alarms.forEach { item ->
                 val alarm = item.alarm
                 val time = alarmTimeRangeLabel(alarm)
+                val targetLabel = monitorDevices.indexOfFirst { it.deviceId == alarm.targetDeviceId }
+                    .takeIf { it >= 0 }
+                    ?.let(::monitorDeviceLabel)
+                    ?: "原目标 Pad 已失效"
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(alarm.title, fontWeight = FontWeight.Medium)
                         Text(
                             "$time · ${if (alarm.enabled) deliveryLabel(item) else "已取消"}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            targetLabel,
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -237,13 +250,14 @@ private fun deliveryLabel(item: ParentAlarmStatus): String = when (item.delivery
     else -> "等待下发"
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun RemoteAlarmEditDialog(
     existing: RemoteAlarm?,
+    monitorDevices: List<MonitorDevice>,
     isSaving: Boolean,
     onDismiss: () -> Unit,
-    onSave: (Instant, Instant, String, String, Boolean) -> Unit
+    onSave: (String, Instant, Instant, String, String, Boolean) -> Unit
 ) {
     val dateFormatter = remember { DateTimeFormatter.ofPattern("yyyy年M月d日") }
     val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
@@ -275,6 +289,12 @@ private fun RemoteAlarmEditDialog(
     var title by remember(existing?.id) { mutableStateOf(existing?.title ?: "起床提醒") }
     var message by remember(existing?.id) { mutableStateOf(existing?.message ?: "") }
     var requiresConfirmation by remember(existing?.id) { mutableStateOf(existing?.requiresConfirmation ?: true) }
+    // 新建时必须主动选择；编辑时仅回填仍有效的原目标设备。
+    var selectedDeviceId by remember(existing?.id, monitorDevices) {
+        mutableStateOf(existing?.targetDeviceId?.takeIf { selectedId ->
+            monitorDevices.any { it.deviceId == selectedId }
+        }.orEmpty())
+    }
     var error by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
@@ -283,6 +303,30 @@ private fun RemoteAlarmEditDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("在生效日期范围内，Pad 会每天在指定时间响铃；开始日和结束日均包含。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("目标监控 Pad", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    monitorDevices.forEachIndexed { index, device ->
+                        FilterChip(
+                            selected = selectedDeviceId == device.deviceId,
+                            onClick = {
+                                selectedDeviceId = device.deviceId
+                                error = null
+                            },
+                            label = { Text(monitorDeviceLabel(index)) }
+                        )
+                    }
+                }
+                monitorDevices.firstOrNull { it.deviceId == selectedDeviceId }?.let { device ->
+                    Text(
+                        "${maskedDeviceId(device.deviceId)}；请按该 Pad 的设备尾号确认",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } ?: Text(
+                    if (existing == null) "请选择要接收此闹钟的 Pad" else "原目标 Pad 已失效，请重新选择",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error
+                )
                 DateTimeRangeField(
                     label = "开始日期",
                     value = startDate.format(dateFormatter),
@@ -314,7 +358,11 @@ private fun RemoteAlarmEditDialog(
             TextButton(enabled = !isSaving, onClick = {
                 val trigger = LocalDateTime.of(startDate, alarmTime).atZone(ZoneId.systemDefault()).toInstant()
                 val end = LocalDateTime.of(endDate, alarmTime).atZone(ZoneId.systemDefault()).toInstant()
-                if (end.isBefore(trigger)) error = "结束日期不能早于开始日期" else onSave(trigger, end, title, message, requiresConfirmation)
+                when {
+                    selectedDeviceId.isBlank() -> error = "请选择要响铃的监控 Pad"
+                    end.isBefore(trigger) -> error = "结束日期不能早于开始日期"
+                    else -> onSave(selectedDeviceId, trigger, end, title, message, requiresConfirmation)
+                }
             }) { Text(if (isSaving) "保存中" else "保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
@@ -355,6 +403,14 @@ private fun RemoteAlarmEditDialog(
             dismissButton = { TextButton(onClick = { showTimePicker = false }) { Text("取消") } }
         )
     }
+}
+
+private fun monitorDeviceLabel(index: Int): String = "监控 Pad ${index + 1}"
+
+private fun maskedDeviceId(deviceId: String): String = when {
+    deviceId.length >= 4 -> "设备尾号 ${deviceId.takeLast(4).uppercase()}"
+    deviceId.isNotBlank() -> "设备尾号 $deviceId"
+    else -> "设备标识不可用"
 }
 
 @Composable

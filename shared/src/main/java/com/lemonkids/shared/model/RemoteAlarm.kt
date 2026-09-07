@@ -52,7 +52,7 @@ data class ParentAlarmStatus(
     val delivery: AlarmDelivery?
 )
 
-/** 已通过 monitor 绑定的目标 Pad。设备 ID 只用于路由，不在界面暴露。 */
+/** 已通过 monitor 绑定的目标 Pad。设备 ID 用于路由，界面仅可显示脱敏尾号以供家长区分多台 Pad。 */
 @Serializable
 data class MonitorDevice(
     @SerialName("device_id") val deviceId: String = "",
