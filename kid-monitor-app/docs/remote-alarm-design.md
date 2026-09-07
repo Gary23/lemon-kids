@@ -38,7 +38,7 @@
 - App 名改为 **柠檬闹钟管家**，并替换为柠檬闹钟图标。
 - `device_alarms` Room 表保存已下发快照与版本号；`RemoteAlarmApplier` 是所有云端下发的唯一入口，保证“先落库、再登记”及版本幂等。
 - `AlarmScheduler` 使用 `setAlarmClock` 登记精确闹钟；Android 12+ 未获“闹钟与提醒”特殊权限时明确返回失败，不以不精确闹钟伪装成功。
-- 静态 `AlarmReceiver` 能在被系统回收后冷启动。闹钟响铃服务使用 `mediaPlayback` 前台服务、`USAGE_ALARM` 音频焦点、系统闹铃音、振动和最多十分钟的 CPU 唤醒锁。
+- 静态 `AlarmReceiver` 能在被系统回收后冷启动。闹钟响铃服务使用 `mediaPlayback` 前台服务、`USAGE_ALARM` 音频焦点、系统闹铃音、振动和最多一小时的 CPU 唤醒锁。
 - 全屏通知打开 `AlarmActivity`，该页在锁屏时点亮屏幕；若系统/用户收回全屏通知资格，通知仍可点击进入，不会静默失败。
 - 已登记闹钟的最小元数据写入 device-protected storage。`BootReceiver` 在开机、解锁或包替换时重新登记，避免普通 App 重启后 AlarmManager 项丢失。
 
@@ -48,21 +48,23 @@
 
 | 表 | 关键字段 | 用途 |
 | --- | --- | --- |
-| `alarms` | `id`, `family_id`, `child_id`, `target_device_id`, `revision`, `trigger_at`, `timezone`, `title`, `message`, `enabled`, `requires_confirmation`, `updated_at` | 家长端的逻辑闹钟；取消为 `enabled=false` 的新版本。 |
+| `alarms` | `id`, `family_id`, `child_id`, `target_device_id`, `revision`, `trigger_at`, `end_at`, `timezone`, `title`, `message`, `enabled`, `requires_confirmation`, `updated_at` | 家长端的日期范围闹钟；`trigger_at`/`end_at` 表示首日/末日的同一每日提醒时刻，取消为 `enabled=false` 的新版本。 |
 | `alarm_deliveries` | `alarm_id`, `device_id`, `revision`, `status`, `ack_at`, `error_code`, `updated_at` | Pad 对“已部署 / 权限缺失 / 已响铃 / 已关闭”的当前确认。 |
 | `alarm_events` | `id`, `alarm_id`, `device_id`, `revision`, `event_type`, `occurred_at`, `detail` | 不可变审计：下发、触发、全屏失败、关闭、错过和恢复。 |
 
 `target_device_id` 必须是 `monitor` 绑定产生的设备标识，不能使用可多端复用的 `task` 绑定码。RLS 规则应确保家长仅操作自己家庭中孩子的闹钟；监控 Pad 仅能读写自身 `device_id` 的投递与事件。
 
-迁移脚本位于 [`../../supabase/sql/20260906_remote_alarms.sql`](../../supabase/sql/20260906_remote_alarms.sql)，需经人工审查后在目标 Supabase 环境执行。家长端以独立的 `alarm` Tab 提供按孩子切换、新建、编辑、取消和投递状态展示；该页使用 `AlarmViewModel`，与使用情况监控的 `MonitorViewModel` 分离，避免监控页订阅闹钟数据。
+迁移脚本位于 [`../../supabase/sql/20260906_remote_alarms.sql`](../../supabase/sql/20260906_remote_alarms.sql) 与 [`../../supabase/sql/20260907_alarm_time_range.sql`](../../supabase/sql/20260907_alarm_time_range.sql)，需经人工审查后在目标 Supabase 环境执行。家长端以独立的 `alarm` Tab 提供按孩子切换、新建、编辑、取消和投递状态展示；该页使用 `AlarmViewModel`，与使用情况监控的 `MonitorViewModel` 分离，避免监控页订阅闹钟数据。
 
 ### 下发与一致性
 
 1. 家长端写入闹钟并递增 `revision`；数据库触发器原子创建或重置对应 `alarm_deliveries` 为 `pending`。
 2. Pad 在应用启动、正常开机/用户解锁后立即对账，且由有网络约束的 `AlarmSyncWorker` 每 15 分钟兜底调用 `RemoteAlarmApplier.apply(snapshot)`。项目现有数据层以轮询为正式路径，Realtime 即使在控制台开启也只能作为将来的加速通道，不能作为唯一投递手段。
-3. `apply` 先将快照写入 Room，再登记 OS 闹钟；相同/更旧版本直接忽略。取消会先持久化禁用状态，再取消 PendingIntent。
+3. `apply` 先将快照写入 Room，再登记日期范围内的下一次 OS 闹钟；单次响铃关闭后立即续排下一天。相同/更旧版本直接忽略。取消会先持久化禁用状态，再取消 PendingIntent。
 4. 成功登记后写 `deployed` 回执；缺少精确闹钟、通知或全屏资格则写准确错误码，家长端展示“需在 Pad 授权”。
 5. 到点、展示全屏、用户关闭和自动超时分别追加 `alarm_events`，并更新投递状态。
+
+家长自己的新建、编辑、取消在服务端写入成功后立即更新列表；Pad 回执属于跨端状态，家长端最多每 60 秒校准一次。若需立即下发，应打开或解锁 Pad 的监控端，触发一次同步。
 
 未来若接入推送，只承担“尽快同步”和网络恢复唤醒；到点执行始终以 Pad 已落地的 `AlarmManager` 项为准。这样网络在响铃时中断不影响已确认的闹钟。
 
@@ -77,13 +79,13 @@
 | Android 13+ 通知未允许 | 服务仍尝试响铃，但锁屏展示不可承诺。 | `notification_denied`。 |
 | Android 14+ 全屏资格关闭 | 声音与高优先级通知可用，改为点击打开。 | `full_screen_denied`。 |
 | 关机、没电、飞行模式 | 无法在目标时刻执行；开机后应记录 `missed`，按产品策略补提醒或不补。 | `missed_offline`。 |
-| 用户强行停止、卸载、禁用 | Android 会冻结/取消 App 任务，任何 App 方案都不能绕过。产品假设不允许此行为。 | 离线 / 未确认。 |
+| 用户强行停止、卸载、禁用 | Android 会冻结/取消 App 任务，既无法同步新闹钟，也不能保证已登记闹钟触发；须手动重新打开监控端后恢复。 | 离线 / 未确认。 |
 
 厂商电池优化可能影响同步和开机后的即时对账，但不会取消已经由 AlarmManager 登记的闹钟。监控端已有 `KeepAliveWorker`、开机广播和设备状态心跳；闹钟模块只借用它们做同步/诊断，不依赖它们准点触发。
 
 ## 闹钟动作和关闭策略
 
-一期默认：响铃、振动、锁屏全屏页、手动确认关闭，最长响十分钟。家长端配置的 `requires_confirmation` 已预留，二期可扩展为答题、朗读、拍照或家长远程确认；扩展必须由 `AlarmActivity` 的完成态驱动，不能让通知划掉即视为完成。
+一期默认：在生效日期范围内每天响铃、振动、锁屏全屏页、手动关闭，单次最长响一小时。家长端配置的 `requires_confirmation` 已预留，二期可扩展为答题、朗读、拍照或家长远程确认；扩展必须由 `AlarmActivity` 的完成态驱动，不能让通知划掉即视为完成。
 
 如需“响铃后限制娱乐 App”，可在 `AlarmActivity` 确认前调用现有 `AppLimitEvaluator`/无障碍拦截能力，但这是独立产品规则，不能影响音频播放和基础关闭通路。
 

@@ -26,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -37,6 +38,7 @@ class AlarmRingService : Service() {
     @InstallIn(SingletonComponent::class)
     interface AlarmEntryPoint {
         val alarmDao: AlarmDao
+        val remoteAlarmApplier: RemoteAlarmApplier
         val remoteAlarmSyncCoordinator: RemoteAlarmSyncCoordinator
     }
 
@@ -75,6 +77,9 @@ class AlarmRingService : Service() {
                 EntryPointAccessors.fromApplication(applicationContext, AlarmEntryPoint::class.java)
                     .remoteAlarmSyncCoordinator.reportRinging(alarmId, revision)
             }
+            // 日期区间决定哪些天执行，不再决定本次响铃时长；仍保留一小时的安全上限。
+            delay(MAX_RING_MILLIS)
+            if (currentAlarmId == alarmId && currentRevision == revision) stopAlarm(alarmId, revision)
         }
         return START_NOT_STICKY
     }
@@ -126,6 +131,7 @@ class AlarmRingService : Service() {
             runCatching {
                 val entryPoint = EntryPointAccessors.fromApplication(applicationContext, AlarmEntryPoint::class.java)
                 entryPoint.alarmDao.updateState(alarmId, DeviceAlarmEntity.STATE_DISMISSED)
+                entryPoint.remoteAlarmApplier.scheduleNextOccurrence(alarmId, revision)
                 if (revision > 0) entryPoint.remoteAlarmSyncCoordinator.reportDismissed(alarmId, revision)
             }
         }
@@ -205,7 +211,7 @@ class AlarmRingService : Service() {
     companion object {
         private const val CHANNEL_ID = "lemon_alarm_ringing"
         private const val NOTIFICATION_ID = 3107
-        private const val MAX_RING_MILLIS = 10 * 60 * 1000L
+        private const val MAX_RING_MILLIS = 60 * 60 * 1000L
         private const val ACTION_STOP = "com.lemonkids.kidmonitor.alarm.STOP"
         const val EXTRA_ALARM_ID = "alarm_id"
         const val EXTRA_REVISION = "revision"

@@ -9,7 +9,11 @@ import io.github.jan.supabase.postgrest.Postgrest
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -19,6 +23,7 @@ class SupabaseAppUsageRepository @Inject constructor(
 ) : AppUsageRepository {
 
     private val postgrest get() = supabase.pluginManager.getPlugin(Postgrest)
+    private val appLimitRefreshEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
     override suspend fun uploadUsageRecords(records: List<AppUsageRecord>): Result<Unit> =
         runCatching {
@@ -43,8 +48,9 @@ class SupabaseAppUsageRepository @Inject constructor(
     }
 
     override fun observeAppLimits(childId: String): Flow<List<AppLimit>> = callbackFlow {
+        val fetchMutex = Mutex()
         suspend fun fetch() {
-            try {
+            fetchMutex.withLock { try {
                 val limits = postgrest.from("app_limits").select {
                     filter { eq("child_id", childId); eq("is_active", true) }
                 }.decodeList<AppLimit>()
@@ -52,21 +58,25 @@ class SupabaseAppUsageRepository @Inject constructor(
                 if (limits.isEmpty()) Log.w("AppUsageRepo", "app_limits 查询返回空列表 childId=$childId")
             } catch (e: Exception) {
                 Log.e("AppUsageRepo", "app_limits 查询失败 childId=$childId", e)
-            }
+            } }
         }
         fetch()
-        while (true) { delay(30000); fetch() }
+        launch { appLimitRefreshEvents.collect { fetch() } }
+        // 限额保存后立即写回当前页面；保留两分钟轮询以接收其他端变更。
+        while (true) { delay(120_000); fetch() }
     }
 
     override suspend fun setAppLimit(limit: AppLimit): Result<String> = runCatching {
         postgrest.from("app_limits").insert(limit) { select() }.decodeSingle<AppLimit>().id
-    }
+    }.onSuccess { appLimitRefreshEvents.tryEmit(Unit) }
 
     override suspend fun updateAppLimit(limit: AppLimit): Result<Unit> = runCatching {
         postgrest.from("app_limits").update(limit) { filter { eq("id", limit.id) } }
-    }
+        Unit
+    }.onSuccess { appLimitRefreshEvents.tryEmit(Unit) }
 
     override suspend fun removeAppLimit(limitId: String): Result<Unit> = runCatching {
         postgrest.from("app_limits").delete { filter { eq("id", limitId) } }
-    }
+        Unit
+    }.onSuccess { appLimitRefreshEvents.tryEmit(Unit) }
 }

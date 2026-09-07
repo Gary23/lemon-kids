@@ -27,7 +27,8 @@ data class AlarmUiState(
     val monitorDevices: List<MonitorDevice> = emptyList(),
     val remoteAlarms: List<ParentAlarmStatus> = emptyList(),
     val error: String? = null,
-    val isSaving: Boolean = false
+    val isSaving: Boolean = false,
+    val isRefreshingMonitorDevices: Boolean = false
 )
 
 @HiltViewModel
@@ -40,6 +41,7 @@ class AlarmViewModel @Inject constructor(
 
     private var familyId: String? = null
     private var alarmObserveJob: Job? = null
+    private var childLoadJob: Job? = null
 
     init {
         loadChildren()
@@ -61,7 +63,7 @@ class AlarmViewModel @Inject constructor(
                     selectedChild = selected,
                     error = null
                 )
-                selected?.let(::loadChildAlarms)
+                selected?.let { loadChildAlarms(it, restoreSession = false) }
             },
             onFailure = { error ->
                 _uiState.value = _uiState.value.copy(
@@ -74,42 +76,70 @@ class AlarmViewModel @Inject constructor(
 
     fun selectChild(child: ChildUserInfo) {
         _uiState.value = _uiState.value.copy(selectedChild = child, error = null)
-        loadChildAlarms(child)
+        loadChildAlarms(child, restoreSession = false)
     }
 
     fun refresh() {
-        _uiState.value.selectedChild?.let(::loadChildAlarms)
+        // 应用从锁屏恢复后，内存中的用户资料仍可能存在，但 Supabase 的 access token
+        // 已失效。先恢复会话，避免用匿名身份查询并把权限错误误判为“未绑定 Pad”。
+        _uiState.value.selectedChild?.let { loadChildAlarms(it, restoreSession = true) }
     }
 
-    private fun loadChildAlarms(child: ChildUserInfo) {
+    private fun loadChildAlarms(child: ChildUserInfo, restoreSession: Boolean) {
         val fid = familyId ?: return
-        viewModelScope.launch {
+        childLoadJob?.cancel()
+        alarmObserveJob?.cancel()
+        childLoadJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isRefreshingMonitorDevices = true, error = null)
+            if (restoreSession) {
+                val restoredUser = authRepository.restoreSession().getOrElse {
+                    _uiState.value = _uiState.value.copy(
+                        isRefreshingMonitorDevices = false,
+                        error = "登录状态恢复失败，请稍后重试"
+                    )
+                    return@launch
+                }
+                if (restoredUser == null) {
+                    _uiState.value = _uiState.value.copy(
+                        isRefreshingMonitorDevices = false,
+                        error = "登录状态已失效，请重新登录后重试"
+                    )
+                    return@launch
+                }
+            }
             remoteAlarmRepository.getMonitorDevices(fid, child.uid).fold(
                 onSuccess = { devices ->
-                    _uiState.value = _uiState.value.copy(monitorDevices = devices, error = null)
-                },
-                onFailure = { error ->
                     _uiState.value = _uiState.value.copy(
-                        monitorDevices = emptyList(),
-                        error = "读取监控 Pad 失败：${error.message ?: "请稍后重试"}"
+                        monitorDevices = devices,
+                        isRefreshingMonitorDevices = false,
+                        error = null
+                    )
+                    alarmObserveJob = viewModelScope.launch {
+                        remoteAlarmRepository.observeParentAlarms(child.uid).collect { alarms ->
+                            _uiState.value = _uiState.value.copy(remoteAlarms = alarms)
+                        }
+                    }
+                },
+                onFailure = {
+                    // 网络、会话或权限异常时保留上一次成功读取到的设备，不能把“暂时
+                    // 无法读取”伪装成“尚未绑定”。原始异常可能包含 URL/请求头，也不应展示。
+                    _uiState.value = _uiState.value.copy(
+                        isRefreshingMonitorDevices = false,
+                        error = "暂时无法读取监控 Pad，请检查网络或登录状态后重试"
                     )
                 }
             )
-        }
-        alarmObserveJob?.cancel()
-        alarmObserveJob = viewModelScope.launch {
-            remoteAlarmRepository.observeParentAlarms(child.uid).collect { alarms ->
-                _uiState.value = _uiState.value.copy(remoteAlarms = alarms)
-            }
         }
     }
 
     fun saveRemoteAlarm(
         existing: RemoteAlarm?,
         triggerAt: Instant,
+        endAt: Instant,
         title: String,
         message: String,
-        requiresConfirmation: Boolean
+        requiresConfirmation: Boolean,
+        onSuccess: () -> Unit
     ) {
         val state = _uiState.value
         val child = state.selectedChild ?: return
@@ -118,8 +148,12 @@ class AlarmViewModel @Inject constructor(
             _uiState.value = state.copy(error = "请先在孩子的 Pad 上完成监控端绑定")
             return
         }
-        if (triggerAt.isBefore(Instant.now().plusSeconds(30))) {
-            _uiState.value = state.copy(error = "闹钟时间至少要在 30 秒后")
+        if (endAt.isBefore(Instant.now().plusSeconds(30))) {
+            _uiState.value = state.copy(error = "结束日期的提醒时间至少要在 30 秒后")
+            return
+        }
+        if (endAt.isBefore(triggerAt)) {
+            _uiState.value = state.copy(error = "结束日期不能早于开始日期")
             return
         }
         val alarm = (existing ?: RemoteAlarm(
@@ -129,6 +163,7 @@ class AlarmViewModel @Inject constructor(
             targetDeviceId = device.deviceId
         )).copy(
             triggerAt = triggerAt.toString(),
+            endAt = endAt.toString(),
             timezone = ZoneId.systemDefault().id,
             title = title.trim(),
             message = message.trim(),
@@ -148,7 +183,21 @@ class AlarmViewModel @Inject constructor(
                 remoteAlarmRepository.updateAlarm(alarm)
             }
             result.fold(
-                onSuccess = { _uiState.value = _uiState.value.copy(isSaving = false) },
+                onSuccess = {
+                    // 写入已被服务端确认后立即更新本页，Pad 回执仍由后台轮询校准。
+                    val latest = _uiState.value
+                    val updated = if (existing == null) {
+                        (latest.remoteAlarms + ParentAlarmStatus(alarm, null))
+                            .distinctBy { it.alarm.id }
+                            .sortedBy { it.alarm.triggerAt }
+                    } else {
+                        latest.remoteAlarms.map { item ->
+                            if (item.alarm.id == alarm.id) item.copy(alarm = alarm) else item
+                        }
+                    }
+                    _uiState.value = latest.copy(isSaving = false, remoteAlarms = updated)
+                    onSuccess()
+                },
                 onFailure = { error ->
                     _uiState.value = _uiState.value.copy(
                         isSaving = false,
@@ -161,8 +210,16 @@ class AlarmViewModel @Inject constructor(
 
     fun cancelRemoteAlarm(alarm: RemoteAlarm) = viewModelScope.launch {
         _uiState.value = _uiState.value.copy(isSaving = true, error = null)
-        remoteAlarmRepository.updateAlarm(alarm.copy(enabled = false, revision = alarm.revision + 1)).fold(
-            onSuccess = { _uiState.value = _uiState.value.copy(isSaving = false) },
+        val cancelled = alarm.copy(enabled = false, revision = alarm.revision + 1)
+        remoteAlarmRepository.updateAlarm(cancelled).fold(
+            onSuccess = {
+                _uiState.value = _uiState.value.copy(
+                    isSaving = false,
+                    remoteAlarms = _uiState.value.remoteAlarms.map {
+                        if (it.alarm.id == cancelled.id) it.copy(alarm = cancelled) else it
+                    }
+                )
+            },
             onFailure = { error ->
                 _uiState.value = _uiState.value.copy(
                     isSaving = false,

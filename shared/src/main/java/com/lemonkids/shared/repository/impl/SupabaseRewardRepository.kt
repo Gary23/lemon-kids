@@ -32,7 +32,7 @@ class SupabaseRewardRepository @Inject constructor(
             } catch (_: Exception) {}
         }
         fetch()
-        while (true) { delay(60_000); fetch() }
+        while (true) { delay(300_000); fetch() }
     }
 
     override suspend fun createReward(reward: Reward): Result<String> = runCatching {
@@ -72,7 +72,7 @@ class SupabaseRewardRepository @Inject constructor(
             } catch (_: Exception) {}
         }
         fetch()
-        while (true) { delay(60_000); fetch() }
+        while (true) { delay(300_000); fetch() }
     }
 
     override fun getCurrentPoints(childId: String): Flow<Int> = callbackFlow {
@@ -85,6 +85,6 @@ class SupabaseRewardRepository @Inject constructor(
             } catch (_: Exception) {}
         }
         fetch()
-        while (true) { delay(60_000); fetch() }
+        while (true) { delay(300_000); fetch() }
     }
 }

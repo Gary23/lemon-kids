@@ -15,6 +15,9 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -23,6 +26,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -43,11 +49,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lemonkids.shared.model.ParentAlarmStatus
 import com.lemonkids.shared.model.RemoteAlarm
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -117,6 +126,8 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
                     hasMonitorPad = uiState.monitorDevices.isNotEmpty(),
                     alarms = uiState.remoteAlarms,
                     error = uiState.error,
+                    isSaving = uiState.isSaving,
+                    isRefreshingMonitorDevices = uiState.isRefreshingMonitorDevices,
                     onAdd = { editingAlarm = null; showAlarmDialog = true },
                     onEdit = { editingAlarm = it; showAlarmDialog = true },
                     onCancel = viewModel::cancelRemoteAlarm
@@ -130,9 +141,10 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
             existing = editingAlarm,
             isSaving = uiState.isSaving,
             onDismiss = { showAlarmDialog = false },
-            onSave = { triggerAt, title, message, requiresConfirmation ->
-                viewModel.saveRemoteAlarm(editingAlarm, triggerAt, title, message, requiresConfirmation)
-                showAlarmDialog = false
+            onSave = { triggerAt, endAt, title, message, requiresConfirmation ->
+                viewModel.saveRemoteAlarm(editingAlarm, triggerAt, endAt, title, message, requiresConfirmation) {
+                    showAlarmDialog = false
+                }
             }
         )
     }
@@ -144,6 +156,8 @@ private fun AlarmListSection(
     hasMonitorPad: Boolean,
     alarms: List<ParentAlarmStatus>,
     error: String?,
+    isSaving: Boolean,
+    isRefreshingMonitorDevices: Boolean,
     onAdd: () -> Unit,
     onEdit: (RemoteAlarm) -> Unit,
     onCancel: (RemoteAlarm) -> Unit
@@ -159,9 +173,12 @@ private fun AlarmListSection(
                     Text("${childName} 的闹钟", fontWeight = FontWeight.Bold)
                     Text("由柠檬闹钟管家在目标 Pad 上执行", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                TextButton(onClick = onAdd, enabled = hasMonitorPad) { Text("新建") }
+                if (isSaving || isRefreshingMonitorDevices) {
+                    CircularProgressIndicator(modifier = Modifier.padding(end = 12.dp), strokeWidth = 2.dp)
+                }
+                TextButton(onClick = onAdd, enabled = hasMonitorPad && !isRefreshingMonitorDevices) { Text("新建") }
             }
-            if (!hasMonitorPad) {
+            if (!hasMonitorPad && !isRefreshingMonitorDevices) {
                 Text("尚未发现已绑定的监控 Pad，请先在目标 Pad 完成监控端绑定。", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
             }
             error?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
@@ -170,10 +187,7 @@ private fun AlarmListSection(
             }
             alarms.forEach { item ->
                 val alarm = item.alarm
-                val time = runCatching {
-                    Instant.parse(alarm.triggerAt).atZone(ZoneId.systemDefault())
-                        .format(DateTimeFormatter.ofPattern("M月d日 HH:mm"))
-                }.getOrDefault("时间格式无效")
+                val time = alarmTimeRangeLabel(alarm)
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(alarm.title, fontWeight = FontWeight.Medium)
@@ -193,6 +207,24 @@ private fun AlarmListSection(
     }
 }
 
+private fun alarmTimeRangeLabel(alarm: RemoteAlarm): String = runCatching {
+    val zone = runCatching { ZoneId.of(alarm.timezone) }.getOrDefault(ZoneId.systemDefault())
+    val start = Instant.parse(alarm.triggerAt).atZone(zone)
+    val end = Instant.parse(alarm.endAt).atZone(zone)
+    val dateFormatter = DateTimeFormatter.ofPattern("M月d日")
+    val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+    if (start.toLocalDate() == end.toLocalDate()) {
+        "${start.format(dateFormatter)} ${start.format(timeFormatter)}"
+    } else {
+        "${start.format(dateFormatter)} 至 ${end.format(dateFormatter)}，每日 ${start.format(timeFormatter)}"
+    }
+}.getOrElse {
+    runCatching {
+        Instant.parse(alarm.triggerAt).atZone(ZoneId.systemDefault())
+            .format(DateTimeFormatter.ofPattern("M月d日 HH:mm"))
+    }.getOrDefault("时间格式无效")
+}
+
 private fun deliveryLabel(item: ParentAlarmStatus): String = when (item.delivery?.status) {
     "pending" -> "等待 Pad 确认"
     "deployed" -> "Pad 已部署"
@@ -205,21 +237,41 @@ private fun deliveryLabel(item: ParentAlarmStatus): String = when (item.delivery
     else -> "等待下发"
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RemoteAlarmEditDialog(
     existing: RemoteAlarm?,
     isSaving: Boolean,
     onDismiss: () -> Unit,
-    onSave: (Instant, String, String, Boolean) -> Unit
+    onSave: (Instant, Instant, String, String, Boolean) -> Unit
 ) {
-    val formatter = remember { DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm") }
-    var timeText by remember(existing?.id) {
+    val dateFormatter = remember { DateTimeFormatter.ofPattern("yyyy年M月d日") }
+    val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
+    val defaultDateTime = remember { LocalDateTime.now().plusMinutes(5).withSecond(0).withNano(0) }
+    var startDate by remember(existing?.id) {
         mutableStateOf(
             existing?.triggerAt?.let {
-                runCatching { Instant.parse(it).atZone(ZoneId.systemDefault()).format(formatter) }.getOrNull()
-            } ?: LocalDateTime.now().plusMinutes(5).format(formatter)
+                runCatching { Instant.parse(it).atZone(ZoneId.systemDefault()).toLocalDate() }.getOrNull()
+            } ?: defaultDateTime.toLocalDate()
         )
     }
+    var endDate by remember(existing?.id) {
+        mutableStateOf(
+            existing?.endAt?.takeIf { it.isNotBlank() }?.let {
+                runCatching { Instant.parse(it).atZone(ZoneId.systemDefault()).toLocalDate() }.getOrNull()
+            } ?: defaultDateTime.toLocalDate()
+        )
+    }
+    var alarmTime by remember(existing?.id) {
+        mutableStateOf(
+            existing?.triggerAt?.let {
+                runCatching { Instant.parse(it).atZone(ZoneId.systemDefault()).toLocalTime() }.getOrNull()
+            } ?: defaultDateTime.toLocalTime()
+        )
+    }
+    var selectingStartDate by remember { mutableStateOf(true) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
     var title by remember(existing?.id) { mutableStateOf(existing?.title ?: "起床提醒") }
     var message by remember(existing?.id) { mutableStateOf(existing?.message ?: "") }
     var requiresConfirmation by remember(existing?.id) { mutableStateOf(existing?.requiresConfirmation ?: true) }
@@ -230,14 +282,28 @@ private fun RemoteAlarmEditDialog(
         title = { Text(if (existing == null) "新建远程闹钟" else "编辑远程闹钟") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("时间使用当前手机时区；Pad 离线时也会在已部署的时间响铃。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(timeText, { timeText = it }, label = { Text("时间（yyyy-MM-dd HH:mm）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text("在生效日期范围内，Pad 会每天在指定时间响铃；开始日和结束日均包含。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                DateTimeRangeField(
+                    label = "开始日期",
+                    value = startDate.format(dateFormatter),
+                    onClick = { selectingStartDate = true; showDatePicker = true }
+                )
+                DateTimeRangeField(
+                    label = "结束日期",
+                    value = endDate.format(dateFormatter),
+                    onClick = { selectingStartDate = false; showDatePicker = true }
+                )
+                DateTimeRangeField(
+                    label = "每日提醒时间",
+                    value = alarmTime.format(timeFormatter),
+                    onClick = { showTimePicker = true }
+                )
                 OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(message, { message = it }, label = { Text("提醒内容（可选）") }, modifier = Modifier.fillMaxWidth())
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
                         Text("需要手动确认", fontSize = 14.sp)
-                        Text("一期固定为手动关闭，后续可扩展答题等条件", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("开启后由孩子手动关闭本次提醒；最长响铃 60 分钟", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = requiresConfirmation, onCheckedChange = { requiresConfirmation = it })
                 }
@@ -246,12 +312,59 @@ private fun RemoteAlarmEditDialog(
         },
         confirmButton = {
             TextButton(enabled = !isSaving, onClick = {
-                val trigger = runCatching {
-                    LocalDateTime.parse(timeText.trim(), formatter).atZone(ZoneId.systemDefault()).toInstant()
-                }.getOrNull()
-                if (trigger == null) error = "时间格式不正确" else onSave(trigger, title, message, requiresConfirmation)
+                val trigger = LocalDateTime.of(startDate, alarmTime).atZone(ZoneId.systemDefault()).toInstant()
+                val end = LocalDateTime.of(endDate, alarmTime).atZone(ZoneId.systemDefault()).toInstant()
+                if (end.isBefore(trigger)) error = "结束日期不能早于开始日期" else onSave(trigger, end, title, message, requiresConfirmation)
             }) { Text(if (isSaving) "保存中" else "保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+
+    if (showDatePicker) {
+        val selected = if (selectingStartDate) startDate else endDate
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = selected.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        val date = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
+                        if (selectingStartDate) startDate = date else endDate = date
+                    }
+                    showDatePicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("取消") } }
+        ) { DatePicker(state = datePickerState) }
+    }
+
+    if (showTimePicker) {
+        val timePickerState = rememberTimePickerState(alarmTime.hour, alarmTime.minute, is24Hour = true)
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            title = { Text("选择每日提醒时间") },
+            text = { TimePicker(state = timePickerState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    alarmTime = LocalTime.of(timePickerState.hour, timePickerState.minute)
+                    showTimePicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { showTimePicker = false }) { Text("取消") } }
+        )
+    }
+}
+
+@Composable
+private fun DateTimeRangeField(label: String, value: String, onClick: () -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = {},
+        readOnly = true,
+        label = { Text(label) },
+        modifier = Modifier.fillMaxWidth(),
+        trailingIcon = { TextButton(onClick = onClick) { Text("选择") } }
     )
 }

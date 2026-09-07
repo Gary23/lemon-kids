@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -53,8 +55,9 @@ class SupabaseTaskRepository @Inject constructor(
 
     override fun observeTodayTasks(childId: String, date: String): Flow<List<Task>> =
         callbackFlow {
+            val fetchMutex = Mutex()
             suspend fun fetch() {
-                try {
+                fetchMutex.withLock { try {
                     if (!isSessionValid()) return
                     val tasks = postgrest.from("tasks").select {
                         filter { eq("child_id", childId); eq("due_date", date) }
@@ -62,11 +65,11 @@ class SupabaseTaskRepository @Inject constructor(
                     trySend(tasks.filter { it.deletedAt == null })
                 } catch (error: Exception) {
                     Log.w(TAG, "读取当日任务失败 childId=$childId", error)
-                }
+                } }
             }
             fetch()
             launch { taskRefreshEvents.collect { fetch() } }
-            launch { while (true) { delay(60_000); fetch() } }
+            launch { while (true) { delay(120_000); fetch() } }
             awaitClose { }
         }
 
@@ -74,8 +77,9 @@ class SupabaseTaskRepository @Inject constructor(
         observeTodayTasks(childId, date)
 
     override fun observeChildTasks(childId: String): Flow<List<Task>> = callbackFlow {
+        val fetchMutex = Mutex()
         suspend fun fetch() {
-            try {
+            fetchMutex.withLock { try {
                 if (!isSessionValid()) return
                 val tasks = postgrest.from("tasks").select {
                     filter { eq("child_id", childId) }
@@ -84,18 +88,19 @@ class SupabaseTaskRepository @Inject constructor(
                 } catch (error: Exception) {
                     // 保留上一次已展示的数据，下一次轮询或写入信号会重试。
                     Log.w(TAG, "读取孩子任务失败 childId=$childId", error)
-                }
+                } }
         }
         fetch()
         launch { taskRefreshEvents.collect { fetch() } }
-        launch { while (true) { delay(60_000); fetch() } }
+        launch { while (true) { delay(120_000); fetch() } }
         awaitClose { }
     }
 
     override fun observeDeletedTasks(familyId: String): Flow<List<Task>> =
         callbackFlow {
+            val fetchMutex = Mutex()
             suspend fun fetch() {
-                try {
+                fetchMutex.withLock { try {
                     if (!isSessionValid()) return
                     val tasks = postgrest.from("tasks").select {
                         filter { eq("family_id", familyId) }
@@ -103,11 +108,11 @@ class SupabaseTaskRepository @Inject constructor(
                     trySend(tasks.filter { it.deletedAt != null })
                 } catch (error: Exception) {
                     Log.w(TAG, "读取回收站任务失败 familyId=$familyId", error)
-                }
+                } }
             }
             fetch()
             launch { taskRefreshEvents.collect { fetch() } }
-            launch { while (true) { delay(60_000); fetch() } }
+            launch { while (true) { delay(120_000); fetch() } }
             awaitClose { }
         }
 
@@ -182,7 +187,8 @@ class SupabaseTaskRepository @Inject constructor(
                 "recurrence_end_date" to task.recurrenceEndDate
             )
         ) { filter { eq("id", task.id) } }
-    }
+        Unit
+    }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun updateFutureTasksInSeries(seriesId: String, fromDate: String, task: Task): Result<Unit> = runCatching {
         postgrest.from("tasks").update(
@@ -204,7 +210,8 @@ class SupabaseTaskRepository @Inject constructor(
                 eq("status", "pending")
             }
         }
-    }
+        Unit
+    }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun deleteTask(taskId: String): Result<Unit> = runCatching {
         postgrest.rpc(function = "cancel_task", parameters = mapOf("p_task_id" to taskId))

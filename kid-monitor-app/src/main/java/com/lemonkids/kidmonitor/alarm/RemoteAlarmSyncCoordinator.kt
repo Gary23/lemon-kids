@@ -43,13 +43,21 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
                     report(alarm.id, alarm.revision, AlarmDeliveryStatus.MISSED, AlarmEventType.MISSED, "trigger_at 无效")
                     return@forEach
                 }
-            // 设备在离线或关机期间错过的闹钟不能在恢复网络后“补响”。先以同版本禁用本地项，
-            // 让后续重启恢复也不会重建它；家长端据此展示 missed，是否补提醒交给后续产品规则。
-            if (alarm.enabled && triggerAt <= System.currentTimeMillis()) {
+            val endAt = runCatching { Instant.parse(alarm.endAt).toEpochMilli() }
+                .getOrElse {
+                    // 兼容没有日期范围的历史单点闹钟。
+                    triggerAt
+                }
+            if (endAt < triggerAt) {
+                report(alarm.id, alarm.revision, AlarmDeliveryStatus.MISSED, AlarmEventType.MISSED, "结束日期不能早于开始日期")
+                return@forEach
+            }
+            // 日期范围闹钟只登记范围内下一次尚未来临的每日时刻；不会因前几天未部署而补响。
+            if (alarm.enabled && AlarmOccurrence.nextInRange(triggerAt, endAt, alarm.timezone) == null) {
                 remoteAlarmApplier.markMissed(
-                    RemoteAlarmSnapshot(alarm.id, alarm.revision, triggerAt, alarm.title, alarm.message, false, alarm.requiresConfirmation)
+                    RemoteAlarmSnapshot(alarm.id, alarm.revision, triggerAt, endAt, alarm.timezone, alarm.title, alarm.message, false, alarm.requiresConfirmation)
                 )
-                report(alarm.id, alarm.revision, AlarmDeliveryStatus.MISSED, AlarmEventType.MISSED, "Pad 未在触发时间前完成部署")
+                report(alarm.id, alarm.revision, AlarmDeliveryStatus.MISSED, AlarmEventType.MISSED, "日期范围内已无待执行提醒")
                 return@forEach
             }
             val result = remoteAlarmApplier.apply(
@@ -57,6 +65,8 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
                     alarmId = alarm.id,
                     revision = alarm.revision,
                     triggerAtMillis = triggerAt,
+                    endAtMillis = endAt,
+                    timezone = alarm.timezone,
                     title = alarm.title,
                     message = alarm.message,
                     enabled = alarm.enabled,

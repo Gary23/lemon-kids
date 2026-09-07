@@ -3,7 +3,10 @@ package com.lemonkids.shared.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** 家长创建的逻辑闹钟；时间以 UTC ISO-8601 保存，展示时再按设备时区转换。 */
+/**
+ * 家长创建的日期范围闹钟；时间以 UTC ISO-8601 保存，展示时按 [timezone] 转回本地日期。
+ * triggerAt 和 endAt 分别表示生效首日、末日的同一每日提醒时刻，范围两端均包含。
+ */
 @Serializable
 data class RemoteAlarm(
     @SerialName("id") val id: String = "",
@@ -12,6 +15,8 @@ data class RemoteAlarm(
     @SerialName("target_device_id") val targetDeviceId: String = "",
     @SerialName("revision") val revision: Long = 1,
     @SerialName("trigger_at") val triggerAt: String = "",
+    /** 生效末日的每日提醒时刻，和 triggerAt 共同组成日期范围。 */
+    @SerialName("end_at") val endAt: String = "",
     @SerialName("timezone") val timezone: String = "Asia/Shanghai",
     @SerialName("title") val title: String = "",
     @SerialName("message") val message: String = "",

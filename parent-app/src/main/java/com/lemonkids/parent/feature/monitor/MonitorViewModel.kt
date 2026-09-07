@@ -33,7 +33,8 @@ data class MonitorUiState(
     val limitDialogCooldownMinutes: Int = 0,
     val editingLimitId: String? = null,
     val limitDialogError: String? = null,
-    val isSavingLimit: Boolean = false
+    val isSavingLimit: Boolean = false,
+    val deletingLimitId: String? = null
 )
 
 data class AppUsageUiItem(
@@ -201,10 +202,14 @@ class MonitorViewModel @Inject constructor(
 
             result.fold(
                 onSuccess = {
+                    val latest = _uiState.value
+                    val saved = limit.toUiItem()
                     _uiState.value = _uiState.value.copy(
                         showLimitDialog = false,
                         isSavingLimit = false,
-                        limitDialogError = null
+                        limitDialogError = null,
+                        appLimits = if (existingId == null) latest.appLimits + saved
+                        else latest.appLimits.map { if (it.id == saved.id) saved else it }
                     )
                 },
                 onFailure = { error ->
@@ -224,8 +229,32 @@ class MonitorViewModel @Inject constructor(
 
     fun removeLimit(limitId: String) {
         viewModelScope.launch {
-            appUsageRepository.removeAppLimit(limitId)
+            val beforeDelete = _uiState.value.appLimits
+            _uiState.value = _uiState.value.copy(
+                deletingLimitId = limitId,
+                appLimits = beforeDelete.filterNot { it.id == limitId }
+            )
+            appUsageRepository.removeAppLimit(limitId).fold(
+                onSuccess = { _uiState.value = _uiState.value.copy(deletingLimitId = null) },
+                onFailure = { error ->
+                    _uiState.value = _uiState.value.copy(
+                        deletingLimitId = null,
+                        appLimits = beforeDelete,
+                        limitDialogError = "删除失败：${error.message ?: "请稍后重试"}"
+                    )
+                }
+            )
         }
     }
+
+    private fun AppLimit.toUiItem() = AppLimitUiItem(
+        id = id,
+        appName = appName,
+        packageName = packageName,
+        dailyLimitMinutes = dailyLimitMinutes,
+        singleSessionMinutes = singleSessionMinutes,
+        cooldownMinutes = cooldownMinutes,
+        isActive = isActive
+    )
 
 }

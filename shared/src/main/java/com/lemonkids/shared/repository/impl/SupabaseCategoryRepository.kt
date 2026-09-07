@@ -12,7 +12,11 @@ import io.github.jan.supabase.postgrest.rpc
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -30,10 +34,12 @@ class SupabaseCategoryRepository @Inject constructor(
     }
 
     private val postgrest get() = supabase.pluginManager.getPlugin(Postgrest)
+    private val categoryRefreshEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
     override fun observeCategories(familyId: String): Flow<List<Category>> = callbackFlow {
+        val fetchMutex = Mutex()
         suspend fun fetch() {
-            try {
+            fetchMutex.withLock { try {
                 val list = postgrest.from("categories").select {
                     filter { eq("family_id", familyId) }
                     order("created_at", Order.ASCENDING)
@@ -41,10 +47,12 @@ class SupabaseCategoryRepository @Inject constructor(
                 trySend(list)
             } catch (e: Exception) {
                 Log.e(TAG, "分类查询失败 familyId=$familyId", e)
-            }
+            } }
         }
         fetch()
-        while (true) { delay(10000); fetch() }
+        launch { categoryRefreshEvents.collect { fetch() } }
+        // 分类变更在本端乐观更新，轮询仅用于跨设备校准。
+        while (true) { delay(300_000); fetch() }
     }
 
     override suspend fun createCategory(category: Category): Result<String> = runCatching {
@@ -57,7 +65,7 @@ class SupabaseCategoryRepository @Inject constructor(
                 "color" to category.color
             )
         ) { select() }.decodeSingle<Category>().id
-    }.onFailure { e ->
+    }.onSuccess { categoryRefreshEvents.tryEmit(Unit) }.onFailure { e ->
         Log.e(TAG, "新增分类失败 familyId=${category.familyId}, name=${category.name}", e)
     }
 
@@ -71,15 +79,18 @@ class SupabaseCategoryRepository @Inject constructor(
                 "p_color" to category.color
             )
         )
-    }
+        Unit
+    }.onSuccess { categoryRefreshEvents.tryEmit(Unit) }
 
     override suspend fun deleteCategory(categoryId: String): Result<Unit> = runCatching {
         postgrest.from("categories").delete { filter { eq("id", categoryId) } }
-    }
+        Unit
+    }.onSuccess { categoryRefreshEvents.tryEmit(Unit) }
 
     override fun observeCategoryTaskTemplates(familyId: String): Flow<List<CategoryTaskTemplate>> = callbackFlow {
+        val fetchMutex = Mutex()
         suspend fun fetch() {
-            try {
+            fetchMutex.withLock { try {
                 val list = postgrest.from("category_task_templates").select {
                     filter { eq("family_id", familyId) }
                     order("sort_order", Order.ASCENDING)
@@ -87,10 +98,11 @@ class SupabaseCategoryRepository @Inject constructor(
                 trySend(list)
             } catch (e: Exception) {
                 Log.e(TAG, "分类任务包查询失败 familyId=$familyId", e)
-            }
+            } }
         }
         fetch()
-        while (true) { delay(10_000); fetch() }
+        launch { categoryRefreshEvents.collect { fetch() } }
+        while (true) { delay(300_000); fetch() }
         awaitClose()
     }
 
@@ -109,6 +121,7 @@ class SupabaseCategoryRepository @Inject constructor(
             )
             Unit
         }.onSuccess {
+            categoryRefreshEvents.tryEmit(Unit)
             Log.i(TAG, "分类任务保存成功 categoryId=$categoryId taskCount=${templateIds.distinct().size}")
         }.onFailure { error ->
             Log.e(TAG, "分类任务保存失败 categoryId=$categoryId taskCount=${templateIds.distinct().size}", error)
