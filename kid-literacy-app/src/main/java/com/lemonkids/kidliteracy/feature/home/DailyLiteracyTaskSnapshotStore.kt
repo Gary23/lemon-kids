@@ -30,11 +30,41 @@ class DailyLiteracyTaskSnapshotStore @Inject constructor(
     )
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** 有当天快照时始终返回该快照；没有候选字时不创建空快照。 */
+    /** 返回本机已有的当天快照，供首次升级时迁入服务端或网络失败时离线回退。 */
+    fun getToday(childId: String): DailyLiteracyTaskSnapshot? {
+        if (childId.isBlank()) return null
+        return read(childId)?.takeIf { it.date == today() }?.limitCharacters(DAILY_TASK_CHARACTER_LIMIT)
+    }
+
+    /**
+     * 将服务端当天快照写入本机缓存。教学内容和顺序由服务端固定，完成标记仍保留，
+     * 以免完成接口已成功、首页刷新前出现闪回。
+     */
+    fun replaceToday(
+        childId: String,
+        characters: List<ChildLiteracyCharacter>
+    ): DailyLiteracyTaskSnapshot? {
+        if (childId.isBlank() || characters.isEmpty()) return null
+        val displayedCharacters = characters.take(DAILY_TASK_CHARACTER_LIMIT)
+        val displayedIds = displayedCharacters.map { it.id }.toSet()
+        // 本机完成标记只能覆盖当前 Pad；另一台 Pad 完成后，服务端返回的 learned_at
+        // 才是跨设备的完成事实。两者合并后，B Pad 不会把同一批已完成字恢复成未完成。
+        val completedIds = (
+            getToday(childId)?.completedCharacterIds.orEmpty() +
+                displayedCharacters.filter { it.learnedAt != null }.map { it.id }
+            ).intersect(displayedIds)
+        return DailyLiteracyTaskSnapshot(
+            date = today(),
+            characters = displayedCharacters,
+            completedCharacterIds = completedIds
+        ).also { write(childId, it) }
+    }
+
+    /** 网络不可用时的本地回退；正常路径应由服务端快照决定当天选字。 */
     fun getOrCreate(childId: String, candidates: List<ChildLiteracyCharacter>): DailyLiteracyTaskSnapshot? {
         if (childId.isBlank()) return null
         val today = today()
-        read(childId)?.takeIf { it.date == today }?.let { snapshot ->
+        getToday(childId)?.let { snapshot ->
             // 学习任务的字、词、句与顺序当天固定，但 TTS 是异步生成的。必须用服务端
             // 最新的 URL/版本刷新快照，否则早于音频生成创建的当天任务会一直走系统 TTS。
             // 首页任务数量调整为 6 个后，同时裁剪旧快照，确保更新后当日也立即遵守新上限。

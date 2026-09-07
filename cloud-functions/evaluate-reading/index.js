@@ -8,6 +8,7 @@
  *   复用，参考文本仍由客户端从已授权读取的教学内容中按当前字、词、句单独传给腾讯。
  * - issue_session：旧版客户端兼容接口；同时校验指定教学内容并签发短期凭证。
  * - record_help_request：按被长按的字是否属于对应字库，记录孩子请求朗读的动作。
+ * - get_literacy_practice_progress / record_literacy_practice_progress：读写当天字、词、句朗读进度，供同码多设备同步。
  * - complete_literacy_character：本地完成字、词、句练习后，按主字是否点读转入已认识字表或字库。
  * - archive_recognized_character：将一条已认识字存入字库，并移除其复习卡。
  * - preview_literacy_tasks：基于字库和输入汉字生成可编辑的词、句预览。
@@ -857,6 +858,62 @@ async function prepareEvaluation(childId, body) {
   return { refText: JSON.stringify({ wordList }), textMode: 1, targetText: item.text };
 }
 
+function chinaToday() {
+  // sv-SE 的日期格式固定为 YYYY-MM-DD，适合直接用于 Supabase 的 date 过滤条件。
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date());
+}
+
+async function loadPracticeProgress(childId) {
+  const progressDate = chinaToday();
+  const rows = await supabase(
+    `child_literacy_practice_progress?child_id=eq.${encodeURIComponent(childId)}` +
+    `&progress_date=eq.${encodeURIComponent(progressDate)}` +
+    '&select=content_source,literacy_character_id,target_type,item_order,correct_readings'
+  );
+  return (Array.isArray(rows) ? rows : []).map((item) => ({
+    contentSource: item.content_source,
+    literacyCharacterId: item.literacy_character_id,
+    targetType: item.target_type,
+    itemOrder: item.item_order,
+    correctReadings: item.correct_readings
+  }));
+}
+
+async function recordPracticeProgress(childId, body) {
+  if (!Number.isInteger(body.itemOrder) || body.itemOrder < 0) {
+    throw new HttpError(400, 'itemOrder 必须是非负整数');
+  }
+  if (!Number.isInteger(body.correctReadings) || body.correctReadings < 0 || body.correctReadings > 3) {
+    throw new HttpError(400, 'correctReadings 必须是 0 到 3 的整数');
+  }
+  // 复用评测接口的服务端内容校验：客户端只能上报自己拥有的字、词、句，且顺序不能伪造。
+  const target = await loadTarget(
+    childId,
+    body.literacyCharacterId,
+    body.targetType,
+    body.sentenceText,
+    body.wordText,
+    body.contentSource
+  );
+  const expectedOrder = target.targetType === 'character' ? 0 : target.examples[0].sortOrder;
+  if (body.itemOrder !== expectedOrder) {
+    throw new HttpError(400, 'itemOrder 与认字内容不匹配');
+  }
+  const stored = await supabase('rpc/record_literacy_practice_progress', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      p_child_id: childId,
+      p_content_source: target.contentSource,
+      p_literacy_character_id: target.character.id,
+      p_target_type: target.targetType,
+      p_item_order: expectedOrder,
+      p_correct_readings: body.correctReadings
+    })
+  });
+  return Number(stored);
+}
+
 async function loadPhoneticAssets(childId, literacyCharacterId, contentSource = 'task') {
   if (!['task', 'recognized'].includes(contentSource)) throw new HttpError(400, 'contentSource 必须是 task 或 recognized');
   const target = await loadTarget(childId, literacyCharacterId, 'character', undefined, undefined, contentSource);
@@ -1257,6 +1314,13 @@ async function handler(event) {
   }
   if (body.action === 'prepare_evaluation') {
     return response(200, { evaluation: await prepareEvaluation(childId, body) });
+  }
+  if (body.action === 'get_literacy_practice_progress') {
+    return response(200, { progress: await loadPracticeProgress(childId) });
+  }
+  if (body.action === 'record_literacy_practice_progress') {
+    const correctReadings = await recordPracticeProgress(childId, body);
+    return response(200, { status: 'recorded', correctReadings });
   }
   if (body.action === 'get_phonetic_assets') {
     return response(200, await loadPhoneticAssets(childId, body.literacyCharacterId, body.contentSource));

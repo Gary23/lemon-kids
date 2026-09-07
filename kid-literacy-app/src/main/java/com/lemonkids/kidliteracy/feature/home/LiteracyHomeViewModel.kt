@@ -2,6 +2,7 @@ package com.lemonkids.kidliteracy.feature.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.util.Log
 import com.lemonkids.shared.model.ChildLiteracyCharacter
 import com.lemonkids.shared.model.RecognizedCharacter
 import com.lemonkids.shared.repository.ChildLiteracyCharacterRepository
@@ -58,7 +59,7 @@ class LiteracyHomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(LiteracyHomeUiState())
     val uiState: StateFlow<LiteracyHomeUiState> = _uiState.asStateFlow()
 
-    /** 每次回到首页都重新查询昨天及更早收录的已认识字；待认识字只在当天首次加载时生成快照。 */
+    /** 每次回到首页都刷新已认识字；当天待认识字由服务端共享快照固定。 */
     fun load(childId: String) {
         if (childId.isBlank()) return
         viewModelScope.launch {
@@ -70,14 +71,42 @@ class LiteracyHomeViewModel @Inject constructor(
                 )
             }
             val literacyResult = async { characterRepository.getCharacters(childId) }
+            // 将旧版本已有的本地当天快照作为首次升级时的候选，避免升级当天换题；
+            // 服务端已有快照时它不会覆盖服务端结果。
+            val localTodayTask = dailyTaskSnapshotStore.getToday(childId)
+            val todayTaskResult = async {
+                characterRepository.getOrCreateTodayCharacters(
+                    childId = childId,
+                    preferredCharacterIds = localTodayTask?.characters.orEmpty().map { it.id }
+                )
+            }
             val recognized = recognizedResult.await()
             val literacy = literacyResult.await()
+            val todayTasks = todayTaskResult.await()
 
-            if (recognized.isSuccess || literacy.isSuccess) {
-                val todayTask = dailyTaskSnapshotStore.getOrCreate(
-                    childId,
-                    literacy.getOrNull().orEmpty().filterNot { it.isFullyLearned() }
+            todayTasks.onSuccess { tasks ->
+                Log.i(
+                    DAILY_SNAPSHOT_LOG_TAG,
+                    "当天任务快照已加载：${tasks.size} 个，其中 ${tasks.count { it.learnedAt != null }} 个已完成"
                 )
+            }.onFailure { error ->
+                // 不阻塞离线使用，但必须保留原因，避免服务端快照失败后静默变更当天选字。
+                Log.w(DAILY_SNAPSHOT_LOG_TAG, "当天任务快照加载失败，已回退本机缓存", error)
+            }
+
+            if (recognized.isSuccess || literacy.isSuccess || todayTasks.isSuccess) {
+                val todayTask = if (todayTasks.isSuccess) {
+                    todayTasks.getOrNull()
+                        .orEmpty()
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { dailyTaskSnapshotStore.replaceToday(childId, it) }
+                } else {
+                    // 数据库快照暂时不可达时，保持原有本机当天任务，避免离线时换题。
+                    dailyTaskSnapshotStore.getOrCreate(
+                        childId,
+                        literacy.getOrNull().orEmpty().filterNot { it.isFullyLearned() }
+                    )
+                }
                 _uiState.value = LiteracyHomeUiState(
                     isLoading = false,
                     dataVersion = _uiState.value.dataVersion + 1,
@@ -98,6 +127,7 @@ private fun ChildLiteracyCharacter.isFullyLearned(): Boolean = learnedAt != null
 private fun todayStartInChina() = LocalDate.now(CHINA_ZONE).atStartOfDay(CHINA_ZONE).toInstant()
 
 private val CHINA_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
+private const val DAILY_SNAPSHOT_LOG_TAG = "LiteracyDailySnapshot"
 
 private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGroup> =
     take(18).chunked(6).mapIndexed { index, characters ->

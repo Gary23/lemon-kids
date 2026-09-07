@@ -151,6 +151,7 @@ import com.lemonkids.kidliteracy.feature.reading.PreparedEvaluation
 import com.lemonkids.kidliteracy.feature.reading.LiteracyPracticeProgressStore
 import com.lemonkids.kidliteracy.feature.reading.LiteracyAudioPlayer
 import com.lemonkids.kidliteracy.feature.reading.practiceProgressKey
+import com.lemonkids.kidliteracy.feature.reading.practiceProgressSyncKey
 import com.lemonkids.kidliteracy.feature.reading.requiredCorrectReadings
 import com.lemonkids.shared.model.ChildLiteracyCharacter
 import com.lemonkids.shared.model.RecognizedCharacter
@@ -439,6 +440,21 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
         }
         val updatedCorrectReadings = practiceProgressStore.recordCorrectReadings(target, correctReadings)
         practiceProgress = practiceProgressStore.snapshot()
+        // 本地写入已完成；上传只在协程中静默执行，绝不能阻塞孩子开始下一轮朗读。
+        scope.launch {
+            readingEvaluationViewModel.syncPracticeProgress(target, updatedCorrectReadings)
+                .onSuccess { confirmedCount ->
+                    practiceProgressStore.mergeRemoteProgress(
+                        mapOf(target.practiceProgressSyncKey() to confirmedCount),
+                        listOf(target)
+                    )
+                    practiceProgressStore.markProgressSynced(target.practiceProgressKey(), confirmedCount)
+                    practiceProgress = practiceProgressStore.snapshot()
+                }
+                .onFailure { error ->
+                    android.util.Log.w("LiteracyProgress", "朗读进度将在稍后重试上传", error)
+                }
+        }
         if (target.contentSource == ReadingContentSource.TASK) {
             homeState.groups.flatMap { it.learningCharacters }
                 .firstOrNull { it.id == target.literacyCharacterId }
@@ -561,6 +577,42 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
             readingEvaluationViewModel.beginDailyEvaluationCache(userId, batchId)
             // 首页静默预热一份可供所有项目复用的短期腾讯凭证。
             readingEvaluationViewModel.beginPageCredentials()
+
+            val targets = homeState.groups.flatMap(LiteracyCharacterGroup::practiceTargetsForSync)
+            readingEvaluationViewModel.loadPracticeProgress()
+                .onSuccess { remoteProgress ->
+                    practiceProgressStore.mergeRemoteProgress(
+                        remoteProgress.associate { it.syncKey() to it.correctReadings },
+                        targets
+                    )
+                    practiceProgress = practiceProgressStore.snapshot()
+
+                    // 离线时留下的记录在首页恢复网络后静默补传；只重试当前首页仍存在的项目。
+                    practiceProgressStore.queueExistingProgressForSync()
+                    val targetsByProgressKey = targets.associateBy(ReadingTarget::practiceProgressKey)
+                    practiceProgressStore.pendingProgress().forEach { (progressKey, count) ->
+                        targetsByProgressKey[progressKey]?.let { target ->
+                            scope.launch {
+                                readingEvaluationViewModel.syncPracticeProgress(target, count)
+                                    .onSuccess { confirmedCount ->
+                                        practiceProgressStore.mergeRemoteProgress(
+                                            mapOf(target.practiceProgressSyncKey() to confirmedCount),
+                                            listOf(target)
+                                        )
+                                        practiceProgressStore.markProgressSynced(progressKey, confirmedCount)
+                                        practiceProgress = practiceProgressStore.snapshot()
+                                    }
+                                    .onFailure { error ->
+                                        android.util.Log.w("LiteracyProgress", "待上传朗读进度同步失败", error)
+                                    }
+                            }
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    // 云端读取失败不影响本地继续学习；待上传标记会留到下次首页加载。
+                    android.util.Log.w("LiteracyProgress", "读取共享朗读进度失败", error)
+                }
         }
     }
 
@@ -1143,6 +1195,35 @@ private fun ChildLiteracyCharacter.practiceTargets(): List<ReadingTarget> = buil
     sentences.forEachIndexed { index, example ->
         example.text.takeIf { it.isNotBlank() }?.let { text ->
             add(ReadingTarget(id, "sentence", text, audioUrl = example.audioUrl, audioVersion = example.audioVersion, itemOrder = index, sentenceText = text))
+        }
+    }
+}
+
+/** 首页当前可见的所有学习项目，用于将云端进度精确映射回本地卡片。 */
+private fun LiteracyCharacterGroup.practiceTargetsForSync(): List<ReadingTarget> = buildList {
+    learningCharacters.forEach { addAll(it.practiceTargets()) }
+    recognizedCharacters.forEach { character ->
+        add(
+            ReadingTarget(
+                literacyCharacterId = character.id,
+                targetType = "character",
+                displayText = character.character,
+                contentSource = ReadingContentSource.RECOGNIZED
+            )
+        )
+        character.words.forEachIndexed { index, example ->
+            example.text.takeIf { it.isNotBlank() }?.let { text ->
+                add(
+                    ReadingTarget(
+                        literacyCharacterId = character.id,
+                        targetType = "word",
+                        displayText = text,
+                        itemOrder = index,
+                        wordText = text,
+                        contentSource = ReadingContentSource.RECOGNIZED
+                    )
+                )
+            }
         }
     }
 }
