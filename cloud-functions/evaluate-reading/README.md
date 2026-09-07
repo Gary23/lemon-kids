@@ -35,7 +35,7 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-当前部署包为 `evaluate-reading-web-20260903-practice-progress-sync.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`、`supabase/sql/20260903_literacy_practice_progress_sync.sql`；后两个迁移让智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；最后一个迁移创建同码多设备共享的当天朗读进度表。TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+当前部署包为 `evaluate-reading-web-20260908-practice-progress-sync.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`、`supabase/sql/20260903_literacy_practice_progress_sync.sql`、`supabase/sql/20260907_literacy_daily_task_snapshot.sql`；后两个迁移让智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；朗读进度迁移创建同码多设备共享的当天进度表，任务快照迁移则固定同一孩子当天各 Pad 展示的待认识任务及顺序。TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
 
 待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
 [`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
