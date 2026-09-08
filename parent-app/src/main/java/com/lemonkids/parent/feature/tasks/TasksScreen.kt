@@ -25,13 +25,13 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +42,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,6 +68,7 @@ fun TasksScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     // 列表页是家长端首页，只聚焦今天；历史和未来任务统一在日历中查看。
     val todayTasks = uiState.tasks.filter { it.dueDate == LocalDate.now().toString() }
+    var deleteRequest by remember { mutableStateOf<CategoryDeleteRequest?>(null) }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -112,15 +116,6 @@ fun TasksScreen(
                 windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp)
             )
 
-            if (uiState.childUsers.size > 1) {
-                ChildFilterRow(
-                    children = uiState.childUsers,
-                    selectedId = uiState.selectedChildId,
-                    onChildSelected = { viewModel.loadTasksForChild(it) }
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-
             uiState.errorMessage?.let { message ->
                 Text(
                     text = message,
@@ -134,6 +129,9 @@ fun TasksScreen(
                     CalendarView(
                         onEditTask = onEditTask,
                         onDeleteTask = { viewModel.deleteTask(it) },
+                        onDeleteCategoryTasks = { label, taskIds ->
+                            deleteRequest = CategoryDeleteRequest(label, taskIds)
+                        },
                         onCreateTask = { date ->
                             viewModel.onDateClicked(date)
                             onCreateTask()
@@ -153,23 +151,26 @@ fun TasksScreen(
                 }
                 else -> {
                     Box(Modifier.fillMaxSize()) {
-                        val grouped = todayTasks.groupBy { it.categoryName }
-                            // 按 categories 列表的创建顺序排序，保证折叠项顺序稳定
-                            val catNames = uiState.categories.map { it.name }
-                            val orderedKeys = catNames.filter { it in grouped.keys } +
-                                grouped.keys.filter { it !in catNames }
+                        val tasksByChild = todayTasks.groupBy { it.childId }
+                        val orderedChildIds = uiState.childUsers.map { it.uid }.filter { it in tasksByChild } +
+                            tasksByChild.keys.filter { it !in uiState.childUsers.map { child -> child.uid } }
+                        val categoryKeys = tasksByChild.flatMap { (childId, tasks) ->
+                            tasks.map { "$childId:${it.categoryName}" }.distinct()
+                        }.toSet()
 
                         LazyColumn(
                             modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             item {
-                                val allExpanded = grouped.keys.all { uiState.expandedCategories.contains(it) }
+                                val allExpanded = categoryKeys.isNotEmpty() && categoryKeys.all {
+                                    uiState.expandedCategories.contains(it)
+                                }
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                     horizontalArrangement = Arrangement.End
                                 ) {
-                                    TextButton(onClick = { viewModel.toggleCollapseAll() }) {
+                                    TextButton(onClick = { viewModel.toggleCollapseAll(categoryKeys) }) {
                                         Text(
                                             if (allExpanded) "全部折叠" else "全部展开",
                                             fontSize = 13.sp
@@ -178,31 +179,57 @@ fun TasksScreen(
                                 }
                             }
 
-                            for (categoryName in orderedKeys) {
-                                val tasks = grouped[categoryName] ?: continue
-                                val displayName = when (categoryName) {
-                                    "other", "" -> "默认"
-                                    else -> categoryName
-                                }
-                                val isExpanded = uiState.expandedCategories.contains(categoryName)
-                                item(key = "cat_$categoryName") {
-                                    CategoryHeader(
-                                        name = displayName,
-                                        count = tasks.size,
-                                        isExpanded = isExpanded,
-                                        onClick = { viewModel.toggleCategoryExpand(categoryName) }
+                            for (childId in orderedChildIds) {
+                                val childTasks = tasksByChild[childId] ?: continue
+                                val childName = uiState.childUsers.find { it.uid == childId }?.name
+                                    ?: childTasks.firstOrNull()?.childName.orEmpty().ifBlank { "孩子" }
+                                item(key = "child_$childId") {
+                                    Text(
+                                        "$childName 今日任务",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
                                     )
                                 }
-                                if (isExpanded) {
-                                    items(tasks, key = { "${it.id}_${it.dueDate}" }) { task ->
-                                        TaskRow(
-                                            task = task,
-                                            isManageMode = uiState.isManageMode,
-                                            isSelected = uiState.selectedTaskIds.contains(task.id),
-                                            onToggleSelect = { viewModel.toggleTaskSelection(task.id) },
-                                            onEdit = { onEditTask(task.id) },
-                                            onDelete = { viewModel.deleteTask(task.id) }
+                                val grouped = childTasks.groupBy { it.categoryName }
+                                val categoryNames = uiState.categories.map { it.name }
+                                val orderedCategoryNames = categoryNames.filter { it in grouped } +
+                                    grouped.keys.filter { it !in categoryNames }
+                                for (categoryName in orderedCategoryNames) {
+                                    val tasks = grouped[categoryName] ?: continue
+                                    val displayName = when (categoryName) {
+                                        "other", "" -> "默认"
+                                        else -> categoryName
+                                    }
+                                    val categoryKey = "$childId:$categoryName"
+                                    val isExpanded = uiState.expandedCategories.contains(categoryKey)
+                                    val cancellableIds = tasks.filter { it.isCancellableByParent() }.map { it.id }
+                                    item(key = "cat_$categoryKey") {
+                                        CategoryHeader(
+                                            name = displayName,
+                                            count = tasks.size,
+                                            pendingCount = cancellableIds.size,
+                                            isExpanded = isExpanded,
+                                            onClick = { viewModel.toggleCategoryExpand(categoryKey) },
+                                            onDeletePending = {
+                                                deleteRequest = CategoryDeleteRequest(
+                                                    "$childName「$displayName」分类",
+                                                    cancellableIds
+                                                )
+                                            }
                                         )
+                                    }
+                                    if (isExpanded) {
+                                        items(tasks, key = { "${it.id}_${it.dueDate}" }) { task ->
+                                            TaskRow(
+                                                task = task,
+                                                isManageMode = uiState.isManageMode,
+                                                isSelected = uiState.selectedTaskIds.contains(task.id),
+                                                onToggleSelect = { viewModel.toggleTaskSelection(task.id) },
+                                                onEdit = { onEditTask(task.id) },
+                                                onDelete = { viewModel.deleteTask(task.id) }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -218,15 +245,38 @@ fun TasksScreen(
                 }
             }
         }
+
+        deleteRequest?.let { request ->
+            AlertDialog(
+                onDismissRequest = { deleteRequest = null },
+                title = { Text("删除分类任务") },
+                text = {
+                    Text("确定删除${request.label}当天的 ${request.taskIds.size} 个未完成任务吗？已完成任务不会受影响。")
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.deleteTasks(request.taskIds)
+                        deleteRequest = null
+                    }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { deleteRequest = null }) { Text("取消") }
+                }
+            )
+        }
     }
 }
+
+private data class CategoryDeleteRequest(val label: String, val taskIds: List<String>)
 
 @Composable
 private fun CategoryHeader(
     name: String,
     count: Int,
+    pendingCount: Int,
     isExpanded: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDeletePending: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -242,31 +292,21 @@ private fun CategoryHeader(
                 Spacer(Modifier.width(8.dp))
                 Text("$count 项", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(
-                if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun ChildFilterRow(
-    children: List<com.lemonkids.shared.repository.ChildUserInfo>,
-    selectedId: String,
-    onChildSelected: (String) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        children.forEach { child ->
-            FilterChip(
-                selected = child.uid == selectedId,
-                onClick = { onChildSelected(child.uid) },
-                label = { Text(child.name, fontSize = 13.sp) }
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onDeletePending, enabled = pendingCount > 0) {
+                    Text(
+                        "删除未完成${if (pendingCount > 0) "($pendingCount)" else ""}",
+                        fontSize = 12.sp,
+                        color = if (pendingCount > 0) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }

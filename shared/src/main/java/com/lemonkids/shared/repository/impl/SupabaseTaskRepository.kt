@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -34,6 +35,28 @@ class SupabaseTaskRepository @Inject constructor(
     private val auth get() = supabase.pluginManager.getPlugin(Auth)
     /** 本进程内任务写入后的即时刷新信号，避免界面只能等待轮询。 */
     private val taskRefreshEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /**
+     * 编辑任务同时包含字符串、整数、可空值及星期数组。不能以 Map<String, Any?>
+     * 提交：Supabase/Kotlinx Serialization 无法为 Any 推导序列化器，保存会在请求
+     * 发出前失败。这里显式构造 JSON，使单日和重复日程的编辑使用同一份载荷。
+     */
+    private fun Task.toUpdatePayload(includeDueDate: Boolean): JsonObject {
+        val fields = mutableMapOf<String, JsonElement>(
+            "title" to JsonPrimitive(title),
+            "description" to JsonPrimitive(description),
+            "category" to JsonPrimitive(category),
+            "reward_points" to JsonPrimitive(rewardPoints),
+            "penalty_points" to JsonPrimitive(penaltyPoints),
+            "due_time" to (dueTime?.let(::JsonPrimitive) ?: JsonNull),
+            "recurrence_type" to JsonPrimitive(recurrenceType.name.lowercase()),
+            "recurrence_weekdays" to JsonArray(recurrenceWeekdays.map(::JsonPrimitive)),
+            "recurrence_end_date" to (recurrenceEndDate?.let(::JsonPrimitive) ?: JsonNull)
+        )
+        // 批量同步重复日程时，每条任务必须保留自己的发生日期。
+        if (includeDueDate) fields["due_date"] = JsonPrimitive(dueDate)
+        return JsonObject(fields)
+    }
 
     /**
      * 检查 auth session 是否有效，RLS 在 session 无效时会返回空列表而非报错，
@@ -168,36 +191,13 @@ class SupabaseTaskRepository @Inject constructor(
 
     override suspend fun updateTask(task: Task): Result<Unit> = runCatching {
         // 编辑具体任务不能抹掉排程来源；source_* 仅在创建日程时由服务端写入。
-        postgrest.from("tasks").update(
-            mapOf(
-                "title" to task.title,
-                "description" to task.description,
-                "category" to task.category,
-                "reward_points" to task.rewardPoints,
-                "penalty_points" to task.penaltyPoints,
-                "due_date" to task.dueDate,
-                "due_time" to task.dueTime,
-                "recurrence_type" to task.recurrenceType.name.lowercase(),
-                "recurrence_weekdays" to task.recurrenceWeekdays,
-                "recurrence_end_date" to task.recurrenceEndDate
-            )
-        ) { filter { eq("id", task.id) } }
+        postgrest.from("tasks").update(task.toUpdatePayload(includeDueDate = true)) {
+            filter { eq("id", task.id) }
+        }
     }
 
     override suspend fun updateFutureTasksInSeries(seriesId: String, fromDate: String, task: Task): Result<Unit> = runCatching {
-        postgrest.from("tasks").update(
-            mapOf(
-                "title" to task.title,
-                "description" to task.description,
-                "category" to task.category,
-                "reward_points" to task.rewardPoints,
-                "penalty_points" to task.penaltyPoints,
-                "due_time" to task.dueTime,
-                "recurrence_type" to task.recurrenceType.name.lowercase(),
-                "recurrence_weekdays" to task.recurrenceWeekdays,
-                "recurrence_end_date" to task.recurrenceEndDate
-            )
-        ) {
+        postgrest.from("tasks").update(task.toUpdatePayload(includeDueDate = false)) {
             filter {
                 eq("recurrence_series_id", seriesId)
                 gte("due_date", fromDate)
