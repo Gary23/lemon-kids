@@ -26,6 +26,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -49,6 +50,7 @@ private enum class Density { NONE, LIGHT, MEDIUM, HEAVY }
 fun CalendarView(
     onEditTask: (String) -> Unit,
     onDeleteTask: (String) -> Unit,
+    onDeleteCategoryTasks: (String, List<String>) -> Unit,
     onCreateTask: (LocalDate) -> Unit,
     viewModel: TasksViewModel
 ) {
@@ -120,18 +122,82 @@ fun CalendarView(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
-            Text("${selDate.monthValue}月${selDate.dayOfMonth}日 任务", fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(6.dp))
-
             if (selTasks.isEmpty()) {
                 Text("这一天没有任务", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 12.dp))
             } else {
-                selTasks.forEach { task ->
-                    CalendarTaskRow(task = task, onEdit = { onEditTask(task.id) }, onDelete = { onDeleteTask(task.id) })
-                    Spacer(Modifier.height(8.dp))
+                val tasksByChild = selTasks.groupBy { it.childId }
+                val orderedChildIds = uiState.childUsers.map { it.uid }.filter { it in tasksByChild } +
+                    tasksByChild.keys.filter { it !in uiState.childUsers.map { child -> child.uid } }
+                val categoryNames = uiState.categories.map { it.name }
+                orderedChildIds.forEachIndexed { childIndex, childId ->
+                    val childTasks = tasksByChild[childId] ?: return@forEachIndexed
+                    val childName = uiState.childUsers.find { it.uid == childId }?.name
+                        ?: childTasks.firstOrNull()?.childName.orEmpty().ifBlank { "孩子" }
+                    Text(
+                        "$childName ${selDate.monthValue}月${selDate.dayOfMonth}日 任务",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(6.dp))
+
+                    val tasksByCategory = childTasks.groupBy { it.categoryName }
+                    val orderedCategoryNames = categoryNames.filter { it in tasksByCategory } +
+                        tasksByCategory.keys.filter { it !in categoryNames }
+                    orderedCategoryNames.forEach { categoryName ->
+                        val categoryTasks = tasksByCategory[categoryName] ?: return@forEach
+                        val displayName = when (categoryName) {
+                            "other", "" -> "默认"
+                            else -> categoryName
+                        }
+                        val cancellableIds = categoryTasks.filter { it.isCancellableByParent() }.map { it.id }
+                        CalendarCategoryHeader(
+                            name = displayName,
+                            pendingCount = cancellableIds.size,
+                            onDeletePending = {
+                                onDeleteCategoryTasks(
+                                    "$childName「$displayName」分类",
+                                    cancellableIds
+                                )
+                            }
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        categoryTasks.forEach { task ->
+                            CalendarTaskRow(
+                                task = task,
+                                onEdit = { onEditTask(task.id) },
+                                onDelete = { onDeleteTask(task.id) }
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                    }
+                    if (childIndex < orderedChildIds.lastIndex) Spacer(Modifier.height(10.dp))
                 }
             }
+        }
+    }
+}
+
+/** 分类只是视觉分隔；不提供展开或收起，右侧只删除当前选中日期的未完成任务。 */
+@Composable
+private fun CalendarCategoryHeader(
+    name: String,
+    pendingCount: Int,
+    onDeletePending: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(name, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        TextButton(onClick = onDeletePending, enabled = pendingCount > 0) {
+            Text(
+                "删除未完成${if (pendingCount > 0) "($pendingCount)" else ""}",
+                fontSize = 12.sp,
+                color = if (pendingCount > 0) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

@@ -258,7 +258,7 @@ fun LemonLiteracyApp(authViewModel: AuthViewModel = hiltViewModel()) {
                 isRecovering = authState.isRecoveringSession,
                 message = authState.sessionRecoveryMessage,
                 onRetryRefresh = authViewModel::retrySessionRefresh,
-                onRestoreWithBinding = authViewModel::restoreLiteracyBindingFromDialog
+                onRestoreWithBinding = authViewModel::restoreSavedBindingCodeFromDialog
             )
         }
         return
@@ -289,7 +289,7 @@ fun LemonLiteracyApp(authViewModel: AuthViewModel = hiltViewModel()) {
             isRecovering = authState.isRecoveringSession,
             message = authState.sessionRecoveryMessage,
             onRetryRefresh = authViewModel::retrySessionRefresh,
-            onRestoreWithBinding = authViewModel::restoreLiteracyBindingFromDialog
+            onRestoreWithBinding = authViewModel::restoreSavedBindingCodeFromDialog
         )
     }
 }

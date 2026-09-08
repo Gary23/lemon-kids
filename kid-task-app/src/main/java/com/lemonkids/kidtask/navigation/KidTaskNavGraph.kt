@@ -2,8 +2,10 @@ package com.lemonkids.kidtask.navigation
 
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,12 +19,16 @@ import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ChildCare
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -36,6 +42,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -77,6 +85,14 @@ fun KidTaskNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
 
     if (!uiState.isFirstCheckComplete) {
         KidTaskWelcomeScreen()
+        if (uiState.requiresSessionRecovery) {
+            TaskSessionRecoveryDialog(
+                isRecovering = uiState.isRecoveringSession,
+                message = uiState.sessionRecoveryMessage,
+                onRetryRefresh = authViewModel::retrySessionRefresh,
+                onRestoreWithBinding = authViewModel::restoreSavedBindingCodeFromDialog
+            )
+        }
         return
     }
 
@@ -98,6 +114,92 @@ fun KidTaskNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
 
         composable(KidTaskRoutes.MAIN) {
             KidTaskMainScreen()
+        }
+    }
+
+    // 放在任务端根层且位于内容之后，确保会话失效时阻止继续提交任务、奖励等请求。
+    if (uiState.requiresSessionRecovery) {
+        TaskSessionRecoveryDialog(
+            isRecovering = uiState.isRecoveringSession,
+            message = uiState.sessionRecoveryMessage,
+            onRetryRefresh = authViewModel::retrySessionRefresh,
+            onRestoreWithBinding = authViewModel::restoreSavedBindingCodeFromDialog
+        )
+    }
+}
+
+@Composable
+private fun TaskSessionRecoveryDialog(
+    isRecovering: Boolean,
+    message: String?,
+    onRetryRefresh: () -> Unit,
+    onRestoreWithBinding: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            shadowElevation = 20.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    "登录连接需要恢复",
+                    style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                    color = Color(0xFF303030),
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    "当前登录凭证未能刷新。请先重试；如果仍无法恢复，可使用本机已保存的绑定码静默重新登录。",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF666666)
+                )
+                message?.let {
+                    Text(it, color = Color(0xFFE53935), fontSize = 13.sp)
+                }
+                if (isRecovering) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Pink
+                        )
+                        Text("正在恢复登录…", color = Color(0xFF303030), fontSize = 14.sp)
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onRetryRefresh,
+                        enabled = !isRecovering,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("重试刷新")
+                    }
+                    Button(
+                        onClick = onRestoreWithBinding,
+                        enabled = !isRecovering,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Pink)
+                    ) {
+                        Text("使用绑定码登录")
+                    }
+                }
+            }
         }
     }
 }

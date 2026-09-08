@@ -60,10 +60,16 @@ class AuthViewModel @Inject constructor(
 
     private var firstCheckDone = false
 
-    private val literacyBindingPreferences by lazy {
-        context.getSharedPreferences(LITERACY_BINDING_PREFERENCES, Context.MODE_PRIVATE)
+    private val bindingCodePreferences by lazy {
+        context.getSharedPreferences(
+            if (isLiteracyApp) LITERACY_BINDING_PREFERENCES else TASK_BINDING_PREFERENCES,
+            Context.MODE_PRIVATE
+        )
     }
     private val isLiteracyApp get() = context.packageName == LITERACY_APP_PACKAGE
+    private val isTaskApp get() = context.packageName == TASK_APP_PACKAGE
+    /** 认字、任务端均以 task 码换取儿童会话，监控端不适用此恢复方式。 */
+    private val supportsBindingCodeRecovery get() = isLiteracyApp || isTaskApp
 
     init {
         viewModelScope.launch {
@@ -91,15 +97,15 @@ class AuthViewModel @Inject constructor(
         while (true) {
             authRepository.restoreSession().fold(
                 onSuccess = { user ->
-                    if (user == null && isLiteracyApp && restoreLiteracyBinding()) return
+                    if (user == null && supportsBindingCodeRecovery && restoreSavedBindingCode()) return
                     firstCheckDone = true
                     applyUserState(user)
                     return
                 },
                 onFailure = { error ->
-                    // 认字端已有本地绑定码时，刷新失败不再无限停留在启动加载页。
+                    // 认字、任务端已保存本地绑定码时，刷新失败不再无限停留在启动加载页。
                     // 根层恢复弹层会让孩子/家长明确选择重试或静默重新登录。
-                    if (isLiteracyApp && authRepository.hasAuthSession) {
+                    if (supportsBindingCodeRecovery && authRepository.hasAuthSession) {
                         firstCheckDone = true
                         _uiState.value = _uiState.value.copy(
                             isFirstCheckComplete = false,
@@ -129,14 +135,14 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    /** 认证会话失效时，使用认字端本地已验证的绑定码静默恢复登录。 */
-    private suspend fun restoreLiteracyBinding(): Boolean {
-        val code = literacyBindingPreferences.getString(LITERACY_BINDING_CODE_KEY, null)
+    /** 认证会话失效时，使用儿童端本地已验证的 task 绑定码静默恢复登录。 */
+    private suspend fun restoreSavedBindingCode(): Boolean {
+        val code = bindingCodePreferences.getString(BINDING_CODE_KEY, null)
             ?.takeIf { it.length == BINDING_CODE_LENGTH }
             ?: return false
         val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
             ?: return false
-        val bindingResult = authRepository.exchangeBindingCode(code, deviceId, LITERACY_BINDING_TYPE)
+        val bindingResult = authRepository.exchangeBindingCode(code, deviceId, BINDING_CODE_TYPE)
             .getOrElse { return false }
         val user = authRepository.signInWithEmailPassword(
             bindingResult.email,
@@ -173,14 +179,14 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    /** 使用本机保存且已验证的认字绑定码，静默换取一份全新会话。 */
-    fun restoreLiteracyBindingFromDialog() {
+    /** 使用本机保存且已验证的儿童绑定码，静默换取一份全新会话。 */
+    fun restoreSavedBindingCodeFromDialog() {
         viewModelScope.launch {
             updateSessionRecoveryUi(isRecovering = true, message = null)
-            if (!isLiteracyApp || !restoreLiteracyBinding()) {
+            if (!supportsBindingCodeRecovery || !restoreSavedBindingCode()) {
                 updateSessionRecoveryUi(
                     isRecovering = false,
-                    message = "本机绑定码无法恢复登录，请重新进入认字应用后按提示绑定。"
+                    message = "本机绑定码无法恢复登录，请重新进入应用后按提示绑定。"
                 )
             }
         }
@@ -357,8 +363,8 @@ class AuthViewModel @Inject constructor(
     fun signOut() {
         viewModelScope.launch {
             authRepository.signOut()
-            if (isLiteracyApp) {
-                literacyBindingPreferences.edit().remove(LITERACY_BINDING_CODE_KEY).apply()
+            if (supportsBindingCodeRecovery) {
+                bindingCodePreferences.edit().remove(BINDING_CODE_KEY).apply()
             }
             _uiState.value = AuthUiState()
         }
@@ -412,8 +418,8 @@ class AuthViewModel @Inject constructor(
             }
 
             val user = signInResult.getOrThrow()
-            if (isLiteracyApp && type == LITERACY_BINDING_TYPE) {
-                literacyBindingPreferences.edit().putString(LITERACY_BINDING_CODE_KEY, code.trim()).apply()
+            if (supportsBindingCodeRecovery && type == BINDING_CODE_TYPE) {
+                bindingCodePreferences.edit().putString(BINDING_CODE_KEY, code.trim()).apply()
             }
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
@@ -459,8 +465,8 @@ class AuthViewModel @Inject constructor(
             }
 
             val user = signInResult.getOrThrow()
-            if (isLiteracyApp && type == LITERACY_BINDING_TYPE) {
-                literacyBindingPreferences.edit().putString(LITERACY_BINDING_CODE_KEY, code.trim()).apply()
+            if (supportsBindingCodeRecovery && type == BINDING_CODE_TYPE) {
+                bindingCodePreferences.edit().putString(BINDING_CODE_KEY, code.trim()).apply()
             }
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
@@ -657,7 +663,9 @@ class AuthViewModel @Inject constructor(
 }
 
 private const val LITERACY_BINDING_PREFERENCES = "literacy_binding"
-private const val LITERACY_BINDING_CODE_KEY = "binding_code"
-private const val LITERACY_BINDING_TYPE = "task"
+private const val TASK_BINDING_PREFERENCES = "task_binding"
+private const val BINDING_CODE_KEY = "binding_code"
+private const val BINDING_CODE_TYPE = "task"
 private const val BINDING_CODE_LENGTH = 6
 private const val LITERACY_APP_PACKAGE = "com.lemonkids.kidliteracy"
+private const val TASK_APP_PACKAGE = "com.lemonkids.kidtask"
