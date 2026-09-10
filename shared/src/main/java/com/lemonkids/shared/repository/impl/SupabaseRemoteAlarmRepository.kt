@@ -42,7 +42,7 @@ class SupabaseRemoteAlarmRepository @Inject constructor(
                     filter { eq("child_id", childId) }
                 }.decodeList<AlarmDelivery>()
                 val byAlarm = deliveries.associateBy { it.alarmId }
-                alarms.map { ParentAlarmStatus(it, byAlarm[it.id]) }
+                alarms.filter { it.deletedAt == null }.map { ParentAlarmStatus(it, byAlarm[it.id]) }
             }.onSuccess { trySend(it) }
                 .onFailure { Log.e(TAG, "读取家长端闹钟失败 childId=$childId", it) }
             }

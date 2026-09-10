@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -63,6 +64,7 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showAlarmDialog by remember { mutableStateOf(false) }
     var editingAlarm by remember { mutableStateOf<RemoteAlarm?>(null) }
+    var deletingAlarm by remember { mutableStateOf<RemoteAlarm?>(null) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -132,7 +134,8 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
                     isRefreshingMonitorDevices = uiState.isRefreshingMonitorDevices,
                     onAdd = { editingAlarm = null; showAlarmDialog = true },
                     onEdit = { editingAlarm = it; showAlarmDialog = true },
-                    onCancel = viewModel::cancelRemoteAlarm
+                    onToggle = viewModel::toggleRemoteAlarm,
+                    onDelete = { deletingAlarm = it }
                 )
             }
         }
@@ -151,6 +154,26 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
             }
         )
     }
+
+    deletingAlarm?.let { alarm ->
+        AlertDialog(
+            onDismissRequest = { deletingAlarm = null },
+            title = { Text("删除闹钟？") },
+            text = {
+                Text("删除后会从家长端和 Pad 的闹钟列表移除，并取消 Pad 已登记的提醒。此操作不可恢复。")
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !uiState.isSaving,
+                    onClick = {
+                        viewModel.deleteRemoteAlarm(alarm)
+                        deletingAlarm = null
+                    }
+                ) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { deletingAlarm = null }) { Text("取消") } }
+        )
+    }
 }
 
 @Composable
@@ -164,7 +187,8 @@ private fun AlarmListSection(
     isRefreshingMonitorDevices: Boolean,
     onAdd: () -> Unit,
     onEdit: (RemoteAlarm) -> Unit,
-    onCancel: (RemoteAlarm) -> Unit
+    onToggle: (RemoteAlarm, Boolean) -> Unit,
+    onDelete: (RemoteAlarm) -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -200,7 +224,7 @@ private fun AlarmListSection(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(alarm.title, fontWeight = FontWeight.Medium)
                         Text(
-                            "$time · ${if (alarm.enabled) deliveryLabel(item) else "已取消"}",
+                            "$time · ${if (alarm.enabled) deliveryLabel(item) else "已关闭（重新打开后下发）"}",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -210,9 +234,14 @@ private fun AlarmListSection(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    if (alarm.enabled) {
-                        TextButton(onClick = { onEdit(alarm) }) { Text("编辑") }
-                        TextButton(onClick = { onCancel(alarm) }) { Text("取消") }
+                    TextButton(onClick = { onEdit(alarm) }, enabled = !isSaving) { Text("编辑") }
+                    Switch(
+                        checked = alarm.enabled,
+                        enabled = !isSaving,
+                        onCheckedChange = { onToggle(alarm, it) }
+                    )
+                    IconButton(onClick = { onDelete(alarm) }, enabled = !isSaving) {
+                        Icon(Icons.Filled.Delete, contentDescription = "删除${alarm.title}")
                     }
                 }
             }
@@ -241,6 +270,7 @@ private fun alarmTimeRangeLabel(alarm: RemoteAlarm): String = runCatching {
 private fun deliveryLabel(item: ParentAlarmStatus): String = when (item.delivery?.status) {
     "pending" -> "等待 Pad 确认"
     "deployed" -> "Pad 已部署"
+    "removed" -> "Pad 已移除"
     "exact_alarm_denied" -> "Pad 未授予精确闹钟权限"
     "notification_denied" -> "Pad 未授予通知权限"
     "full_screen_denied" -> "Pad 未开启全屏提醒"

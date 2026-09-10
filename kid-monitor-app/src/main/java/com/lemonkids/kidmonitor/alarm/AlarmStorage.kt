@@ -16,6 +16,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.flow.Flow
 import javax.inject.Singleton
 
 /** Pad 端已确认下发的闹钟。云端版本号用于让更新、删除和重放保持幂等。 */
@@ -52,6 +53,17 @@ interface AlarmDao {
 
     @Query("UPDATE device_alarms SET state = :state WHERE alarmId = :alarmId")
     suspend fun updateState(alarmId: String, state: String)
+
+    /** 只暴露 Pad 当前仍会执行或正在响铃的记录；禁用/删除版本作为本地墓碑保留。 */
+    @Query("""
+        SELECT * FROM device_alarms
+        WHERE enabled = 1
+          AND endAtMillis >= :nowMillis
+          AND (triggerAtMillis >= :nowMillis OR state = 'ringing')
+          AND state IN ('scheduled', 'ringing')
+        ORDER BY triggerAtMillis ASC
+    """)
+    fun observeEffectiveAlarms(nowMillis: Long = System.currentTimeMillis()): Flow<List<DeviceAlarmEntity>>
 }
 
 @Database(entities = [DeviceAlarmEntity::class], version = 3, exportSchema = false)

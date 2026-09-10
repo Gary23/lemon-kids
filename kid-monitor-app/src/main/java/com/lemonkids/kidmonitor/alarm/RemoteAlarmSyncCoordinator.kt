@@ -43,6 +43,8 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
         val deviceId = deviceId()
         val alarms = remoteAlarmRepository.getAlarmsForDevice(deviceId).getOrThrow()
         alarms.forEach { alarm ->
+            // 已删除的云端记录仍会投递给目标 Pad，确保离线期间已登记的系统闹钟能被撤销。
+            val shouldRemove = !alarm.enabled || alarm.deletedAt != null
             val triggerAt = runCatching { parseServerInstant(alarm.triggerAt).toEpochMilli() }
                 .getOrElse {
                     Log.e(TAG, "忽略时间格式无效的远程闹钟 alarmId=${alarm.id}", it)
@@ -59,7 +61,7 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
                 return@forEach
             }
             // 日期范围闹钟只登记范围内下一次尚未来临的每日时刻；不会因前几天未部署而补响。
-            if (alarm.enabled && AlarmOccurrence.nextInRange(triggerAt, endAt, alarm.timezone) == null) {
+            if (!shouldRemove && AlarmOccurrence.nextInRange(triggerAt, endAt, alarm.timezone) == null) {
                 remoteAlarmApplier.markMissed(
                     RemoteAlarmSnapshot(alarm.id, alarm.revision, triggerAt, endAt, alarm.timezone, alarm.title, alarm.message, false, alarm.requiresConfirmation)
                 )
@@ -75,7 +77,7 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
                     timezone = alarm.timezone,
                     title = alarm.title,
                     message = alarm.message,
-                    enabled = alarm.enabled,
+                    enabled = !shouldRemove,
                     requiresConfirmation = alarm.requiresConfirmation
                 )
             )
@@ -85,8 +87,8 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
                     alarm.id, alarm.revision, AlarmDeliveryStatus.EXACT_ALARM_DENIED,
                     AlarmEventType.PERMISSION_DENIED, "未授予精确闹钟权限"
                 )
-                null -> if (!alarm.enabled) report(
-                    alarm.id, alarm.revision, AlarmDeliveryStatus.DEPLOYED, AlarmEventType.DEPLOYED, "已取消本地闹钟"
+                null -> if (shouldRemove) report(
+                    alarm.id, alarm.revision, AlarmDeliveryStatus.REMOVED, AlarmEventType.REMOVED, "已从本机移除闹钟"
                 )
             }
         }

@@ -22,6 +22,8 @@ data class RemoteAlarm(
     @SerialName("message") val message: String = "",
     @SerialName("enabled") val enabled: Boolean = true,
     @SerialName("requires_confirmation") val requiresConfirmation: Boolean = true,
+    /** 非空表示已从家长端删除；Pad 仍会接收该版本以撤销离线时已登记的系统闹钟。 */
+    @SerialName("deleted_at") val deletedAt: String? = null,
     @SerialName("created_at") val createdAt: String = "",
     @SerialName("updated_at") val updatedAt: String = ""
 )
@@ -66,6 +68,7 @@ enum class AlarmDeliveryStatus(val value: String) {
     EXACT_ALARM_DENIED("exact_alarm_denied"),
     NOTIFICATION_DENIED("notification_denied"),
     FULL_SCREEN_DENIED("full_screen_denied"),
+    REMOVED("removed"),
     RINGING("ringing"),
     DISMISSED("dismissed"),
     MISSED("missed")
@@ -73,6 +76,7 @@ enum class AlarmDeliveryStatus(val value: String) {
 
 enum class AlarmEventType(val value: String) {
     DEPLOYED("deployed"),
+    REMOVED("removed"),
     PERMISSION_DENIED("permission_denied"),
     RINGING("ringing"),
     DISMISSED("dismissed"),

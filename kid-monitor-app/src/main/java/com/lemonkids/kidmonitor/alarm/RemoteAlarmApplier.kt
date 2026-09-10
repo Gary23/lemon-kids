@@ -3,7 +3,7 @@ package com.lemonkids.kidmonitor.alarm
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** 云端同步层交给 Pad 的不可变快照。删除以 enabled=false 的新版本表达。 */
+/** 云端同步层交给 Pad 的不可变快照。关闭和删除都以下发 disabled 新版本撤销。 */
 data class RemoteAlarmSnapshot(
     val alarmId: String,
     val revision: Long,

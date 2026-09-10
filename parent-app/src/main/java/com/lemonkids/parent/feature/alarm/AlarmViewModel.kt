@@ -177,6 +177,7 @@ class AlarmViewModel @Inject constructor(
             title = title.trim(),
             message = message.trim(),
             enabled = true,
+            deletedAt = null,
             requiresConfirmation = requiresConfirmation,
             revision = if (existing == null) 1 else existing.revision + 1
         )
@@ -217,22 +218,52 @@ class AlarmViewModel @Inject constructor(
         }
     }
 
-    fun cancelRemoteAlarm(alarm: RemoteAlarm) = viewModelScope.launch {
+    /**
+     * 关闭仅撤销 Pad 上的系统闹钟，并保留配置供家长再次打开后重新下发。
+     */
+    fun toggleRemoteAlarm(alarm: RemoteAlarm, enabled: Boolean) = viewModelScope.launch {
         _uiState.value = _uiState.value.copy(isSaving = true, error = null)
-        val cancelled = alarm.copy(enabled = false, revision = alarm.revision + 1)
-        remoteAlarmRepository.updateAlarm(cancelled).fold(
+        val updated = alarm.copy(enabled = enabled, revision = alarm.revision + 1)
+        remoteAlarmRepository.updateAlarm(updated).fold(
             onSuccess = {
                 _uiState.value = _uiState.value.copy(
                     isSaving = false,
                     remoteAlarms = _uiState.value.remoteAlarms.map {
-                        if (it.alarm.id == cancelled.id) it.copy(alarm = cancelled) else it
+                        if (it.alarm.id == updated.id) it.copy(alarm = updated) else it
                     }
                 )
             },
             onFailure = { error ->
                 _uiState.value = _uiState.value.copy(
                     isSaving = false,
-                    error = "取消闹钟失败：${error.message ?: "请稍后重试"}"
+                    error = "更新闹钟开关失败：${error.message ?: "请稍后重试"}"
+                )
+            }
+        )
+    }
+
+    /**
+     * 不能直接物理删除云端记录：离线 Pad 需要拿到该墓碑版本，才能取消已经注册的
+     * AlarmManager PendingIntent。家长端查询会隐藏 deletedAt 非空的记录。
+     */
+    fun deleteRemoteAlarm(alarm: RemoteAlarm) = viewModelScope.launch {
+        _uiState.value = _uiState.value.copy(isSaving = true, error = null)
+        val deleted = alarm.copy(
+            enabled = false,
+            deletedAt = Instant.now().toString(),
+            revision = alarm.revision + 1
+        )
+        remoteAlarmRepository.updateAlarm(deleted).fold(
+            onSuccess = {
+                _uiState.value = _uiState.value.copy(
+                    isSaving = false,
+                    remoteAlarms = _uiState.value.remoteAlarms.filterNot { it.alarm.id == deleted.id }
+                )
+            },
+            onFailure = { error ->
+                _uiState.value = _uiState.value.copy(
+                    isSaving = false,
+                    error = "删除闹钟失败：${error.message ?: "请稍后重试"}"
                 )
             }
         )

@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChildCare
 import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -45,6 +46,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.lemonkids.kidmonitor.feature.profile.ProfileScreen
+import com.lemonkids.kidmonitor.feature.alarm.AlarmListScreen
 import com.lemonkids.kidmonitor.alarm.AlarmSyncWorker
 import com.lemonkids.kidmonitor.feature.usage.AppHourlyDetailScreen
 import com.lemonkids.kidmonitor.feature.usage.AppUsageDetailScreen
@@ -58,6 +60,7 @@ sealed class KidMonitorTab(
     val icon: ImageVector
 ) {
     data object Usage : KidMonitorTab("usage", "使用", Icons.Filled.Insights)
+    data object Alarm : KidMonitorTab("alarm", "闹钟", Icons.Filled.Alarm)
     data object Profile : KidMonitorTab("profile", "我的", Icons.Filled.ChildCare)
 }
 
@@ -109,7 +112,7 @@ fun KidMonitorNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
 @Composable
 fun KidMonitorMainScreen() {
     val navController = rememberNavController()
-    val tabs = listOf(KidMonitorTab.Usage, KidMonitorTab.Profile)
+    val tabs = listOf(KidMonitorTab.Usage, KidMonitorTab.Alarm, KidMonitorTab.Profile)
     val primaryColor = Color(0xFF2196F3)
     val surfaceColor = Color(0xFFF8FBF8)
 
@@ -186,6 +189,9 @@ fun KidMonitorMainScreen() {
             }
             composable(KidMonitorTab.Profile.route) {
                 ProfileScreen()
+            }
+            composable(KidMonitorTab.Alarm.route) {
+                AlarmListScreen()
             }
             composable(
                 route = "app_usage_detail/{packageName}/{startDate}/{endDate}/{appName}",
