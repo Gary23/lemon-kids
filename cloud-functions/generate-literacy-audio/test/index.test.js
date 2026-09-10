@@ -110,6 +110,67 @@ test('腾讯临时错误按指数退避重试，永久错误不重试', async ()
   assert.equal(permanentAttempts, 1);
 });
 
+test('Supabase 504 与 fetch failed 只对明确可重试请求退避重试', async () => {
+  let attempts = 0;
+  const waits = [];
+  await withFetchMock(async () => {
+    attempts += 1;
+    if (attempts < 3) return response('{"message":"Gateway Timeout"}', { status: 504 });
+    return response('[{"status":"pending"}]', { headers: { 'content-type': 'application/json' } });
+  }, async () => {
+    const rows = await _private.supabase(
+      config,
+      '/rest/v1/literacy_tts_assets?select=status',
+      {},
+      { retryable: true, sleepFn: async (milliseconds) => waits.push(milliseconds) }
+    );
+    assert.deepEqual(rows, [{ status: 'pending' }]);
+  });
+  assert.equal(attempts, 3);
+  assert.deepEqual(waits, [250, 500]);
+
+  let unsafeAttempts = 0;
+  await withFetchMock(async () => {
+    unsafeAttempts += 1;
+    throw new TypeError('fetch failed');
+  }, async () => {
+    await assert.rejects(() => _private.supabase(config, '/rest/v1/rpc/claim_literacy_tts_assets'));
+  });
+  assert.equal(unsafeAttempts, 1);
+});
+
+test('监控异常使用独立事件并包含失败阶段', async () => {
+  const logs = [];
+  const originalError = console.error;
+  const required = {
+    TENCENT_TTS_SECRET_ID: 'test-id', TENCENT_TTS_SECRET_KEY: 'test-key', TENCENT_TTS_REGION: 'ap-guangzhou',
+    TENCENT_TTS_VOICE_TYPE: '601009', TENCENT_TTS_MODEL_TYPE: '1', TENCENT_TTS_CODEC: 'mp3',
+    TENCENT_TTS_SAMPLE_RATE: '16000', TENCENT_TTS_VOICE_VERSION: 'v1', TENCENT_TTS_DAILY_CHARACTER_LIMIT: '10000',
+    SUPABASE_URL: config.supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: config.supabaseServiceRoleKey
+  };
+  const previous = Object.fromEntries(Object.keys(required).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, required);
+  console.error = (value) => logs.push(JSON.parse(value));
+  try {
+    await withFetchMock(async () => response('bad request', { status: 400 }), async () => {
+      const result = await require('../index').main_handler({ action: 'monitor' });
+      assert.equal(result.statusCode, 500);
+    });
+  } finally {
+    console.error = originalError;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  assert.deepEqual(logs, [
+    {
+      event: 'literacy_tts_monitor_error', action: 'monitor', stage: 'monitor_list_assets', statusCode: 500,
+      error: 'Supabase 400: bad request'
+    }
+  ]);
+});
+
 test('清理仅删除该资产对象；删除失败会投递可重试任务', async () => {
   const calls = [];
   const asset = {

@@ -48,31 +48,45 @@ function configuration() {
   };
 }
 
-async function supabase(config, path, options = {}) {
-  const response = await fetch(`${config.supabaseUrl}${path}`, {
-    ...options,
-    headers: {
-      apikey: config.supabaseServiceRoleKey,
-      Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
-      ...(options.headers || {})
+async function supabase(config, path, options = {}, retryOptions = {}) {
+  const request = async () => {
+    const response = await fetch(`${config.supabaseUrl}${path}`, {
+      ...options,
+      headers: {
+        apikey: config.supabaseServiceRoleKey,
+        Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
+        ...(options.headers || {})
+      }
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      const error = new Error(`Supabase ${response.status}: ${text.slice(0, 500)}`);
+      error.status = response.status;
+      throw error;
     }
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    const error = new Error(`Supabase ${response.status}: ${text.slice(0, 500)}`);
-    error.status = response.status;
-    throw error;
-  }
-  if (!text) return null;
-  try { return JSON.parse(text); } catch (_) { return text; }
+    if (!text) return null;
+    try { return JSON.parse(text); } catch (_) { return text; }
+  };
+  // 对只读查询、幂等入队等请求重试短暂的网关/网络异常。领取资产、预留字符
+  // 等状态迁移不能在响应丢失后盲目重放，否则可能造成重复领取或重复计费。
+  if (retryOptions.retryable !== true) return request();
+  return retry(request, retryOptions.sleepFn);
 }
 
-function rpc(config, name, body) {
+function rpc(config, name, body, retryOptions) {
   return supabase(config, `/rest/v1/rpc/${name}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body)
-  });
+  }, retryOptions);
+}
+
+async function atStage(stage, operation) {
+  try { return await operation(); }
+  catch (error) {
+    if (error && typeof error === 'object' && !error.literacyTtsStage) error.literacyTtsStage = stage;
+    throw error;
+  }
 }
 
 function ttsClient(config) {
@@ -106,7 +120,7 @@ async function enqueueAssets(config, options) {
     p_record_id: options.recordId,
     p_voice_version: config.voiceVersion,
     p_speed: -1
-  });
+  }, { retryable: true });
 }
 
 async function listCandidates(config, options) {
@@ -125,7 +139,8 @@ async function listCandidates(config, options) {
     const page = await supabase(
       config,
       `/rest/v1/literacy_tts_assets?select=${fields}&${sourceFilter}${idFilter}&status=${statusFilter}&order=created_at.asc&offset=${offset}&limit=1000`,
-      { headers: { Range: `${offset}-${offset + 999}` } }
+      { headers: { Range: `${offset}-${offset + 999}` } },
+      { retryable: true }
     );
     rows.push(...(Array.isArray(page) ? page : []));
     if (!Array.isArray(page) || page.length < 1000) break;
@@ -236,7 +251,9 @@ async function processDeletion(config, asset) {
 }
 
 async function cleanup(config, options) {
-  const claimed = await rpc(config, 'claim_literacy_tts_assets_for_deletion', { p_limit: options.limit });
+  const claimed = await atStage('cleanup_claim_assets', () => rpc(
+    config, 'claim_literacy_tts_assets_for_deletion', { p_limit: options.limit }
+  ));
   const results = await runWithConcurrency(
     Array.isArray(claimed) ? claimed : [],
     options.concurrency,
@@ -257,7 +274,8 @@ async function listAllLiveAssetPaths(config) {
     const rows = await supabase(
       config,
       `/rest/v1/literacy_tts_assets?select=${fields}&status=neq.deleted&order=id.asc&offset=${offset}&limit=1000`,
-      { headers: { Range: `${offset}-${offset + 999}` } }
+      { headers: { Range: `${offset}-${offset + 999}` } },
+      { retryable: true }
     );
     const page = Array.isArray(rows) ? rows : [];
     for (const asset of page) paths.add(asset.object_path || objectPathForAsset(asset));
@@ -267,24 +285,30 @@ async function listAllLiveAssetPaths(config) {
 }
 
 async function listStorageFolder(config, prefix, limit, offset) {
-  const response = await fetch(`${config.supabaseUrl}/storage/v1/object/list/${AUDIO_BUCKET}`, {
-    method: 'POST',
-    headers: {
-      apikey: config.supabaseServiceRoleKey,
-      Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({
-      prefix,
-      limit,
-      offset,
-      sortBy: { column: 'name', order: 'asc' }
-    })
+  return retry(async () => {
+    const response = await fetch(`${config.supabaseUrl}/storage/v1/object/list/${AUDIO_BUCKET}`, {
+      method: 'POST',
+      headers: {
+        apikey: config.supabaseServiceRoleKey,
+        Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        prefix,
+        limit,
+        offset,
+        sortBy: { column: 'name', order: 'asc' }
+      })
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      const error = new Error(`Storage 列表读取失败，HTTP ${response.status}: ${text.slice(0, 300)}`);
+      error.status = response.status;
+      throw error;
+    }
+    const items = text ? JSON.parse(text) : [];
+    return Array.isArray(items) ? items : [];
   });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Storage 列表读取失败，HTTP ${response.status}: ${text.slice(0, 300)}`);
-  const items = text ? JSON.parse(text) : [];
-  return Array.isArray(items) ? items : [];
 }
 
 /** 专用 bucket 的树形扫描；文件项带 id，目录项没有 id。 */
@@ -353,19 +377,22 @@ async function reconcile(config, options) {
 async function monitor(config) {
   const rows = [];
   for (let offset = 0; ; offset += 1000) {
-    const page = await supabase(
+    const page = await atStage('monitor_list_assets', () => supabase(
       config,
       `/rest/v1/literacy_tts_assets?select=status,created_at,updated_at&status=neq.deleted&order=created_at.asc&offset=${offset}&limit=1000`,
-      { headers: { Range: `${offset}-${offset + 999}` } }
-    );
+      { headers: { Range: `${offset}-${offset + 999}` } },
+      { retryable: true }
+    ));
     const assets = Array.isArray(page) ? page : [];
     rows.push(...assets);
     if (assets.length < 1000) break;
   }
-  const usage = await supabase(
+  const usage = await atStage('monitor_read_daily_usage', () => supabase(
     config,
-    '/rest/v1/literacy_tts_daily_usage?select=usage_date,character_count&order=usage_date.desc&limit=1'
-  );
+    '/rest/v1/literacy_tts_daily_usage?select=usage_date,character_count&order=usage_date.desc&limit=1',
+    {},
+    { retryable: true }
+  ));
   const statuses = rows.reduce((counts, asset) => {
     counts[asset.status] = (counts[asset.status] || 0) + 1;
     return counts;
@@ -465,60 +492,74 @@ async function runWithConcurrency(items, concurrency, worker) {
 }
 
 async function handler(event) {
-  const config = configuration();
   const options = inputOptions(event);
-  if (options.action === 'cleanup') return cleanup(config, options);
-  if (options.action === 'reconcile') return reconcile(config, options);
-  if (options.action === 'monitor') return monitor(config);
-  const enqueued = await enqueueAssets(config, options);
-  if (options.dryRun) {
-    const candidates = await listCandidates(config, options);
-    const estimatedCharacters = candidates.reduce((sum, asset) => sum + characterCount(asset.source_text), 0);
-    const summary = {
-      dry_run: true,
-      source: options.source,
-      record_id: options.recordId,
-      // 系统转入的已认识字可能把既有根任务资产关联到自身，因此此数表示
-      // 新建或补齐关联的队列行，不等同于必然新增的数据库行数。
-      queue_rows_ensured: Number(enqueued || 0),
-      candidate_count: candidates.length,
-      estimated_tts_characters: estimatedCharacters,
-      daily_character_limit: config.dailyCharacterLimit
-    };
-    // 事件函数控制台有时不会展示返回体；把不含密钥的汇总写入日志，方便审核 dry run。
-    console.info(JSON.stringify({ event: 'literacy_tts_dry_run_complete', ...summary }));
-    return summary;
-  }
+  try {
+    const config = configuration();
+    if (options.action === 'cleanup') return await cleanup(config, options);
+    if (options.action === 'reconcile') return await reconcile(config, options);
+    if (options.action === 'monitor') return await monitor(config);
+    const enqueued = await atStage('enqueue_assets', () => enqueueAssets(config, options));
+    if (options.dryRun) {
+      const candidates = await atStage('list_candidates', () => listCandidates(config, options));
+      const estimatedCharacters = candidates.reduce((sum, asset) => sum + characterCount(asset.source_text), 0);
+      const summary = {
+        dry_run: true,
+        source: options.source,
+        record_id: options.recordId,
+        // 系统转入的已认识字可能把既有根任务资产关联到自身，因此此数表示
+        // 新建或补齐关联的队列行，不等同于必然新增的数据库行数。
+        queue_rows_ensured: Number(enqueued || 0),
+        candidate_count: candidates.length,
+        estimated_tts_characters: estimatedCharacters,
+        daily_character_limit: config.dailyCharacterLimit
+      };
+      // 事件函数控制台有时不会展示返回体；把不含密钥的汇总写入日志，方便审核 dry run。
+      console.info(JSON.stringify({ event: 'literacy_tts_dry_run_complete', ...summary }));
+      return summary;
+    }
 
-  const claimed = await rpc(config, 'claim_literacy_tts_assets', {
-    p_source: options.source,
-    p_record_id: options.recordId,
-    p_limit: options.limit,
-    p_retry_failed: options.retryFailed,
-    p_max_attempts: config.maxAttempts
-  });
-  const client = ttsClient(config);
-  const results = await runWithConcurrency(Array.isArray(claimed) ? claimed : [], options.concurrency,
-    (asset) => processAsset(config, client, asset));
-  const summary = results.reduce((counts, item) => {
-    counts[item.status] = (counts[item.status] || 0) + 1;
-    counts.characters += item.characters || 0;
-    return counts;
-  }, { ready: 0, failed: 0, deferred: 0, characters: 0 });
-  console.info(JSON.stringify({ event: 'literacy_tts_batch_complete', source: options.source, claimed: results.length, ...summary }));
-  return { dry_run: false, source: options.source, record_id: options.recordId, claimed: results.length, ...summary, results };
+    const claimed = await atStage('claim_assets', () => rpc(config, 'claim_literacy_tts_assets', {
+      p_source: options.source,
+      p_record_id: options.recordId,
+      p_limit: options.limit,
+      p_retry_failed: options.retryFailed,
+      p_max_attempts: config.maxAttempts
+    }));
+    const client = ttsClient(config);
+    const results = await runWithConcurrency(Array.isArray(claimed) ? claimed : [], options.concurrency,
+      (asset) => processAsset(config, client, asset));
+    const summary = results.reduce((counts, item) => {
+      counts[item.status] = (counts[item.status] || 0) + 1;
+      counts.characters += item.characters || 0;
+      return counts;
+    }, { ready: 0, failed: 0, deferred: 0, characters: 0 });
+    console.info(JSON.stringify({ event: 'literacy_tts_batch_complete', source: options.source, claimed: results.length, ...summary }));
+    return { dry_run: false, source: options.source, record_id: options.recordId, claimed: results.length, ...summary, results };
+  } catch (error) {
+    if (error && typeof error === 'object' && !error.literacyTtsAction) error.literacyTtsAction = options.action;
+    throw error;
+  }
 }
 
 exports.main_handler = async (event) => {
   try { return await handler(event || {}); }
   catch (error) {
     const statusCode = error instanceof InputError ? error.statusCode : 500;
-    console.error(JSON.stringify({ event: 'literacy_tts_batch_error', statusCode, error: sanitizeError(error) }));
+    const action = error?.literacyTtsAction || 'input';
+    const errorEvent = action === 'monitor' ? 'literacy_tts_monitor_error'
+      : action === 'cleanup' ? 'literacy_tts_cleanup_error'
+        : action === 'reconcile' ? 'literacy_tts_reconcile_error'
+          : action === 'generate' ? 'literacy_tts_batch_error'
+            : 'literacy_tts_input_error';
+    console.error(JSON.stringify({
+      event: errorEvent, action, stage: error?.literacyTtsStage || 'initialization', statusCode,
+      error: sanitizeError(error)
+    }));
     return { statusCode, error: sanitizeError(error) };
   }
 };
 
 exports._private = {
-  configuration, uploadAndValidate, deleteObjectIfPresent, processDeletion,
+  configuration, supabase, uploadAndValidate, deleteObjectIfPresent, processDeletion,
   listCandidates, listAllLiveAssetPaths, listAllStoragePaths, processAsset, retry, monitor, handler
 };
