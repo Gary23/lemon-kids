@@ -67,6 +67,8 @@ SUPABASE_SERVICE_ROLE_KEY
 
 可选变量：`TENCENT_TTS_MAX_ATTEMPTS=3`（每条资产跨批次最多尝试次数，范围 1～10）。当前确认的 `TENCENT_TTS_DAILY_CHARACTER_LIMIT=10000` 是费用硬闸；每次实际腾讯请求（包含可重试的临时失败）都会原子预留字符额度。
 
+Supabase 的资产状态读取、每日用量读取、音频队列入队和对象列表读取遇到 `fetch failed`、`429`、`5xx` 时，函数会在 250ms、500ms 后自动重试，共最多 3 次。领取资产、预留腾讯 TTS 字符额度等状态迁移 RPC 不会因响应丢失而自动重放，避免重复领取或重复计费；它们失败后保留给下一次定时触发器处理。
+
 ## 部署
 
 1. 在此目录执行 `npm install --omit=dev` 与 `npm test`。测试覆盖待生成筛选、原文合成参数、任务去重/并发领取 SQL 契约、腾讯临时错误重试、对象路径、对象删除失败重试，以及“存库后异步删除”的生命周期顺序。
@@ -161,9 +163,14 @@ npm test
 | 告警 | 查询条件/阈值 | 周期 |
 | --- | --- | --- |
 | 资产失败 | `event=literacy_tts_failed` 的日志数大于 0 | 5 分钟 |
+| 生成批次异常 | `event=literacy_tts_batch_error` 的日志数大于 0 | 5 分钟 |
+| 监控快照异常 | `event=literacy_tts_monitor_error` 的日志数大于 0 | 5 分钟 |
+| 清理任务异常 | `event=literacy_tts_cleanup_error` 的日志数大于 0 | 5 分钟 |
 | 待生成积压 | `pending_assets >= 20` 或 `failed_assets > 0` | 连续 15 分钟 |
 | 删除积压 | `cleanup_pending_assets > 0` 且 `oldest_cleanup_pending_seconds >= 900` | 连续 15 分钟 |
 | 字符消耗 | `daily_tts_character_count >= 8000`（警告）、`>= 9500`（严重） | 5 分钟 |
 | 对账异常 | `event=literacy_tts_reconcile_alert` 的日志数大于 0 | 每日 |
+
+`literacy_tts_monitor_error` 只代表监控查询无法获取快照，不代表音频合成失败，建议设为“警告”；`literacy_tts_batch_error` 和 `literacy_tts_cleanup_error` 会附带 `stage`，可据此区分 `enqueue_assets`、`claim_assets`、`cleanup_claim_assets` 等失败阶段。原先将三类事件合并为“批次和资产失败”的 CLS 告警，部署后应拆分为上述规则，避免监控抖动被误判为音频资产失败。
 
 `literacy-audio` 位于 Supabase Storage，不在腾讯云 SCF 的存储指标中。请在 Supabase Dashboard 的 Storage 用量页对该 bucket 设置 80%（警告）和 90%（严重）容量通知；如果当前套餐没有容量通知能力，则至少设置每周巡检，并在日志告警的通知组中登记负责人。告警接收人应包含值班渠道和产品负责人。

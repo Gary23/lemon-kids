@@ -111,10 +111,13 @@ function sanitizeError(error) {
 }
 
 function isRetryable(error) {
-  const code = String(error?.code || error?.Code || '');
+  const code = String(error?.code || error?.Code || error?.cause?.code || '');
   const status = Number(error?.statusCode || error?.status || 0);
   if (status === 429 || status >= 500) return true;
-  return /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|RequestLimitExceeded|InternalError|FailedOperation)/i.test(code);
+  if (/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|RequestLimitExceeded|InternalError|FailedOperation)/i.test(code)) return true;
+  // Node/undici 在连接建立前失败时常只抛出 TypeError: fetch failed，实际错误码
+  // 位于 cause 或不可用；这类错误与 504 一样适合有限重试。
+  return /^fetch failed$/i.test(String(error?.message || ''));
 }
 
 class InputError extends Error {

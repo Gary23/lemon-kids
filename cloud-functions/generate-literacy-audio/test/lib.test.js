@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
   InputError,
   inputOptions,
+  isRetryable,
   isMp3,
   objectPathForAsset,
   publicAudioUrl,
@@ -55,4 +56,5 @@ test('MP3 头与敏感错误脱敏', () => {
   assert.equal(isMp3(Buffer.from([0xff, 0xfb, 0x90, 0x64])), true);
   assert.equal(isMp3(Buffer.from('not mp3')), false);
   assert.equal(sanitizeError(new Error('token=abc123 Bearer token-value')).includes('abc123'), false);
+  assert.equal(isRetryable(new TypeError('fetch failed')), true);
 });
