@@ -81,12 +81,12 @@ import com.lemonkids.kidtask.ui.theme.InkBrown
 import com.lemonkids.kidtask.ui.theme.Lavender
 import com.lemonkids.kidtask.ui.theme.LavenderSoft
 import com.lemonkids.kidtask.ui.theme.Mint
-import com.lemonkids.kidtask.ui.theme.MintSoft
 import com.lemonkids.kidtask.ui.theme.MutedGray
 import com.lemonkids.kidtask.ui.theme.Pink
 import com.lemonkids.kidtask.ui.theme.PinkSoft
 import com.lemonkids.kidtask.ui.theme.Sunny
 import com.lemonkids.kidtask.ui.components.TaskCard
+import com.lemonkids.kidtask.ui.components.stableTaskCategoryAppearance
 import com.lemonkids.kidtask.ui.components.TaskConfirmDialog
 import com.lemonkids.kidtask.ui.components.UndoConfirmDialog
 import com.lemonkids.kidtask.util.KidTtsManager
@@ -241,7 +241,7 @@ private fun CategoryTaskList(
             val visualKey = categoryTasks.mapNotNull { it.sourceCategoryId }.firstOrNull()
                 ?: categoryIdsByName[categoryName]
                 ?: categoryName
-            val (color, emoji) = stableCategoryAppearance(visualKey)
+            val (color, emoji) = stableTaskCategoryAppearance(visualKey)
             TaskCategoryCard(
                 title = "$emoji  $categoryName",
                 tasks = categoryTasks,
@@ -264,14 +264,6 @@ private fun CategoryTaskList(
             )
         }
     }
-}
-
-/** 分类的颜色和图标只由稳定标识决定，调整显示顺序不会改变已有分类的视觉样式。 */
-private fun stableCategoryAppearance(categoryKey: String): Pair<Color, String> {
-    val colors = listOf(Pink, Lavender, Coral, Mint, Sunny)
-    val emojis = listOf("🌸", "💜", "🍊", "🌿", "⭐")
-    val index = Math.floorMod(categoryKey.hashCode(), colors.size)
-    return colors[index] to emojis[index]
 }
 
 @Composable

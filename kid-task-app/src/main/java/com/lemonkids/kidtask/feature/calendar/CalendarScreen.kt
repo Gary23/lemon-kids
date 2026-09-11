@@ -48,6 +48,7 @@ import com.lemonkids.kidtask.ui.components.TaskCard
 import com.lemonkids.kidtask.ui.components.TaskCardDensity
 import com.lemonkids.kidtask.ui.components.TaskConfirmDialog
 import com.lemonkids.kidtask.ui.components.UndoConfirmDialog
+import com.lemonkids.kidtask.ui.components.stableTaskCategoryAppearance
 import com.lemonkids.kidtask.ui.theme.Coral
 import com.lemonkids.kidtask.ui.theme.Cream
 import com.lemonkids.kidtask.ui.theme.InkBrown
@@ -225,20 +226,13 @@ fun CalendarScreen(
                                 }
                             }
                         } else {
-                            // 使用与首页一致的任务卡片
-                            selectedTasks.forEach { task ->
-                                TaskCard(
-                                    task = task,
-                                    isPlaying = playingTaskId == task.id,
-                                    sectionColor = Pink,
-                                    softColor = PinkSoft.copy(alpha = 0.15f),
-                                    density = TaskCardDensity.Compact,
-                                    onSpeak = { ttsManager.speak(task.id, task.title, task.description) },
-                                    onMarkDone = { viewModel.markTaskDone(it) },
-                                    onUndo = { viewModel.markTaskUndo(it) }
-                                )
-                                Spacer(Modifier.height(8.dp))
-                            }
+                            CalendarTaskCategoryList(
+                                tasks = selectedTasks,
+                                playingTaskId = playingTaskId,
+                                onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
+                                onMarkDone = viewModel::markTaskDone,
+                                onUndo = viewModel::markTaskUndo
+                            )
                         }
                     }
                 }
@@ -267,6 +261,94 @@ fun CalendarScreen(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Pink, modifier = Modifier.size(40.dp))
             }
+        }
+    }
+}
+
+/** 日历中的任务按分类分段；已完成任务固定归入末尾的完成分组。 */
+@Composable
+private fun CalendarTaskCategoryList(
+    tasks: List<com.lemonkids.kidtask.ui.components.TaskUiItem>,
+    playingTaskId: String?,
+    onSpeak: (com.lemonkids.kidtask.ui.components.TaskUiItem) -> Unit,
+    onMarkDone: (String) -> Unit,
+    onUndo: (String) -> Unit
+) {
+    val completedTasks = tasks.filter { it.status == "DONE" || it.status == "VERIFIED" }
+    val tasksByCategory = tasks
+        .filterNot { it.status == "DONE" || it.status == "VERIFIED" }
+        .groupBy { it.category.ifBlank { "默认" } }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        tasksByCategory.keys.sorted().forEach { categoryName ->
+            val categoryTasks = tasksByCategory.getValue(categoryName)
+            val visualKey = categoryTasks.mapNotNull { it.sourceCategoryId }.firstOrNull() ?: categoryName
+            val (color, emoji) = stableTaskCategoryAppearance(visualKey)
+            CalendarTaskCategorySection(
+                title = "$emoji  $categoryName",
+                tasks = categoryTasks,
+                sectionColor = color,
+                playingTaskId = playingTaskId,
+                onSpeak = onSpeak,
+                onMarkDone = onMarkDone,
+                onUndo = onUndo
+            )
+        }
+        if (completedTasks.isNotEmpty()) {
+            CalendarTaskCategorySection(
+                title = "✅  已完成",
+                tasks = completedTasks,
+                sectionColor = Mint,
+                playingTaskId = playingTaskId,
+                onSpeak = onSpeak,
+                onMarkDone = onMarkDone,
+                onUndo = onUndo
+            )
+        }
+    }
+}
+
+@Composable
+private fun CalendarTaskCategorySection(
+    title: String,
+    tasks: List<com.lemonkids.kidtask.ui.components.TaskUiItem>,
+    sectionColor: Color,
+    playingTaskId: String?,
+    onSpeak: (com.lemonkids.kidtask.ui.components.TaskUiItem) -> Unit,
+    onMarkDone: (String) -> Unit,
+    onUndo: (String) -> Unit
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(sectionColor)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(1.dp)
+                    .background(sectionColor.copy(alpha = 0.25f))
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        tasks.forEachIndexed { taskIndex, task ->
+            TaskCard(
+                task = task,
+                isPlaying = playingTaskId == task.id,
+                sectionColor = sectionColor,
+                softColor = sectionColor.copy(alpha = 0.15f),
+                density = TaskCardDensity.Compact,
+                onSpeak = { onSpeak(task) },
+                onMarkDone = onMarkDone,
+                onUndo = onUndo
+            )
+            if (taskIndex != tasks.lastIndex) Spacer(Modifier.height(8.dp))
         }
     }
 }

@@ -40,10 +40,12 @@ import com.lemonkids.kidtask.ui.theme.Coral
 import com.lemonkids.kidtask.ui.theme.CompletedTaskBackground
 import com.lemonkids.kidtask.ui.theme.CompletedTaskBorder
 import com.lemonkids.kidtask.ui.theme.InkBrown
+import com.lemonkids.kidtask.ui.theme.Lavender
 import com.lemonkids.kidtask.ui.theme.Mint
 import com.lemonkids.kidtask.ui.theme.MutedGray
 import com.lemonkids.kidtask.ui.theme.Pink
 import com.lemonkids.kidtask.ui.theme.PinkSoft
+import com.lemonkids.kidtask.ui.theme.Sky
 import com.lemonkids.kidtask.ui.theme.Sunny
 
 /** 任务 UI 数据模型，首页和日历页共用 */
@@ -65,6 +67,15 @@ data class TaskUiItem(
 enum class TaskCardDensity {
     Standard,
     Compact
+}
+
+/** 分类的颜色和图标只由稳定标识决定，调整显示顺序不会改变已有分类的视觉样式。 */
+fun stableTaskCategoryAppearance(categoryKey: String): Pair<Color, String> {
+    // Mint 仅表达“已完成”，不能作为普通分类色使用。
+    val colors = listOf(Pink, Lavender, Coral, Sky, Sunny)
+    val emojis = listOf("🌸", "💜", "🍊", "🫧", "⭐")
+    val index = Math.floorMod(categoryKey.hashCode(), colors.size)
+    return colors[index] to emojis[index]
 }
 
 /**

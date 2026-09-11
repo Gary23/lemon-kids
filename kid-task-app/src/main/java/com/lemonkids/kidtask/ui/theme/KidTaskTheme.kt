@@ -34,6 +34,8 @@ val CompletedTaskBorder = Color(0xFF88C797)
 val Coral = Color(0xFFFF8A80)
 /** 淡珊瑚 */
 val CoralSoft = Color(0xFFFFD0CC)
+/** 天空蓝 — 任务分类色，避免与已完成薄荷绿混淆。 */
+val Sky = Color(0xFF64B5F6)
 /** 奶黄 #FFCA28 — 积分星星 */
 val Sunny = Color(0xFFFFCA28)
 /** 浅奶黄 #FFF8E1 — 页面背景 */
