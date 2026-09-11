@@ -90,6 +90,7 @@ import com.lemonkids.kidtask.ui.components.TaskCard
 import com.lemonkids.kidtask.ui.components.TaskConfirmDialog
 import com.lemonkids.kidtask.ui.components.UndoConfirmDialog
 import com.lemonkids.kidtask.util.KidTtsManager
+import com.lemonkids.shared.model.Category
 import dagger.hilt.android.EntryPointAccessors
 import java.time.LocalTime
 import kotlin.math.roundToInt
@@ -130,7 +131,8 @@ fun HomeScreen(
 
                 val hasAnyTask = uiState.todayTasks.isNotEmpty()
 
-                if (uiState.isLoading && !hasAnyTask) {
+                // 首屏同时等待任务和分类。否则任务先到达时会先按接口顺序渲染，分类到达后又重排。
+                if (!uiState.isInitialDataReady || (uiState.isLoading && !hasAnyTask)) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = Pink, modifier = Modifier.size(40.dp))
                     }
@@ -155,7 +157,7 @@ fun HomeScreen(
                         if (uiState.todayTasks.isNotEmpty()) {
                             CategoryTaskList(
                                 tasks = uiState.todayTasks,
-                                categoryNames = uiState.categoryNames,
+                                categories = uiState.categories,
                                 playingTaskId = playingTaskId,
                                 onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
                                 onMarkDone = { viewModel.markTaskDone(it) },
@@ -209,7 +211,7 @@ fun HomeScreen(
 @Composable
 private fun CategoryTaskList(
     tasks: List<com.lemonkids.kidtask.ui.components.TaskUiItem>,
-    categoryNames: List<String>,
+    categories: List<Category>,
     playingTaskId: String?,
     onSpeak: (com.lemonkids.kidtask.ui.components.TaskUiItem) -> Unit,
     onMarkDone: (String) -> Unit,
@@ -222,11 +224,10 @@ private fun CategoryTaskList(
     // 先按家长端分类管理页的顺序显示；历史任务中已被删除的分类放在最后，避免任务丢失。
     // 已完成是孩子端专用分类，不写回家长端配置，始终置于最后。
     val orderedCategories = buildList {
-        categoryNames.filter { tasksByCategory.containsKey(it) }.forEach(::add)
+        categories.map { it.name }.filter { tasksByCategory.containsKey(it) }.forEach(::add)
         tasksByCategory.keys.filterNot { it in this }.sorted().forEach(::add)
     }
-    val colors = listOf(Pink, Lavender, Coral, Mint, Sunny)
-    val emojis = listOf("🌸", "💜", "🍊", "🌿", "⭐")
+    val categoryIdsByName = categories.associate { it.name to it.id }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -234,11 +235,15 @@ private fun CategoryTaskList(
             Spacer(Modifier.width(8.dp))
             Text("还有 ${tasks.count { it.status == "PENDING" }} 个", color = Pink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
-        orderedCategories.forEachIndexed { index, categoryName ->
+        orderedCategories.forEach { categoryName ->
             val categoryTasks = tasksByCategory.getValue(categoryName)
-            val color = colors[index % colors.size]
+            // 新任务用来源分类 UUID 锁定视觉样式；手工或历史任务按名称稳定兜底。
+            val visualKey = categoryTasks.mapNotNull { it.sourceCategoryId }.firstOrNull()
+                ?: categoryIdsByName[categoryName]
+                ?: categoryName
+            val (color, emoji) = stableCategoryAppearance(visualKey)
             TaskCategoryCard(
-                title = "${emojis[index % emojis.size]}  $categoryName",
+                title = "$emoji  $categoryName",
                 tasks = categoryTasks,
                 sectionColor = color,
                 playingTaskId = playingTaskId,
@@ -259,6 +264,14 @@ private fun CategoryTaskList(
             )
         }
     }
+}
+
+/** 分类的颜色和图标只由稳定标识决定，调整显示顺序不会改变已有分类的视觉样式。 */
+private fun stableCategoryAppearance(categoryKey: String): Pair<Color, String> {
+    val colors = listOf(Pink, Lavender, Coral, Mint, Sunny)
+    val emojis = listOf("🌸", "💜", "🍊", "🌿", "⭐")
+    val index = Math.floorMod(categoryKey.hashCode(), colors.size)
+    return colors[index] to emojis[index]
 }
 
 @Composable

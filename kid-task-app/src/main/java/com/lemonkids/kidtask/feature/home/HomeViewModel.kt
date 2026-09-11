@@ -3,6 +3,7 @@ package com.lemonkids.kidtask.feature.home
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.model.TaskStatus
 import com.lemonkids.shared.repository.AuthRepository
@@ -25,8 +26,8 @@ import javax.inject.Inject
 data class HomeUiState(
     /** 今日任务 */
     val todayTasks: List<TaskUiItem> = emptyList(),
-    /** 家长端配置的任务分类，保持配置创建顺序。 */
-    val categoryNames: List<String> = emptyList(),
+    /** 家长端配置的任务分类，保持配置创建顺序及稳定的分类标识。 */
+    val categories: List<Category> = emptyList(),
     /** 昨天及以前的未完成任务（PENDING），日期降序 */
     val overdueTasks: List<TaskUiItem> = emptyList(),
     /** 明天及以后的任务，日期升序 */
@@ -39,6 +40,8 @@ data class HomeUiState(
     val allTasksDoneToday: Boolean = false,
     val showCelebration: Boolean = false,
     val isLoading: Boolean = false,
+    /** 首屏任务和分类均已取得首次结果（或加载超时），才能渲染分类列表。 */
+    val isInitialDataReady: Boolean = false,
     /** 已本地反馈、正在同步到服务端的任务；不再用全屏加载遮挡列表。 */
     val syncingTaskIds: Set<String> = emptySet(),
     val confirmDialogTaskId: String? = null,
@@ -63,8 +66,10 @@ class HomeViewModel @Inject constructor(
 
     private var celebrateShownToday = false
     private var lastCelebrateDate: String = ""
-    /** 首次加载是否完成（至少收到一次非空数据或超时确认） */
-    private var firstLoadDone = false
+    /** 首屏需同时等待任务与分类，避免两个独立请求先后返回导致分类重排。 */
+    private var initialTasksLoaded = false
+    private var initialCategoriesLoaded = false
+    private var initialLoadTimedOut = false
     /** 等待仓库返回新快照期间保留本地状态，避免旧的轮询结果把卡片改回去。 */
     private val optimisticTaskStatuses = mutableMapOf<String, TaskStatus>()
 
@@ -81,11 +86,18 @@ class HomeViewModel @Inject constructor(
             user.familyId?.takeIf { it.isNotBlank() }?.let { familyId ->
                 launch {
                     categoryRepository.observeCategories(familyId).collect { categories ->
+                        initialCategoriesLoaded = true
+                        val isInitialDataReady = initialTasksLoaded || initialLoadTimedOut
                         _uiState.value = _uiState.value.copy(
-                            categoryNames = categories.map { it.name }.filter { it.isNotBlank() }
+                            categories = categories.filter { it.name.isNotBlank() },
+                            isLoading = !isInitialDataReady,
+                            isInitialDataReady = isInitialDataReady
                         )
                     }
                 }
+            } ?: run {
+                // 未加入家庭的账号没有分类数据源，不应让首屏一直等待。
+                initialCategoriesLoaded = true
             }
 
             launch {
@@ -122,7 +134,8 @@ class HomeViewModel @Inject constructor(
                         .map { it.toUiItem() }
                         .sortedBy { it.dueDate }
 
-                    firstLoadDone = true
+                    initialTasksLoaded = true
+                    val isInitialDataReady = initialCategoriesLoaded || initialLoadTimedOut
 
                     val allDone = todayTasks.isNotEmpty() && todayTasks.all {
                         it.status == "DONE" || it.status == "VERIFIED"
@@ -135,7 +148,8 @@ class HomeViewModel @Inject constructor(
                     if (shouldCelebrate) celebrateShownToday = true
 
                     _uiState.value = _uiState.value.copy(
-                        isLoading = false,
+                        isLoading = !isInitialDataReady,
+                        isInitialDataReady = isInitialDataReady,
                         todayTasks = todayTasks,
                         overdueTasks = overdueTasks,
                         upcomingTasks = upcomingTasks,
@@ -148,9 +162,12 @@ class HomeViewModel @Inject constructor(
             // 超时兜底：首次加载超过 8 秒仍无数据，退出 loading 显示空状态
             launch {
                 kotlinx.coroutines.delay(8000)
-                if (!firstLoadDone) {
-                    firstLoadDone = true
-                    _uiState.value = _uiState.value.copy(isLoading = false)
+                if (!initialTasksLoaded || !initialCategoriesLoaded) {
+                    initialLoadTimedOut = true
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isInitialDataReady = true
+                    )
                 }
             }
 
@@ -314,7 +331,8 @@ class HomeViewModel @Inject constructor(
     private fun Task.toUiItem() = TaskUiItem(
         id = id, title = title, description = description,
         status = status.name, category = category,
-        dueDate = dueDate, dueTime = dueTime, rewardPoints = rewardPoints, penaltyPoints = penaltyPoints
+        dueDate = dueDate, dueTime = dueTime, rewardPoints = rewardPoints, penaltyPoints = penaltyPoints,
+        sourceCategoryId = sourceCategoryId
     )
 }
 

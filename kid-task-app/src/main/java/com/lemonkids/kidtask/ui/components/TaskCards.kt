@@ -56,7 +56,9 @@ data class TaskUiItem(
     val dueDate: String = "",
     val dueTime: String?,
     val rewardPoints: Int,
-    val penaltyPoints: Int
+    val penaltyPoints: Int,
+    /** 分类任务包来源，用于首页在改名或重排后保持同一分类的视觉标识。 */
+    val sourceCategoryId: String? = null
 )
 
 /**
