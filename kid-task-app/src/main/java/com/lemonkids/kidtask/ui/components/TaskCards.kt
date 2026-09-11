@@ -40,10 +40,12 @@ import com.lemonkids.kidtask.ui.theme.Coral
 import com.lemonkids.kidtask.ui.theme.CompletedTaskBackground
 import com.lemonkids.kidtask.ui.theme.CompletedTaskBorder
 import com.lemonkids.kidtask.ui.theme.InkBrown
+import com.lemonkids.kidtask.ui.theme.Lavender
 import com.lemonkids.kidtask.ui.theme.Mint
 import com.lemonkids.kidtask.ui.theme.MutedGray
 import com.lemonkids.kidtask.ui.theme.Pink
 import com.lemonkids.kidtask.ui.theme.PinkSoft
+import com.lemonkids.kidtask.ui.theme.Sky
 import com.lemonkids.kidtask.ui.theme.Sunny
 
 /** 任务 UI 数据模型，首页和日历页共用 */
@@ -56,8 +58,25 @@ data class TaskUiItem(
     val dueDate: String = "",
     val dueTime: String?,
     val rewardPoints: Int,
-    val penaltyPoints: Int
+    val penaltyPoints: Int,
+    /** 分类任务包来源，用于首页在改名或重排后保持同一分类的视觉标识。 */
+    val sourceCategoryId: String? = null
 )
+
+/** 任务卡片密度：首页使用标准尺寸，日历列表使用紧凑尺寸。 */
+enum class TaskCardDensity {
+    Standard,
+    Compact
+}
+
+/** 分类的颜色和图标只由稳定标识决定，调整显示顺序不会改变已有分类的视觉样式。 */
+fun stableTaskCategoryAppearance(categoryKey: String): Pair<Color, String> {
+    // Mint 仅表达“已完成”，不能作为普通分类色使用。
+    val colors = listOf(Pink, Lavender, Coral, Sky, Sunny)
+    val emojis = listOf("🌸", "💜", "🍊", "🫧", "⭐")
+    val index = Math.floorMod(categoryKey.hashCode(), colors.size)
+    return colors[index] to emojis[index]
+}
 
 /**
  * 任务卡片分发器 — 根据状态自动选择 Pending / Done / Expired 卡片
@@ -70,6 +89,7 @@ fun TaskCard(
     isPlaying: Boolean,
     sectionColor: Color,
     softColor: Color,
+    density: TaskCardDensity = TaskCardDensity.Standard,
     onSpeak: () -> Unit,
     onMarkDone: (String) -> Unit,
     onUndo: (String) -> Unit
@@ -78,13 +98,19 @@ fun TaskCard(
     val isExpired = task.status == "EXPIRED" || task.status == "REJECTED"
 
     when {
-        isDone -> DoneTaskCard(task = task, onUndo = onUndo)
-        isExpired -> ExpiredTaskCard(task = task, sectionColor = sectionColor, onMarkDone = onMarkDone)
+        isDone -> DoneTaskCard(task = task, density = density, onUndo = onUndo)
+        isExpired -> ExpiredTaskCard(
+            task = task,
+            sectionColor = sectionColor,
+            density = density,
+            onMarkDone = onMarkDone
+        )
         else -> PendingTaskCard(
             task = task,
             isPlaying = isPlaying,
             sectionColor = sectionColor,
             softColor = softColor,
+            density = density,
             onSpeak = onSpeak,
             onMarkDone = onMarkDone
         )
@@ -98,9 +124,15 @@ fun PendingTaskCard(
     isPlaying: Boolean,
     sectionColor: Color,
     softColor: Color,
+    density: TaskCardDensity,
     onSpeak: () -> Unit,
     onMarkDone: (String) -> Unit
 ) {
+    val isCompact = density == TaskCardDensity.Compact
+    val contentPadding = if (isCompact) 12.dp else 16.dp
+    val iconSize = if (isCompact) 36.dp else 44.dp
+    val horizontalGap = if (isCompact) 8.dp else 12.dp
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -108,7 +140,7 @@ fun PendingTaskCard(
         border = BorderStroke(1.dp, sectionColor.copy(alpha = 0.15f))
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(contentPadding),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 左侧装饰条
@@ -118,12 +150,12 @@ fun PendingTaskCard(
                     .fillMaxHeight()
                     .background(sectionColor, RoundedCornerShape(2.dp))
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(horizontalGap))
             // 喇叭按钮
             Surface(
                 shape = CircleShape,
                 color = softColor,
-                modifier = Modifier.size(44.dp)
+                modifier = Modifier.size(iconSize)
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
@@ -133,46 +165,49 @@ fun PendingTaskCard(
                         Icons.AutoMirrored.Filled.VolumeUp,
                         contentDescription = "朗读任务",
                         tint = if (isPlaying) Coral else sectionColor.copy(alpha = 0.7f),
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(if (isCompact) 20.dp else 22.dp)
                     )
                 }
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(horizontalGap))
             // 任务信息
             Column(modifier = Modifier.weight(1f)) {
-                Text(task.title, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
+                Text(task.title, fontSize = if (isCompact) 16.sp else 17.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
                 if (!task.description.isNullOrBlank()) {
                     Text(
                         task.description,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = MutedGray,
-                        maxLines = 2,
+                        maxLines = if (isCompact) 1 else 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(if (isCompact) 4.dp else 6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Star, contentDescription = null, tint = Sunny, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("${task.rewardPoints} 积分", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Pink)
                     if (!task.dueTime.isNullOrEmpty()) {
-                        Spacer(Modifier.width(12.dp))
+                        Spacer(Modifier.width(if (isCompact) 8.dp else 12.dp))
                         Icon(Icons.Filled.Schedule, contentDescription = null, tint = MutedGray, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(task.dueTime, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MutedGray)
                     }
                 }
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(if (isCompact) 6.dp else 8.dp))
             // 完成按钮
             Button(
                 onClick = { onMarkDone(task.id) },
                 shape = RoundedCornerShape(20.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = sectionColor),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = if (isCompact) 12.dp else 16.dp,
+                    vertical = if (isCompact) 8.dp else 12.dp
+                )
             ) {
-                Text("我做完啦！", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                Text("我做完啦！", fontSize = if (isCompact) 13.sp else 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
             }
         }
     }
@@ -180,7 +215,12 @@ fun PendingTaskCard(
 
 /** 已完成任务卡片 — 绿色对勾 + 标题 + 积分 + 撤销 */
 @Composable
-fun DoneTaskCard(task: TaskUiItem, onUndo: (String) -> Unit) {
+fun DoneTaskCard(task: TaskUiItem, density: TaskCardDensity, onUndo: (String) -> Unit) {
+    val isCompact = density == TaskCardDensity.Compact
+    val contentPadding = if (isCompact) 12.dp else 16.dp
+    val iconSize = if (isCompact) 36.dp else 44.dp
+    val horizontalGap = if (isCompact) 8.dp else 12.dp
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -188,21 +228,21 @@ fun DoneTaskCard(task: TaskUiItem, onUndo: (String) -> Unit) {
         border = BorderStroke(1.dp, CompletedTaskBorder)
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(contentPadding),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
                 shape = CircleShape,
                 color = Mint,
-                modifier = Modifier.size(44.dp)
+                modifier = Modifier.size(iconSize)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(if (isCompact) 20.dp else 24.dp))
                 }
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(horizontalGap))
             Column(modifier = Modifier.weight(1f)) {
-                Text(task.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = InkBrown)
+                Text(task.title, fontSize = if (isCompact) 16.sp else 17.sp, fontWeight = FontWeight.Bold, color = InkBrown)
                 Text("✅ 已完成 · 得到 ${task.rewardPoints} 颗星星", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Mint)
             }
             Text(
@@ -218,37 +258,50 @@ fun DoneTaskCard(task: TaskUiItem, onUndo: (String) -> Unit) {
 
 /** 过期任务卡片 — 灰色时钟 + 标题 + 截止时间 + 补做啦 */
 @Composable
-fun ExpiredTaskCard(task: TaskUiItem, sectionColor: Color, onMarkDone: (String) -> Unit) {
+fun ExpiredTaskCard(
+    task: TaskUiItem,
+    sectionColor: Color,
+    density: TaskCardDensity,
+    onMarkDone: (String) -> Unit
+) {
+    val isCompact = density == TaskCardDensity.Compact
+    val contentPadding = if (isCompact) 12.dp else 16.dp
+    val iconSize = if (isCompact) 36.dp else 44.dp
+    val horizontalGap = if (isCompact) 8.dp else 12.dp
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = Color(0xFFF5F0EB)
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(contentPadding),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
                 shape = CircleShape,
                 color = MutedGray.copy(alpha = 0.15f),
-                modifier = Modifier.size(44.dp)
+                modifier = Modifier.size(iconSize)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Schedule, contentDescription = null, tint = MutedGray, modifier = Modifier.size(22.dp))
                 }
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(horizontalGap))
             Column(modifier = Modifier.weight(1f)) {
-                Text(task.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = MutedGray)
+                Text(task.title, fontSize = if (isCompact) 16.sp else 17.sp, fontWeight = FontWeight.Bold, color = MutedGray)
                 Text("⏰ 已错过 · 截止 ${task.dueTime ?: ""}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MutedGray)
             }
             Button(
                 onClick = { onMarkDone(task.id) },
                 shape = RoundedCornerShape(20.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Coral.copy(alpha = 0.9f)),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = if (isCompact) 12.dp else 16.dp,
+                    vertical = if (isCompact) 8.dp else 10.dp
+                )
             ) {
-                Text("补做啦", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                Text("补做啦", fontSize = if (isCompact) 13.sp else 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
             }
         }
     }

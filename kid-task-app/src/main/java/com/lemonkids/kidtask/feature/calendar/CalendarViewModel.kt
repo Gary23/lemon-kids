@@ -127,7 +127,8 @@ class CalendarViewModel @Inject constructor(
     private fun Task.toUiItem() = TaskUiItem(
         id = id, title = title, description = description,
         status = status.name, category = category,
-        dueDate = dueDate, dueTime = dueTime, rewardPoints = rewardPoints, penaltyPoints = penaltyPoints
+        dueDate = dueDate, dueTime = dueTime, rewardPoints = rewardPoints, penaltyPoints = penaltyPoints,
+        sourceCategoryId = sourceCategoryId
     )
 }
 
