@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lemonkids.kidtask.ui.components.TaskCard
+import com.lemonkids.kidtask.ui.components.TaskCardDensity
 import com.lemonkids.kidtask.ui.components.TaskConfirmDialog
 import com.lemonkids.kidtask.ui.components.UndoConfirmDialog
 import com.lemonkids.kidtask.ui.theme.Coral
@@ -98,7 +99,7 @@ fun CalendarScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp)
             ) {
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(12.dp))
 
                 // 日历卡片
                 Surface(
@@ -106,27 +107,27 @@ fun CalendarScreen(
                     color = Color.White,
                     shadowElevation = 4.dp
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(modifier = Modifier.padding(12.dp)) {
                         // 星期头
                         Row(modifier = Modifier.fillMaxWidth()) {
                             WEEK_LABELS.forEach { label ->
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
                                     color = LavenderSoft.copy(alpha = 0.4f),
-                                    modifier = Modifier.weight(1f).padding(2.dp)
+                                    modifier = Modifier.weight(1f).padding(1.dp)
                                 ) {
                                     Text(
                                         label,
-                                        fontSize = 15.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = Lavender,
                                         textAlign = TextAlign.Center,
-                                        modifier = Modifier.padding(vertical = 8.dp)
+                                        modifier = Modifier.padding(vertical = 5.dp)
                                     )
                                 }
                             }
                         }
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(2.dp))
 
                         // 日期网格
                         val ym = YearMonth.of(uiState.year, uiState.month)
@@ -141,7 +142,7 @@ fun CalendarScreen(
                         rows.chunked(7).forEach { week ->
                             Row(modifier = Modifier.fillMaxWidth()) {
                                 week.forEach { day ->
-                                    Box(modifier = Modifier.weight(1f).padding(2.dp)) {
+                                    Box(modifier = Modifier.weight(1f).padding(1.dp)) {
                                         if (day != null) {
                                             val dateStr = String.format(
                                                 "%04d-%02d-%02d",
@@ -172,22 +173,22 @@ fun CalendarScreen(
                         }
 
                         // 图例
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(8.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             LegendDot(color = Mint, label = "全部完成")
-                            Spacer(Modifier.width(20.dp))
+                            Spacer(Modifier.width(12.dp))
                             LegendDot(color = Coral, label = "有未完成")
-                            Spacer(Modifier.width(20.dp))
+                            Spacer(Modifier.width(12.dp))
                             LegendDot(color = Color(0xFFD0CCC8), label = "无任务")
                         }
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(12.dp))
 
                 // 选中日期任务列表
                 val selectedTasks = uiState.tasksByDate[uiState.selectedDate] ?: emptyList()
@@ -198,7 +199,7 @@ fun CalendarScreen(
                     color = Color.White,
                     shadowElevation = 4.dp
                 ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
                         Text(
                             if (isTodaySelected) "今天的安排" else
                                 uiState.selectedDate.removePrefix("${uiState.year}-").replace("-", "月") + "日的安排",
@@ -206,7 +207,7 @@ fun CalendarScreen(
                             fontWeight = FontWeight.ExtraBold,
                             color = InkBrown
                         )
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(8.dp))
 
                         if (selectedTasks.isEmpty()) {
                             Box(
@@ -231,17 +232,18 @@ fun CalendarScreen(
                                     isPlaying = playingTaskId == task.id,
                                     sectionColor = Pink,
                                     softColor = PinkSoft.copy(alpha = 0.15f),
+                                    density = TaskCardDensity.Compact,
                                     onSpeak = { ttsManager.speak(task.id, task.title, task.description) },
                                     onMarkDone = { viewModel.markTaskDone(it) },
                                     onUndo = { viewModel.markTaskUndo(it) }
                                 )
-                                Spacer(Modifier.height(10.dp))
+                                Spacer(Modifier.height(8.dp))
                             }
                         }
                     }
                 }
 
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(16.dp))
             }
         }
 
@@ -285,16 +287,16 @@ private fun CalendarHeader(
             .background(
                 Brush.linearGradient(listOf(LavenderSoft, Lavender))
             )
-            .padding(top = 20.dp, bottom = 24.dp, start = 24.dp, end = 24.dp)
+            .padding(top = 16.dp, bottom = 18.dp, start = 20.dp, end = 20.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(
                 "我的任务日历 📅",
-                fontSize = 22.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = Color.White
             )
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -303,25 +305,25 @@ private fun CalendarHeader(
                 Surface(
                     shape = CircleShape,
                     color = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier.size(44.dp).clickable { onShift(-1) }
+                    modifier = Modifier.size(40.dp).clickable { onShift(-1) }
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.ChevronLeft, contentDescription = "上个月", tint = Lavender, modifier = Modifier.size(28.dp))
+                        Icon(Icons.Filled.ChevronLeft, contentDescription = "上个月", tint = Lavender, modifier = Modifier.size(24.dp))
                     }
                 }
                 Text(
                     "${year}年${month}月",
-                    fontSize = 22.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White
                 )
                 Surface(
                     shape = CircleShape,
                     color = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier.size(44.dp).clickable { onShift(1) }
+                    modifier = Modifier.size(40.dp).clickable { onShift(1) }
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.ChevronRight, contentDescription = "下个月", tint = Lavender, modifier = Modifier.size(28.dp))
+                        Icon(Icons.Filled.ChevronRight, contentDescription = "下个月", tint = Lavender, modifier = Modifier.size(24.dp))
                     }
                 }
             }
@@ -343,7 +345,7 @@ private fun DayCell(
 ) {
     Column(
         modifier = Modifier
-            .aspectRatio(1f)
+            .aspectRatio(1.2f)
             .clip(RoundedCornerShape(16.dp))
             .background(
                 if (hasTask) Sunny.copy(alpha = 0.15f) else Color.Transparent
@@ -352,28 +354,28 @@ private fun DayCell(
                 if (isSelected) Modifier.border(2.dp, Pink, RoundedCornerShape(16.dp)) else Modifier
             )
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
+            .padding(vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Box(
             modifier = Modifier
-                .size(32.dp)
+                .size(28.dp)
                 .clip(CircleShape)
                 .background(if (isToday) Pink else Color.Transparent),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 "$day",
-                fontSize = 16.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = if (isToday) Color.White else InkBrown
             )
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(2.dp))
         Box(
             modifier = Modifier
-                .size(8.dp)
+                .size(7.dp)
                 .clip(CircleShape)
                 .background(
                     when {
@@ -393,11 +395,11 @@ private fun LegendDot(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
-                .size(10.dp)
+                .size(8.dp)
                 .clip(CircleShape)
                 .background(color)
         )
-        Spacer(Modifier.width(6.dp))
-        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MutedGray)
+        Spacer(Modifier.width(4.dp))
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MutedGray)
     }
 }
