@@ -57,6 +57,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -630,6 +631,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                     groups = homeState.groups,
                     isLoading = homeState.isLoading,
                     practiceProgress = practiceProgress,
+                    onRefresh = { homeViewModel.load(userId) },
                     onCharacter = { group, index ->
                         val characterId = if (group.isKnown) {
                             group.recognizedCharacters.getOrNull(index)?.id
@@ -824,6 +826,7 @@ private fun HomeScreen(
     groups: List<LiteracyCharacterGroup>,
     isLoading: Boolean,
     practiceProgress: Map<String, Int>,
+    onRefresh: () -> Unit,
     onCharacter: (LiteracyCharacterGroup, Int) -> Unit
 ) {
     val listState = rememberLazyListState()
@@ -842,6 +845,18 @@ private fun HomeScreen(
                         Text("柠檬认字", style = MaterialTheme.typography.headlineLarge, color = Ink)
                         Text("$childName，和小麦一起认识今天的新朋友", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF7C898D))
                     }
+                    Button(
+                        onClick = onRefresh,
+                        enabled = !isLoading,
+                        colors = ButtonDefaults.buttonColors(containerColor = Sky),
+                        shape = RoundedCornerShape(18.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 9.dp)
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("刷新")
+                    }
+                    Spacer(Modifier.width(10.dp))
                     Surface(shape = CircleShape, color = WheatLight, modifier = Modifier.size(58.dp)) {
                         Box(contentAlignment = Alignment.Center) { Text("🌾", fontSize = 30.sp) }
                     }
@@ -913,8 +928,13 @@ private fun LiteracyEmptyState() {
 }
 
 private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) = Lesson(
-    title = "${if (isKnown) "已认识的字" else "待认识的字"} · 第${groupNumber}组",
-    date = "",
+    title = if (isKnown) {
+        recognizedDate?.let { "已认识的字 · ${it.monthValue}月${it.dayOfMonth}日" }
+            ?: "已认识的字 · 第${groupNumber}组"
+    } else {
+        "待认识的字 · 第${groupNumber}组"
+    },
+    date = recognizedDate?.toString().orEmpty(),
     progress = "",
     known = isKnown,
     characters = characters,
@@ -942,31 +962,36 @@ private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(lesson.title, style = MaterialTheme.typography.titleMedium, color = Ink)
                 }
-                // 每组一行固定 6 个字，六格均分卡片宽度；任务不足 6 个时保留右侧空白。
+                // 每行最多 6 个字并均分卡片宽度；同一收录日期的字较多时自动换行。
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                     val characterCellSize = (maxWidth - 8.dp * 5) / 6
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        lesson.characters.forEachIndexed { index, char ->
-                            val isCompleted = lesson.characterIds.getOrNull(index) in lesson.completedCharacterIds
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isCompleted) LeafLight else Color.White.copy(alpha = .74f),
-                                border = if (isCompleted) {
-                                    androidx.compose.foundation.BorderStroke(1.dp, Leaf.copy(alpha = .65f))
-                                } else {
-                                    null
-                                },
-                                modifier = Modifier
-                                    .size(characterCellSize)
-                                    .clickable { onCharacterClick(index) }
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        char,
-                                        fontSize = 32.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isCompleted) Leaf else Ink
-                                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        lesson.characters.chunked(6).forEachIndexed { rowIndex, rowCharacters ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                rowCharacters.forEachIndexed { columnIndex, char ->
+                                    val index = rowIndex * 6 + columnIndex
+                                    val isCompleted = lesson.characterIds.getOrNull(index) in lesson.completedCharacterIds
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = if (isCompleted) LeafLight else Color.White.copy(alpha = .74f),
+                                        border = if (isCompleted) {
+                                            androidx.compose.foundation.BorderStroke(1.dp, Leaf.copy(alpha = .65f))
+                                        } else {
+                                            null
+                                        },
+                                        modifier = Modifier
+                                            .size(characterCellSize)
+                                            .clickable { onCharacterClick(index) }
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                char,
+                                                fontSize = 32.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isCompleted) Leaf else Ink
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
