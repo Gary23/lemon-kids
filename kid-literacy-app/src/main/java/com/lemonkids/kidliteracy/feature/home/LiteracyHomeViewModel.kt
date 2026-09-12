@@ -122,8 +122,8 @@ class LiteracyHomeViewModel @Inject constructor(
     /**
      * 取今天之前最近的收录日期，用于生成最多三组首页复习内容。
      *
-     * 相邻日期合并后仍需显示后续分组，因此同一天收录的字必须完整保留，
-     * 分页读取到第五个日期出现（或没有更多数据）才能确定第四个日期的字已全部拿到。
+     * 最多三组可能由六个日期两两合并而成，因此同一天收录的字必须完整保留，
+     * 分页读取到第七个日期出现（或没有更多数据）才能确定前六个日期的字已全部拿到。
      */
     private suspend fun loadRecentRecognizedCharacters(childId: String): Result<List<RecognizedCharacter>> {
         val characters = mutableListOf<RecognizedCharacter>()
@@ -156,7 +156,7 @@ private val CHINA_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
 private const val DAILY_SNAPSHOT_LOG_TAG = "LiteracyDailySnapshot"
 private const val RECOGNIZED_CHARACTER_PAGE_SIZE = 100L
 private const val RECENT_RECOGNIZED_GROUP_LIMIT = 3
-private const val RECENT_RECOGNIZED_DATE_FETCH_LIMIT = 4
+private const val RECENT_RECOGNIZED_DATE_FETCH_LIMIT = RECENT_RECOGNIZED_GROUP_LIMIT * 2
 private const val ADJACENT_DATES_MAX_COMBINED_CHARACTERS = 6
 
 private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGroup> {
