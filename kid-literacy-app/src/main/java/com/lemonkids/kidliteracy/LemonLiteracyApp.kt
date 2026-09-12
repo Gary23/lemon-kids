@@ -929,12 +929,14 @@ private fun LiteracyEmptyState() {
 
 private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) = Lesson(
     title = if (isKnown) {
-        recognizedDate?.let { "已认识的字 · ${it.monthValue}月${it.dayOfMonth}日" }
+        recognizedDates.takeIf { it.isNotEmpty() }
+            ?.joinToString(separator = "、") { "${it.monthValue}月${it.dayOfMonth}日" }
+            ?.let { "已认识的字 · $it" }
             ?: "已认识的字 · 第${groupNumber}组"
     } else {
         "待认识的字 · 第${groupNumber}组"
     },
-    date = recognizedDate?.toString().orEmpty(),
+    date = recognizedDates.joinToString(separator = "、"),
     progress = "",
     known = isKnown,
     characters = characters,
@@ -962,7 +964,7 @@ private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(lesson.title, style = MaterialTheme.typography.titleMedium, color = Ink)
                 }
-                // 每行最多 6 个字并均分卡片宽度；同一收录日期的字较多时自动换行。
+                // 每行最多 6 个字并均分卡片宽度；字较多时自动换行。
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                     val characterCellSize = (maxWidth - 8.dp * 5) / 6
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
