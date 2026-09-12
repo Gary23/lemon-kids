@@ -28,8 +28,8 @@ data class LiteracyHomeUiState(
 data class LiteracyCharacterGroup(
     val type: LiteracyGroupType,
     val groupNumber: Int,
-    /** 已认识字分组对应的收录日期（中国时区），待认识分组为空。 */
-    val recognizedDate: LocalDate? = null,
+    /** 已认识字分组覆盖的收录日期（中国时区，从近到远），待认识分组为空。 */
+    val recognizedDates: List<LocalDate> = emptyList(),
     /** 首页只展示汉字；完整认字数据用于进入字、词、句学习页。 */
     val characters: List<String>,
     /** 待认识分组进入学习页时所需的完整认字任务数据。 */
@@ -39,8 +39,8 @@ data class LiteracyCharacterGroup(
     /**
      * 已认识字复习时主字需要读对的次数。
      *
-     * 首页按入库日期从近到远分成三组：最近日期读 3 次，随后日期读 2 次，
-     * 最后日期读 1 次。待认识字仍固定沿用自身的三次规则。
+     * 首页按展示分组从近到远读 3、2、1 次。首组可能合并最近两个日期，
+     * 待认识字仍固定沿用自身的三次规则。
      */
     val recognizedCharacterRequiredReadings: Int = 3,
     /** 当日任务完成后仍保留在原任务中的完成态。 */
@@ -120,10 +120,10 @@ class LiteracyHomeViewModel @Inject constructor(
     }
 
     /**
-     * 取今天之前最近的三个“收录日期”，而不是固定取前若干个字。
+     * 取今天之前最近的收录日期，用于生成最多三组首页复习内容。
      *
-     * 同一天收录的字必须完整保留，因此分页读取到第四个日期出现（或没有更多数据）
-     * 才能确定第三个日期的字已全部拿到。
+     * 最近两个日期合并后仍需显示后续两组，因此同一天收录的字必须完整保留，
+     * 分页读取到第五个日期出现（或没有更多数据）才能确定第四个日期的字已全部拿到。
      */
     private suspend fun loadRecentRecognizedCharacters(childId: String): Result<List<RecognizedCharacter>> {
         val characters = mutableListOf<RecognizedCharacter>()
@@ -140,8 +140,8 @@ class LiteracyHomeViewModel @Inject constructor(
             characters += page
 
             val dates = characters.mapNotNull(RecognizedCharacter::recognizedDateInChina).distinct()
-            if (dates.size > RECENT_RECOGNIZED_DATE_LIMIT || page.size < RECOGNIZED_CHARACTER_PAGE_SIZE) {
-                return Result.success(characters.filter { it.recognizedDateInChina() in dates.take(RECENT_RECOGNIZED_DATE_LIMIT) })
+            if (dates.size > RECENT_RECOGNIZED_DATE_FETCH_LIMIT || page.size < RECOGNIZED_CHARACTER_PAGE_SIZE) {
+                return Result.success(characters.filter { it.recognizedDateInChina() in dates.take(RECENT_RECOGNIZED_DATE_FETCH_LIMIT) })
             }
             offset += page.size
         }
@@ -155,23 +155,52 @@ private fun todayStartInChina() = LocalDate.now(CHINA_ZONE).atStartOfDay(CHINA_Z
 private val CHINA_ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
 private const val DAILY_SNAPSHOT_LOG_TAG = "LiteracyDailySnapshot"
 private const val RECOGNIZED_CHARACTER_PAGE_SIZE = 100L
-private const val RECENT_RECOGNIZED_DATE_LIMIT = 3
+private const val RECENT_RECOGNIZED_GROUP_LIMIT = 3
+private const val RECENT_RECOGNIZED_DATE_FETCH_LIMIT = 4
+private const val FIRST_TWO_DATES_MAX_COMBINED_CHARACTERS = 6
 
-private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGroup> =
-    groupBy { it.recognizedDateInChina() }
+private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGroup> {
+    val charactersByDate = mapNotNull { character ->
+        character.recognizedDateInChina()?.let { date -> date to character }
+    }
+        .groupBy({ it.first }, { it.second })
         .entries
         .sortedByDescending { it.key }
-        .take(RECENT_RECOGNIZED_DATE_LIMIT)
-        .mapIndexed { index, (date, characters) ->
+    val firstTwoDates = charactersByDate.take(2)
+    val groups = if (
+        firstTwoDates.size == 2 &&
+        firstTwoDates.sumOf { it.value.size } <= FIRST_TWO_DATES_MAX_COMBINED_CHARACTERS
+    ) {
+        listOf(
+            KnownCharacterDateGroup(
+                dates = firstTwoDates.map { it.key },
+                characters = firstTwoDates.flatMap { it.value }
+            )
+        ) + charactersByDate.drop(2).map { (date, characters) ->
+            KnownCharacterDateGroup(dates = listOf(date), characters = characters)
+        }
+    } else {
+        charactersByDate.map { (date, characters) ->
+            KnownCharacterDateGroup(dates = listOf(date), characters = characters)
+        }
+    }
+
+    return groups.take(RECENT_RECOGNIZED_GROUP_LIMIT).mapIndexed { index, group ->
         LiteracyCharacterGroup(
             type = LiteracyGroupType.KNOWN,
             groupNumber = index + 1,
-            recognizedDate = date,
-            characters = characters.map { it.character },
-            recognizedCharacters = characters,
+            recognizedDates = group.dates,
+            characters = group.characters.map { it.character },
+            recognizedCharacters = group.characters,
             recognizedCharacterRequiredReadings = (3 - index).coerceAtLeast(1)
         )
     }
+}
+
+private data class KnownCharacterDateGroup(
+    val dates: List<LocalDate>,
+    val characters: List<RecognizedCharacter>
+)
 
 /** Supabase 时间戳统一换算成中国日期；异常格式不应影响其余已认识字加载。 */
 private fun RecognizedCharacter.recognizedDateInChina(): LocalDate? = recognizedAt?.let { value ->
