@@ -39,7 +39,7 @@ data class LiteracyCharacterGroup(
     /**
      * 已认识字复习时主字需要读对的次数。
      *
-     * 首页按展示分组从近到远读 3、2、1 次。首组可能合并最近两个日期，
+     * 首页按展示分组从近到远读 3、2、1 次；相邻日期可合并为同一展示组，
      * 待认识字仍固定沿用自身的三次规则。
      */
     val recognizedCharacterRequiredReadings: Int = 3,
@@ -122,7 +122,7 @@ class LiteracyHomeViewModel @Inject constructor(
     /**
      * 取今天之前最近的收录日期，用于生成最多三组首页复习内容。
      *
-     * 最近两个日期合并后仍需显示后续两组，因此同一天收录的字必须完整保留，
+     * 相邻日期合并后仍需显示后续分组，因此同一天收录的字必须完整保留，
      * 分页读取到第五个日期出现（或没有更多数据）才能确定第四个日期的字已全部拿到。
      */
     private suspend fun loadRecentRecognizedCharacters(childId: String): Result<List<RecognizedCharacter>> {
@@ -157,7 +157,7 @@ private const val DAILY_SNAPSHOT_LOG_TAG = "LiteracyDailySnapshot"
 private const val RECOGNIZED_CHARACTER_PAGE_SIZE = 100L
 private const val RECENT_RECOGNIZED_GROUP_LIMIT = 3
 private const val RECENT_RECOGNIZED_DATE_FETCH_LIMIT = 4
-private const val FIRST_TWO_DATES_MAX_COMBINED_CHARACTERS = 6
+private const val ADJACENT_DATES_MAX_COMBINED_CHARACTERS = 6
 
 private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGroup> {
     val charactersByDate = mapNotNull { character ->
@@ -166,22 +166,21 @@ private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGro
         .groupBy({ it.first }, { it.second })
         .entries
         .sortedByDescending { it.key }
-    val firstTwoDates = charactersByDate.take(2)
-    val groups = if (
-        firstTwoDates.size == 2 &&
-        firstTwoDates.sumOf { it.value.size } <= FIRST_TWO_DATES_MAX_COMBINED_CHARACTERS
-    ) {
-        listOf(
-            KnownCharacterDateGroup(
-                dates = firstTwoDates.map { it.key },
-                characters = firstTwoDates.flatMap { it.value }
+    val groups = charactersByDate.chunked(2).flatMap { adjacentDates ->
+        if (
+            adjacentDates.size == 2 &&
+            adjacentDates.sumOf { it.value.size } <= ADJACENT_DATES_MAX_COMBINED_CHARACTERS
+        ) {
+            listOf(
+                KnownCharacterDateGroup(
+                    dates = adjacentDates.map { it.key },
+                    characters = adjacentDates.flatMap { it.value }
+                )
             )
-        ) + charactersByDate.drop(2).map { (date, characters) ->
-            KnownCharacterDateGroup(dates = listOf(date), characters = characters)
-        }
-    } else {
-        charactersByDate.map { (date, characters) ->
-            KnownCharacterDateGroup(dates = listOf(date), characters = characters)
+        } else {
+            adjacentDates.map { (date, characters) ->
+                KnownCharacterDateGroup(dates = listOf(date), characters = characters)
+            }
         }
     }
 
