@@ -15,6 +15,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -109,6 +110,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -726,7 +728,13 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                         }
                         if (skippedRecognized.isNotBlank()) {
                             if (isNotEmpty()) append("；")
-                            append("已有已认识字：$skippedRecognized")
+                            append(
+                                if (destination == LiteracySaveDestination.PENDING) {
+                                    "已从已认识移至待认识：$skippedRecognized"
+                                } else {
+                                    "已置顶已认识字：$skippedRecognized"
+                                }
+                            )
                         }
                     }.ifBlank { "没有可添加的识字内容" }
                     Result.success(generated)
@@ -2735,7 +2743,7 @@ private fun GenerateLiteracyTasksDialog(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                "已存在已认识字，不能重复添加：${skipped.joinToString("、")}",
+                                "以下汉字已在已认识中：添加到待认识会转入待认识；添加到已认识会置顶：${skipped.joinToString("、")}",
                                 modifier = Modifier.padding(14.dp),
                                 fontSize = 13.sp,
                                 color = Ink
@@ -2751,6 +2759,7 @@ private fun GenerateLiteracyTasksDialog(
                                 EditableLiteracyTaskCard(
                                     task = task,
                                     isKnownCharacter = preview?.knownCharacters?.contains(task.character) == true,
+                                    isRecognizedCharacter = preview?.skippedRecognizedCharacters?.contains(task.character) == true,
                                     onWordsChange = { words ->
                                         editableTasks = editableTasks.map {
                                             if (it.character == task.character) it.copy(wordsText = words) else it
@@ -2853,6 +2862,7 @@ private data class EditableLiteracyTask(
 private fun EditableLiteracyTaskCard(
     task: EditableLiteracyTask,
     isKnownCharacter: Boolean,
+    isRecognizedCharacter: Boolean,
     onWordsChange: (String) -> Unit,
     onSentenceChange: (String) -> Unit,
     onDelete: () -> Unit
@@ -2878,6 +2888,16 @@ private fun EditableLiteracyTaskCard(
                 Surface(shape = RoundedCornerShape(12.dp), color = WheatLight) {
                     Text(
                         "该字已在字库中",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        fontSize = 13.sp,
+                        color = Ink
+                    )
+                }
+            }
+            if (isRecognizedCharacter) {
+                Surface(shape = RoundedCornerShape(12.dp), color = WheatLight) {
+                    Text(
+                        "该字已在已认识的字中",
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         fontSize = 13.sp,
                         color = Ink
@@ -3540,7 +3560,17 @@ private fun LibraryScreen(
     viewModel: LibraryViewModel = hiltViewModel()
 ) {
     var query by remember { mutableStateOf("") }
+    var exportStart by remember { mutableStateOf("") }
+    var exportEnd by remember { mutableStateOf("") }
     val state by viewModel.uiState.collectAsState()
+    val exportStartNumber = exportStart.toIntOrNull()
+    val exportEndNumber = exportEnd.toIntOrNull()
+    val isExportStartInvalid = exportStart.isNotBlank() && (exportStartNumber == null || exportStartNumber < 1)
+    val isExportEndInvalid = exportEnd.isNotBlank() && (
+        exportEndNumber == null ||
+            exportEndNumber < 1 ||
+            (exportStartNumber != null && exportStartNumber >= 1 && exportEndNumber <= exportStartNumber)
+        )
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val createDocumentLauncher = rememberLauncherForActivityResult(
@@ -3601,7 +3631,7 @@ private fun LibraryScreen(
             }
             Spacer(Modifier.width(10.dp))
             Button(
-                onClick = { viewModel.prepareExport() },
+                onClick = { viewModel.prepareExport(exportStart, exportEnd) },
                 enabled = !state.isLoading && !state.isRefreshing && !state.isPreparingExport && state.pendingExportContent == null,
                 colors = ButtonDefaults.buttonColors(containerColor = Leaf),
                 shape = RoundedCornerShape(18.dp)
@@ -3611,6 +3641,54 @@ private fun LibraryScreen(
                 Text("导出字库")
             }
         }
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = exportStart,
+                onValueChange = { value -> if (value.all(Char::isDigit)) exportStart = value },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text("开始序号") },
+                placeholder = { Text("例如 1") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = isExportStartInvalid,
+                shape = RoundedCornerShape(18.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Leaf,
+                    unfocusedBorderColor = Line,
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White
+                )
+            )
+            Text("至", color = Color(0xFF718084), fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = exportEnd,
+                onValueChange = { value -> if (value.all(Char::isDigit)) exportEnd = value },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text("结束序号") },
+                placeholder = { Text("例如 100") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = isExportEndInvalid,
+                shape = RoundedCornerShape(18.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Leaf,
+                    unfocusedBorderColor = Line,
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White
+                )
+            )
+        }
+        Text(
+            "输入从 1 开始的整数序号；结束序号必须大于开始序号。",
+            color = Color(0xFF879296),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 5.dp)
+        )
         state.refreshMessage?.let { message ->
             Text(text = message, color = Coral, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
         }

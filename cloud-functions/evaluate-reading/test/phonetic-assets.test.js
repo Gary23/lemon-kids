@@ -31,6 +31,19 @@ test('智能添加分别识别未完成待认识任务和已认识复习字', ()
   assert.doesNotMatch(source, /async function loadExistingLiteracyCharacters/);
 });
 
+test('智能添加允许已认识字重新生成：转待认识会原子替换，转已认识会置顶', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
+  const migration = fs.readFileSync(
+    path.resolve(__dirname, '../../../supabase/sql/20260912_smart_add_recognized_to_pending.sql'),
+    'utf8'
+  );
+  assert.match(source, /!unlearnedCharacters\.has\(character\)/);
+  assert.match(source, /topRecognizedCharacterByCharacter/);
+  assert.match(source, /rpc\/create_literacy_tasks_replacing_recognized_with_phonetic_assets/);
+  assert.match(migration, /create or replace function public\.create_literacy_tasks_replacing_recognized_with_phonetic_assets/i);
+  assert.match(migration, /delete from public\.literacy_phonetic_assets[\s\S]*delete from public\.recognized_characters[\s\S]*insert into public\.child_literacy_characters/i);
+});
+
 test('智能添加到已认识固定复用任务完成迁移，不允许落入字库分支', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
   const migration = fs.readFileSync(
