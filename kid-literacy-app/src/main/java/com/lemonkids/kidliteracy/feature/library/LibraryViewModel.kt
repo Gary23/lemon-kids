@@ -96,18 +96,46 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
-    /** 导出始终使用本地缓存，避免额外的数据库访问。 */
-    fun prepareExport() {
+    /**
+     * 导出始终使用本地缓存，避免额外的数据库访问。
+     *
+     * 序号从 1 开始且包含首尾；characters 的顺序就是最近一次查询并在页面展示的顺序。
+     */
+    fun prepareExport(startText: String, endText: String) {
         val current = _uiState.value
         if (current.isPreparingExport) return
         if (current.characters.isEmpty()) {
             _uiState.value = current.copy(exportMessage = "本地没有字库数据可以导出")
             return
         }
+        val start = startText.toIntOrNull()
+        val end = endText.toIntOrNull()
+        when {
+            start == null || end == null -> {
+                _uiState.value = current.copy(exportMessage = "请输入两个正整数序号")
+                return
+            }
+            start < 1 || end < 1 -> {
+                _uiState.value = current.copy(exportMessage = "导出序号必须从 1 开始")
+                return
+            }
+            end <= start -> {
+                _uiState.value = current.copy(exportMessage = "结束序号必须大于开始序号")
+                return
+            }
+            start > current.characters.size -> {
+                _uiState.value = current.copy(exportMessage = "开始序号超出字库范围（共 ${current.characters.size} 个字）")
+                return
+            }
+        }
+        // 结束序号超过现有字数时，导出至最后一个字，避免遗漏用户可下载的数据。
+        val actualEnd = end.coerceAtMost(current.characters.size)
         _uiState.value = current.copy(
             isPreparingExport = false,
             exportMessage = null,
-            pendingExportContent = current.characters.joinToString(separator = "、") { it.character }
+            pendingExportContent = current.characters
+                .subList(start - 1, actualEnd)
+                .joinToString(separator = "、") { it.character }
         )
     }
 

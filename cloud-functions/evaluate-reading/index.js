@@ -558,14 +558,15 @@ async function previewGeneratedLiteracyTasks(childId, rawCharacters) {
     loadUnlearnedLiteracyCharacters(childId),
     loadRecognizedLiteracyCharacters(childId)
   ]);
-  // 字库已有字仍生成可编辑的字词句；未完成任务和已认识复习字各自占用同字入口。
+  // 字库已有字和已认识字都仍生成可编辑的字词句。已认识字可由家长转回待认识，
+  // 或在确认添加到已认识时重新置顶；只有未完成任务不能重复创建。
   const knownCharactersInRequest = requestedCharacters.filter((character) => knownCharacters.has(character));
   const skippedRecognizedCharacters = requestedCharacters.filter((character) => recognizedCharacters.has(character));
   const skippedExistingCharacters = requestedCharacters.filter(
     (character) => !recognizedCharacters.has(character) && unlearnedCharacters.has(character)
   );
   const charactersToCreate = requestedCharacters.filter(
-    (character) => !recognizedCharacters.has(character) && !unlearnedCharacters.has(character)
+    (character) => !unlearnedCharacters.has(character)
   );
   if (!charactersToCreate.length) {
     return { tasks: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
@@ -589,14 +590,15 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, dest
     loadUnlearnedLiteracyCharacters(childId),
     loadRecognizedLiteracyCharacters(childId)
   ]);
-  // 字库已有字及历史已完成任务均允许再次创建；未完成或已认识同字任务不允许覆盖。
+  // 字库已有字及历史已完成任务均允许再次创建；未完成同字任务不能覆盖。
+  // 已认识字则可转回待认识，或在“添加到已认识”时重新置顶。
   const knownCharactersInRequest = requestedCharacters.filter((character) => knownCharactersAtStart.has(character));
   const skippedRecognizedCharacters = requestedCharacters.filter((character) => recognizedCharacters.has(character));
   const skippedExistingCharacters = requestedCharacters.filter(
     (character) => !recognizedCharacters.has(character) && unlearnedCharacters.has(character)
   );
   const charactersToCreate = requestedCharacters.filter(
-    (character) => !recognizedCharacters.has(character) && !unlearnedCharacters.has(character)
+    (character) => !unlearnedCharacters.has(character)
   );
 
   const [familyId, knownCharacters, sortRows] = await Promise.all([
@@ -606,7 +608,11 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, dest
   ]);
   const allowedCharacters = new Set([...knownCharacters, ...requestedCharacters]);
   // 家长可删除整组字词句；只校验并保存仍在提交列表中的项目。
-  const itemsToSave = rawItems.filter((item) => charactersToCreate.includes(item.character));
+  // 添加到已认识时，已有复习字只需置顶，不用再创建一份根任务。
+  const itemsToSave = rawItems.filter(
+    (item) => charactersToCreate.includes(item.character)
+      && (destination === 'pending' || !recognizedCharacters.has(item.character))
+  );
   const charactersToSave = itemsToSave.map((item) => item.character);
   // 已在预览中经历十次生成后保留的词语可含字库外汉字；句子仍严格限制最多两个。
   const generatedTasks = validateGeneratedTasks(
@@ -615,8 +621,23 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, dest
     allowedCharacters,
     { allowOutOfLibraryWords: true }
   );
+  const recognizedCharactersInItems = new Set(
+    rawItems.map((item) => item?.character).filter((character) => recognizedCharacters.has(character))
+  );
+  // 已认识入口中，原本就在已认识列表里的字不新建任务，只更新收录时间使其置顶。
+  // 若家长在预览中删除该卡片，则不做任何变更。
+  if (destination === 'recognized') {
+    await Promise.all(
+      [...recognizedCharactersInItems].map((character) => topRecognizedCharacterByCharacter(childId, character))
+    );
+  }
   if (!generatedTasks.length) {
-    return { created: [], knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
+    return {
+      created: [],
+      knownCharacters: knownCharactersInRequest,
+      skippedExistingCharacters,
+      skippedRecognizedCharacters: [...recognizedCharactersInItems]
+    };
   }
   const nextSortOrder = Number(sortRows?.[0]?.sort_order || 0) + 1;
   const rows = generatedTasks.map((task, index) => ({
@@ -635,7 +656,7 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, dest
   const created = await supabase(
     destination === 'recognized'
       ? 'rpc/create_recognized_literacy_tasks_with_phonetic_assets'
-      : 'rpc/create_literacy_tasks_with_phonetic_assets',
+      : 'rpc/create_literacy_tasks_replacing_recognized_with_phonetic_assets',
     {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -650,7 +671,7 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, dest
     created: (created || []).map((row) => ({ id: row.id, character: row.character })),
     knownCharacters: knownCharactersInRequest,
     skippedExistingCharacters,
-    skippedRecognizedCharacters
+    skippedRecognizedCharacters: [...recognizedCharactersInItems]
   };
 }
 
@@ -1066,6 +1087,23 @@ async function topRecognizedCharacter(childId, recognizedCharacterId) {
   );
   if (!Array.isArray(updated) || updated.length !== 1) {
     throw new HttpError(404, '未找到该已认识汉字');
+  }
+  return { recognizedAt: updated[0].recognized_at || recognizedAt };
+}
+
+/** 智能添加按汉字处理已有复习卡，服务端仍限定为当前孩子的数据。 */
+async function topRecognizedCharacterByCharacter(childId, character) {
+  const recognizedAt = new Date().toISOString();
+  const updated = await supabase(
+    `recognized_characters?child_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(character)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({ recognized_at: recognizedAt })
+    }
+  );
+  if (!Array.isArray(updated) || updated.length !== 1) {
+    throw new HttpError(404, `未找到已认识汉字“${character}”`);
   }
   return { recognizedAt: updated[0].recognized_at || recognizedAt };
 }
