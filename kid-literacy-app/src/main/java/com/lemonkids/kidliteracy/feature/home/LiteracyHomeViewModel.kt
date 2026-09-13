@@ -122,7 +122,8 @@ class LiteracyHomeViewModel @Inject constructor(
     /**
      * 取今天之前最近的收录日期，用于生成最多三组首页复习内容。
      *
-     * 最多三组可能由六个日期两两合并而成，因此同一天收录的字必须完整保留，
+     * 最多三组可能由六个日期两两合并而成；单日超过六个字时会按每组六个字拆分，
+     * 未放下的字继续与更早日期组合。因此同一天收录的字必须完整保留，
      * 分页读取到第七个日期出现（或没有更多数据）才能确定前六个日期的字已全部拿到。
      */
     private suspend fun loadRecentRecognizedCharacters(childId: String): Result<List<RecognizedCharacter>> {
@@ -166,20 +167,74 @@ private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGro
         .groupBy({ it.first }, { it.second })
         .entries
         .sortedByDescending { it.key }
-    val groups = charactersByDate.chunked(2).flatMap { adjacentDates ->
-        if (
-            adjacentDates.size == 2 &&
-            adjacentDates.sumOf { it.value.size } <= ADJACENT_DATES_MAX_COMBINED_CHARACTERS
-        ) {
-            listOf(
-                KnownCharacterDateGroup(
-                    dates = adjacentDates.map { it.key },
-                    characters = adjacentDates.flatMap { it.value }
+    val groups = buildList {
+        var dateIndex = 0
+        var pending: KnownCharacterDateChunk? = null
+
+        while (pending != null || dateIndex < charactersByDate.size) {
+            val current = pending ?: charactersByDate[dateIndex].let { (date, characters) ->
+                dateIndex += 1
+                KnownCharacterDateChunk(date, characters)
+            }
+
+            if (current.characters.size >= ADJACENT_DATES_MAX_COMBINED_CHARACTERS) {
+                // 每个展示组最多六个字；同日未放下的字继续向更早日期递推。
+                add(
+                    KnownCharacterDateGroup(
+                        dates = listOf(current.date),
+                        characters = current.characters.take(ADJACENT_DATES_MAX_COMBINED_CHARACTERS)
+                    )
                 )
-            )
-        } else {
-            adjacentDates.map { (date, characters) ->
-                KnownCharacterDateGroup(dates = listOf(date), characters = characters)
+                pending = current.characters
+                    .drop(ADJACENT_DATES_MAX_COMBINED_CHARACTERS)
+                    .takeIf { it.isNotEmpty() }
+                    ?.let {
+                        KnownCharacterDateChunk(
+                            date = current.date,
+                            characters = it,
+                            mustCombineWithPreviousDate = true
+                        )
+                    }
+                continue
+            }
+
+            val previousDate = charactersByDate.getOrNull(dateIndex)
+            if (previousDate == null) {
+                add(KnownCharacterDateGroup(dates = listOf(current.date), characters = current.characters))
+                pending = null
+            } else if (current.mustCombineWithPreviousDate) {
+                val previousCharactersToCombine = previousDate.value.take(
+                    ADJACENT_DATES_MAX_COMBINED_CHARACTERS - current.characters.size
+                )
+                add(
+                    KnownCharacterDateGroup(
+                        dates = listOf(current.date, previousDate.key),
+                        characters = current.characters + previousCharactersToCombine
+                    )
+                )
+                val previousCharactersRemaining = previousDate.value.drop(previousCharactersToCombine.size)
+                dateIndex += 1
+                pending = previousCharactersRemaining.takeIf { it.isNotEmpty() }?.let {
+                    KnownCharacterDateChunk(
+                        date = previousDate.key,
+                        characters = it,
+                        mustCombineWithPreviousDate = true
+                    )
+                }
+            } else if (
+                current.characters.size + previousDate.value.size <= ADJACENT_DATES_MAX_COMBINED_CHARACTERS
+            ) {
+                add(
+                    KnownCharacterDateGroup(
+                        dates = listOf(current.date, previousDate.key),
+                        characters = current.characters + previousDate.value
+                    )
+                )
+                dateIndex += 1
+                pending = null
+            } else {
+                add(KnownCharacterDateGroup(dates = listOf(current.date), characters = current.characters))
+                pending = null
             }
         }
     }
@@ -199,6 +254,12 @@ private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGro
 private data class KnownCharacterDateGroup(
     val dates: List<LocalDate>,
     val characters: List<RecognizedCharacter>
+)
+
+private data class KnownCharacterDateChunk(
+    val date: LocalDate,
+    val characters: List<RecognizedCharacter>,
+    val mustCombineWithPreviousDate: Boolean = false
 )
 
 /** Supabase 时间戳统一换算成中国日期；异常格式不应影响其余已认识字加载。 */
