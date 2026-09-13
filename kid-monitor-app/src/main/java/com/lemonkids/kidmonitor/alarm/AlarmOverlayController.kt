@@ -32,36 +32,28 @@ class AlarmOverlayController(private val context: Context) : AlarmOverlayHost {
             return AlarmOverlayResult.PermissionMissing
         }
         remove()
-        var awaitingConfirmation = false
         val close = Button(context).apply {
-            text = AlarmPresentationUi.dismissLabel(presentation, awaitingConfirmation)
-            setTextColor(Color.rgb(23, 59, 34))
-            setBackgroundColor(Color.rgb(255, 216, 74))
+            text = AlarmPresentationUi.DISMISS_LABEL
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.rgb(255, 117, 168))
             textSize = 18f
-            setOnClickListener {
-                if (presentation.requiresConfirmation && !awaitingConfirmation) {
-                    awaitingConfirmation = true
-                    text = AlarmPresentationUi.dismissLabel(presentation, awaitingConfirmation)
-                } else {
-                    onDismiss()
-                }
-            }
+            setOnClickListener { onDismiss() }
         }
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(32), dp(32), dp(32), dp(32))
-            setBackgroundColor(Color.rgb(23, 59, 34))
+            setBackgroundColor(Color.rgb(255, 238, 245))
             isClickable = true
             isFocusable = true
             addView(TextView(context).apply { text = AlarmPresentationUi.ICON; textSize = 88f; gravity = Gravity.CENTER })
             addView(space(20))
             addView(TextView(context).apply {
-                text = presentation.title; textSize = 30f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                text = presentation.title; textSize = 30f; setTextColor(Color.rgb(91, 35, 71)); gravity = Gravity.CENTER
             })
             addView(space(12))
             addView(TextView(context).apply {
-                text = presentation.message; textSize = 18f; setTextColor(Color.argb(220, 255, 255, 255)); gravity = Gravity.CENTER
+                text = presentation.message; textSize = 18f; setTextColor(Color.rgb(106, 56, 83)); gravity = Gravity.CENTER
             })
             addView(space(42))
             addView(close, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))

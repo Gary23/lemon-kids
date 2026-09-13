@@ -12,7 +12,7 @@
 
 | 设备状态 | 主展示通道 | 目的 | 兜底 |
 | --- | --- | --- | --- |
-| 锁屏或息屏 | 全屏通知（Full-screen intent）打开 `AlarmActivity` | 点亮屏幕并允许在锁屏界面查看、关闭闹钟 | 高优先级闹钟通知；铃声和振动持续 |
+| 锁屏或息屏 | 单条全屏通知（Full-screen intent）打开 `AlarmActivity` | 点亮屏幕并允许在锁屏界面查看、关闭闹钟 | 高优先级闹钟通知；铃声和振动持续 |
 | 已解锁，`AlarmActivity` 已在前台 | 保留 `AlarmActivity` | 不产生重复页面或闪烁 | 无 |
 | 已解锁，Activity 未被系统拉起或离开前台 | 全局覆盖层 | 覆盖普通第三方应用，提供关闭入口 | 高优先级通知及铃声/振动 |
 | 重新锁屏 | 移除全局覆盖层，回归全屏通知 / `AlarmActivity` | 不依赖悬浮窗盖住锁屏 | 高优先级闹钟通知 |
@@ -53,7 +53,7 @@ AlarmManager 到点
 
 提取 `AlarmPresentation` 数据模型，至少包含 `alarmId`、`revision`、`title`、`message`、`requiresConfirmation` 和关闭回调。`AlarmActivity` 与覆盖层使用同一份文案、视觉规范和关闭规则：
 
-- 点击“关闭闹钟”调用 `AlarmRingService.stopIntent()`；由服务统一停止媒体、振动、覆盖层并上报关闭回执。
+- 点击一次“关闭闹钟”调用 `AlarmRingService.stopIntent()`；由服务统一停止媒体、振动、覆盖层并上报关闭回执。远程配置中的 `requiresConfirmation` 保留用于未来完成任务规则，当前不影响关闭交互。
 - 闹钟自动超时、服务销毁、收到更高 `revision` 的取消、或用户重新锁屏时，必须移除覆盖层。
 - 覆盖层设置为全屏、可获得自身触摸事件且不向下透传；不提供悬浮拖动、最小化或绕过关闭流程的入口。
 
@@ -98,7 +98,7 @@ UI 可以先复用 `AlarmActivity` 的视觉设计；覆盖层由传统 Android 
 ## 生命周期与并发规则
 
 1. 以 `(alarmId, revision)` 标识当前展示会话；旧版本的停止/回调不能移除新版本的覆盖层。
-2. 同时响铃时采用显式策略：一期仅展示最新触发闹钟的页面，其他闹钟继续响铃并以通知呈现；关闭当前项后协调器再展示仍在响铃的下一项。该策略必须与通知 ID 和服务实例策略一并梳理，避免现有单例服务互相覆盖。
+2. 同时响铃时采用显式策略：始终只发布一条以前台服务承载的主闹钟通知；最新触发项为主项，标题显示并发数量，关闭主项后该通知和展示页自动切换至下一项。声音与振动在仍有会话时持续，避免锁屏出现重复或难以区分的通知。
 3. 覆盖层的 `addView`、`removeView` 与可见性切换必须在主线程执行，并捕获 `BadTokenException` / `SecurityException`；失败不影响响铃。
 4. 覆盖层不可标记为 `FLAG_NOT_TOUCHABLE`，也不可设置允许触摸下传的行为；仅暴露关闭闹钟所需操作。
 5. `AlarmActivity` 与覆盖层均不直接写 Room 或上报回执，所有结束路径仍经过 `AlarmRingService.stopAlarm()`。
@@ -114,14 +114,14 @@ UI 可以先复用 `AlarmActivity` 的视觉设计；覆盖层由传统 Android 
 - [x] 在 `AlarmActivity` 的 `onResume` / `onPause` / `onDestroy` 上报页面可见性；Activity 可见时隐藏覆盖层。
 - [x] 在 `AlarmRingService` 的停止、超时、取消和 `onDestroy` 路径中保证移除覆盖层和注销接收器。
 - [x] 为“悬浮窗未授权 / 加窗失败”增加监控端日志与家长端可区分的增强展示状态，不能影响既有 `deployed` 回执含义。
-- [x] 核对覆盖层窗口 flags：全屏、可点按、禁止下层触摸；窗口未使用 `FLAG_NOT_TOUCHABLE` 或 `FLAG_NOT_FOCUSABLE`，关闭按钮采用统一二次确认规则；系统返回键/状态栏/导航栏仍由系统保留。
+- [x] 核对覆盖层窗口 flags：全屏、可点按、禁止下层触摸；窗口未使用 `FLAG_NOT_TOUCHABLE` 或 `FLAG_NOT_FOCUSABLE`，关闭按钮单次点击即可关闭；系统返回键/状态栏/导航栏仍由系统保留。
 
 ### 二期：无障碍增强与多闹钟
 
 - [x] 为 `AppLimitAccessibilityService` 提供独立的闹钟覆盖层 API，避免复用或污染应用限时的提示/阻挡状态。
 - [x] 只有无障碍已启用时才选用该通道；服务断连时自动退回普通悬浮窗或通知。
-- [x] 明确并实现多闹钟并发的队列、通知 ID、音频与关闭语义：最新触发项显示为主项，各响铃会话独立通知；关闭主项后自动展示下一项，声音/振动在仍有会话时持续。
-- [x] 评估 `requiresConfirmation` 为真时的完成交互，覆盖层与 Activity 均采用“首次点击切换为确认文案、第二次点击关闭”的一致规则。
+- [x] 明确并实现多闹钟并发的队列、单条锁屏通知、音频与关闭语义：最新触发项显示为主项，关闭主项后自动展示下一项，声音/振动在仍有会话时持续。
+- [x] 关闭交互统一为单次点击；`requiresConfirmation` 仅保留在远程协议中，暂不影响展示层。
 
 ### 验收与发布
 
@@ -131,12 +131,13 @@ UI 可以先复用 `AlarmActivity` 的视觉设计；覆盖层由传统 Android 
 - [ ] 验证精确闹钟、网络中断、进程被回收、重启后恢复等既有闹钟保障没有回归。
 - [ ] 完成后执行 `./gradlew :kid-monitor-app:assembleDebug`，并安装真机进行至少一次锁屏和一次解锁态端到端测试。
 
-## 实施与验证记录（2026-09-13）
+## 实施与验证记录（2026-09-14）
 
 - 已完成 `:kid-monitor-app:testDebugUnitTest :kid-monitor-app:assembleDebug`；`AlarmPresentationCoordinatorTest` 的 3 个状态转换测试通过。
 - 已以 `adb install -r` 覆盖安装到已连接的 HUAWEI BZT3-AL00（Android 10 / API 29）。APK 包信息：`versionName=1.0.0`、`versionCode=1`。
 - Debug APK 提供 `DebugAlarmReceiver` 本地触发器，可通过 ADB 在数秒内验证展示链路；它只创建内存调试会话，不访问 Room、AlarmManager 或 Supabase，命令见监控端 README。
 - 本地触发器已在该 HUAWEI BZT3-AL00 上实测：先启动监控端解除厂商后台限制后，ADB 广播可启动 `AlarmRingService` 前台服务并发布闹钟通知；同一设备的后台冷启动广播会被限制。
+- 锁屏通知已收敛为始终一条前台服务通知；单次点击关闭闹钟。锁屏页、普通悬浮层和无障碍悬浮层统一为柔粉背景、莓粉按钮和深莓色文字。
 - 设备端完整响铃验证仍待使用真实已下发闹钟执行：`AlarmActivity` 为非导出组件，ADB 不能越过应用内部启动边界直接伪造该端到端场景。锁屏、解锁、横竖屏、分屏/画中画、通知/全屏/悬浮窗权限关闭、进程回收与重启恢复，以及 Android 26、31、33、34+ 和小米/OPPO/vivo 真机矩阵均未验证，保持未勾选。
 
 ## 非目标

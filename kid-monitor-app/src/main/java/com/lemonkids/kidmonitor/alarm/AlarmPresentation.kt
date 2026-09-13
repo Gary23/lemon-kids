@@ -21,12 +21,8 @@ data class AlarmPresentation(
 
 data class AlarmSession(val alarmId: String, val revision: Long)
 
-/** Activity 与原生 View 共用的文案和确认规则。 */
+/** Activity 与原生 View 共用的展示文案。 */
 object AlarmPresentationUi {
-    const val ICON = "🍋"
+    const val ICON = "🌸"
     const val DISMISS_LABEL = "我知道了，关闭闹钟"
-    const val CONFIRM_LABEL = "再点击一次，确认关闭闹钟"
-
-    fun dismissLabel(presentation: AlarmPresentation, awaitingConfirmation: Boolean): String =
-        if (presentation.requiresConfirmation && awaitingConfirmation) CONFIRM_LABEL else DISMISS_LABEL
 }

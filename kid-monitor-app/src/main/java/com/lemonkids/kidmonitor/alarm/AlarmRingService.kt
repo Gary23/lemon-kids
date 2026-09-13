@@ -194,7 +194,8 @@ class AlarmRingService : Service() {
 
     private fun refreshNotifications() {
         val manager = getSystemService(NotificationManager::class.java)
-        active.values.forEach { manager.notify(notificationId(it.session), createNotification(it)) }
+        // 前台服务通知已承载当前主闹钟；锁屏不能再发布每个会话的副本，
+        // 否则单个闹钟也会显示两条内容完全相同的通知。
         manager.notify(NOTIFICATION_ID, createSummaryNotification())
     }
 
@@ -235,14 +236,6 @@ class AlarmRingService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MAX).setOngoing(true).setAutoCancel(false).apply {
                 primary?.let { setContentIntent(activityIntent(it)); setFullScreenIntent(activityIntent(it), true); addAction(0, AlarmPresentationUi.DISMISS_LABEL, stopPendingIntent(it)) }
             }.build()
-    }
-
-    private fun createNotification(presentation: AlarmPresentation): Notification {
-        createChannel()
-        return NotificationCompat.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentTitle(presentation.title).setContentText(presentation.message).setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setPriority(NotificationCompat.PRIORITY_MAX).setOngoing(true).setAutoCancel(false).setContentIntent(activityIntent(presentation))
-            .setFullScreenIntent(activityIntent(presentation), true).addAction(0, AlarmPresentationUi.DISMISS_LABEL, stopPendingIntent(presentation)).build()
     }
 
     private fun activityIntent(presentation: AlarmPresentation): PendingIntent = PendingIntent.getActivity(this, notificationId(presentation.session), Intent(this, AlarmActivity::class.java).apply {

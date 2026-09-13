@@ -41,8 +41,7 @@ Debug APK 才包含 `DebugAlarmReceiver`；它不读写 Room、不登记系统�
 adb shell am broadcast -a com.lemonkids.kidmonitor.debug.TRIGGER_ALARM \
   -n com.lemonkids.kidmonitor/.debug.DebugAlarmReceiver \
   --es alarm_id debug-overlay --el revision 1 \
-  --es title '作业时间' --es message '请开始完成数学作业' \
-  --ez requires_confirmation true
+  --es title '作业时间' --es message '请开始完成数学作业'
 
 adb shell am broadcast -a com.lemonkids.kidmonitor.debug.STOP_ALARM \
   -n com.lemonkids.kidmonitor/.debug.DebugAlarmReceiver \
