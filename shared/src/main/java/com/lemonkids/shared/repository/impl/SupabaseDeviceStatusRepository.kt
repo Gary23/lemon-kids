@@ -42,7 +42,7 @@ class SupabaseDeviceStatusRepository @Inject constructor(
         }
         fetch()
         while (true) {
-            delay(30_000)
+            delay(120_000)
             fetch()
         }
         awaitClose()

@@ -69,6 +69,8 @@ data class CategoryManageUiState(
     val templates: List<TaskTemplate> = emptyList(),
     val categoryTaskTemplates: List<CategoryTaskTemplate> = emptyList(),
     val isLoading: Boolean = false,
+    /** 乐观更新仍需给出请求进行中的反馈，避免用户重复提交。 */
+    val isOperating: Boolean = false,
     val operationMessage: String? = null
 )
 
@@ -116,7 +118,8 @@ class CategoryManageViewModel @Inject constructor(
             val tempId = "temp_${System.currentTimeMillis()}"
             val optimistic = Category(id = tempId, familyId = familyId, name = name)
             _uiState.value = _uiState.value.copy(
-                categories = _uiState.value.categories + optimistic
+                categories = _uiState.value.categories + optimistic,
+                isOperating = true
             )
             categoryRepository.createCategory(optimistic).fold(
                 onSuccess = { realId ->
@@ -125,6 +128,7 @@ class CategoryManageViewModel @Inject constructor(
                         categories = _uiState.value.categories.map {
                             if (it.id == tempId) it.copy(id = realId) else it
                         },
+                        isOperating = false,
                         operationMessage = null
                     )
                 },
@@ -132,6 +136,7 @@ class CategoryManageViewModel @Inject constructor(
                     // 回滚乐观更新
                     _uiState.value = _uiState.value.copy(
                         categories = _uiState.value.categories.filter { it.id != tempId },
+                        isOperating = false,
                         operationMessage = "添加失败，请检查网络或分类名称是否重复"
                     )
                 }
@@ -145,16 +150,18 @@ class CategoryManageViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 categories = _uiState.value.categories.map {
                     if (it.id == category.id) it.copy(name = newName) else it
-                }
+                },
+                isOperating = true
             )
             categoryRepository.updateCategory(category.copy(name = newName)).fold(
-                onSuccess = { _uiState.value = _uiState.value.copy(operationMessage = null) },
+                onSuccess = { _uiState.value = _uiState.value.copy(isOperating = false, operationMessage = null) },
                 onFailure = {
                     // 回滚
                     _uiState.value = _uiState.value.copy(
                         categories = _uiState.value.categories.map {
                             if (it.id == category.id) it.copy(name = category.name) else it
                         },
+                        isOperating = false,
                         operationMessage = "修改失败"
                     )
                 }
@@ -164,21 +171,25 @@ class CategoryManageViewModel @Inject constructor(
 
     fun deleteCategory(category: Category, onBlocked: (String) -> Unit) {
         viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isOperating = true)
             val pendingCount = categoryRepository.getPendingTaskCountByCategory(category.id).getOrNull() ?: 0
             if (pendingCount > 0) {
+                _uiState.value = _uiState.value.copy(isOperating = false)
                 onBlocked("该分类仍有 ${pendingCount} 个待完成任务，请先取消或完成这些任务")
                 return@launch
             }
             // 乐观更新：立即从本地列表移除
             _uiState.value = _uiState.value.copy(
-                categories = _uiState.value.categories.filter { it.id != category.id }
+                categories = _uiState.value.categories.filter { it.id != category.id },
+                isOperating = true
             )
             categoryRepository.deleteCategory(category.id).fold(
-                onSuccess = { _uiState.value = _uiState.value.copy(operationMessage = null) },
+                onSuccess = { _uiState.value = _uiState.value.copy(isOperating = false, operationMessage = null) },
                 onFailure = {
                     // 回滚
                     _uiState.value = _uiState.value.copy(
                         categories = _uiState.value.categories + category,
+                        isOperating = false,
                         operationMessage = "删除失败"
                     )
                 }
@@ -189,6 +200,7 @@ class CategoryManageViewModel @Inject constructor(
     fun saveCategoryTasks(category: Category, templateIds: List<String>) {
         viewModelScope.launch {
             val orderedTemplateIds = templateIds.distinct()
+            _uiState.value = _uiState.value.copy(isOperating = true)
             categoryRepository.replaceCategoryTaskTemplates(category.id, orderedTemplateIds).fold(
                 onSuccess = {
                     // 关联表的观察流是定时轮询。保存成功后立即写回本地状态，避免弹层关闭后
@@ -204,11 +216,15 @@ class CategoryManageViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         categoryTaskTemplates = _uiState.value.categoryTaskTemplates
                             .filterNot { it.categoryId == category.id } + savedAssignments,
+                        isOperating = false,
                         operationMessage = null
                     )
                 },
                 onFailure = {
-                    _uiState.value = _uiState.value.copy(operationMessage = "保存分类任务失败，请稍后重试")
+                    _uiState.value = _uiState.value.copy(
+                        isOperating = false,
+                        operationMessage = "保存分类任务失败，请稍后重试"
+                    )
                 }
             )
         }
@@ -244,7 +260,13 @@ fun CategoryManageScreen(
                     }
                 },
                 actions = {
-                    TextButton(onClick = { dialogName = ""; showAddDialog = true }) {
+                    if (uiState.isOperating) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
+                    TextButton(
+                        enabled = !uiState.isOperating,
+                        onClick = { dialogName = ""; showAddDialog = true }
+                    ) {
                         Text("＋ 新增")
                     }
                 },

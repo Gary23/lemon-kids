@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChildCare
 import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -22,6 +23,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -44,6 +46,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.lemonkids.kidmonitor.feature.profile.ProfileScreen
+import com.lemonkids.kidmonitor.feature.alarm.AlarmListScreen
+import com.lemonkids.kidmonitor.alarm.AlarmSyncWorker
 import com.lemonkids.kidmonitor.feature.usage.AppHourlyDetailScreen
 import com.lemonkids.kidmonitor.feature.usage.AppUsageDetailScreen
 import com.lemonkids.kidmonitor.feature.usage.UsageDetailScreen
@@ -56,6 +60,7 @@ sealed class KidMonitorTab(
     val icon: ImageVector
 ) {
     data object Usage : KidMonitorTab("usage", "使用", Icons.Filled.Insights)
+    data object Alarm : KidMonitorTab("alarm", "闹钟", Icons.Filled.Alarm)
     data object Profile : KidMonitorTab("profile", "我的", Icons.Filled.ChildCare)
 }
 
@@ -75,6 +80,12 @@ fun KidMonitorNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
         return
     }
 
+    // 会话恢复和绑定成功都发生在 Application 首次 Worker 之后；登录态就绪时再立即对账一次，
+    // 避免等待 WorkManager 的下一次退避重试。该操作只同步远程配置，不参与到点触发。
+    LaunchedEffect(uiState.isLoggedIn) {
+        if (uiState.isLoggedIn) AlarmSyncWorker.syncNow(context)
+    }
+
     val navController = rememberNavController()
     val startDest = if (uiState.isLoggedIn) KidMonitorRoutes.MAIN else KidMonitorRoutes.BINDING_CODE
 
@@ -84,6 +95,7 @@ fun KidMonitorNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
                 type = "monitor",
                 deviceId = deviceId,
                 onSuccess = {
+                    AlarmSyncWorker.syncNow(context)
                     navController.navigate(KidMonitorRoutes.MAIN) {
                         popUpTo(0) { inclusive = true }
                     }
@@ -100,7 +112,7 @@ fun KidMonitorNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
 @Composable
 fun KidMonitorMainScreen() {
     val navController = rememberNavController()
-    val tabs = listOf(KidMonitorTab.Usage, KidMonitorTab.Profile)
+    val tabs = listOf(KidMonitorTab.Usage, KidMonitorTab.Alarm, KidMonitorTab.Profile)
     val primaryColor = Color(0xFF2196F3)
     val surfaceColor = Color(0xFFF8FBF8)
 
@@ -178,6 +190,9 @@ fun KidMonitorMainScreen() {
             composable(KidMonitorTab.Profile.route) {
                 ProfileScreen()
             }
+            composable(KidMonitorTab.Alarm.route) {
+                AlarmListScreen()
+            }
             composable(
                 route = "app_usage_detail/{packageName}/{startDate}/{endDate}/{appName}",
                 arguments = listOf(
@@ -218,7 +233,7 @@ private fun KidMonitorWelcomeScreen() {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(text = "\uD83D\uDD12", fontSize = 56.sp)
             Spacer(Modifier.height(16.dp))
-            Text("柠檬监控", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text("柠檬闹钟管家", fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text("正在准备监控服务...", fontSize = 14.sp, color = Color.Gray)
             Spacer(Modifier.height(24.dp))

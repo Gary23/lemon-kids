@@ -64,6 +64,7 @@ data class TaskTemplateManageUiState(
     val templates: List<TaskTemplate> = emptyList(),
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
+    val deletingTemplateId: String? = null,
     val errorMessage: String? = null
 )
 
@@ -91,29 +92,56 @@ class TaskTemplateManageViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isSaving = false, errorMessage = "未获取到家庭信息，请重新登录后重试")
             return@launch
         }
-        val result = if (template.id.isBlank()) {
-            templateRepository.createTemplate(template.copy(familyId = familyId))
+        if (template.id.isBlank()) {
+            templateRepository.createTemplate(template.copy(familyId = familyId)).fold(
+                onSuccess = { createdId ->
+                    val latest = _uiState.value
+                    _uiState.value = latest.copy(
+                        isSaving = false,
+                        templates = latest.templates + template.copy(id = createdId, familyId = familyId)
+                    )
+                    onSuccess()
+                },
+                onFailure = ::showSaveError
+            )
         } else {
-            templateRepository.updateTemplate(template)
+            templateRepository.updateTemplate(template).fold(
+                onSuccess = {
+                    _uiState.value = _uiState.value.copy(
+                        isSaving = false,
+                        templates = _uiState.value.templates.map { if (it.id == template.id) template else it }
+                    )
+                    onSuccess()
+                },
+                onFailure = ::showSaveError
+            )
         }
-        result.fold(
-            onSuccess = {
-                _uiState.value = _uiState.value.copy(isSaving = false)
-                onSuccess()
-            },
-            onFailure = { error ->
-                _uiState.value = _uiState.value.copy(
-                    isSaving = false,
-                    errorMessage = error.message ?: "保存失败，请稍后重试"
-                )
-            }
+    }
+
+    private fun showSaveError(error: Throwable) {
+        _uiState.value = _uiState.value.copy(
+            isSaving = false,
+            errorMessage = error.message ?: "保存失败，请稍后重试"
         )
     }
 
     fun delete(template: TaskTemplate) = viewModelScope.launch {
-        templateRepository.deleteTemplate(template.id).onFailure {
-            _uiState.value = _uiState.value.copy(errorMessage = "删除失败，请稍后重试")
-        }
+        val beforeDelete = _uiState.value.templates
+        _uiState.value = _uiState.value.copy(
+            deletingTemplateId = template.id,
+            templates = beforeDelete.filterNot { it.id == template.id },
+            errorMessage = null
+        )
+        templateRepository.deleteTemplate(template.id).fold(
+            onSuccess = { _uiState.value = _uiState.value.copy(deletingTemplateId = null) },
+            onFailure = {
+                _uiState.value = _uiState.value.copy(
+                    deletingTemplateId = null,
+                    templates = beforeDelete,
+                    errorMessage = "删除失败，请稍后重试"
+                )
+            }
+        )
     }
 }
 
@@ -173,12 +201,20 @@ fun TaskTemplateManageScreen(
                                 }
                                 TextButton(
                                     modifier = Modifier.height(36.dp),
+                                    enabled = uiState.deletingTemplateId != template.id,
                                     onClick = { editing = template }
                                 ) { Text("编辑", fontSize = 13.sp) }
                                 TextButton(
                                     modifier = Modifier.height(36.dp),
+                                    enabled = uiState.deletingTemplateId != template.id,
                                     onClick = { deleting = template }
-                                ) { Text("删除", fontSize = 13.sp, color = Color(0xFFEF5350)) }
+                                ) {
+                                    if (uiState.deletingTemplateId == template.id) {
+                                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        Text("删除", fontSize = 13.sp, color = Color(0xFFEF5350))
+                                    }
+                                }
                             }
                         }
                     }

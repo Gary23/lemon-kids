@@ -4,4 +4,10 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+
+    <style name="Theme.LemonKids.Alarm" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:navigationBarColor">#173B22</item>
+        <item name="android:statusBarColor">#173B22</item>
+    </style>
 </resources>

@@ -1,6 +1,13 @@
 package com.lemonkids.kidmonitor.feature.profile
 
+import android.Manifest
+import android.app.AlarmManager
+import android.app.NotificationManager
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -52,7 +59,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import com.lemonkids.kidmonitor.alarm.AlarmScheduler
 import com.lemonkids.shared.ui.auth.AuthViewModel
 
 @Composable
@@ -63,8 +72,22 @@ fun ProfileScreen(
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var showEditDialog by remember { mutableStateOf(false) }
     var showSwitchDialog by remember { mutableStateOf(false) }
+    var alarmReadinessRevision by remember { mutableStateOf(0) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { alarmReadinessRevision++ }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) alarmReadinessRevision++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -185,6 +208,25 @@ fun ProfileScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            AlarmReadinessCard(
+                readinessRevision = alarmReadinessRevision,
+                onRequestNotification = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                },
+                onRequestExactAlarm = { context.startActivity(AlarmScheduler(context).exactAlarmSettingsIntent()) },
+                onRequestFullScreen = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        })
+                    }
+                }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             if (!uiState.isUsageLoading && uiState.appLimits.isNotEmpty()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -257,6 +299,59 @@ fun ProfileScreen(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
+    }
+}
+
+@Composable
+private fun AlarmReadinessCard(
+    readinessRevision: Int,
+    onRequestNotification: () -> Unit,
+    onRequestExactAlarm: () -> Unit,
+    onRequestFullScreen: () -> Unit
+) {
+    val context = LocalContext.current
+    val exactAlarmGranted = remember(readinessRevision) {
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
+    }
+    val notificationGranted = remember(readinessRevision) {
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    }
+    val fullScreenGranted = remember(readinessRevision) {
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+            context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
+    }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("🍋 远程闹钟设备状态", fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            AlarmPermissionRow("精确闹钟", exactAlarmGranted, "允许系统按时唤醒设备", onRequestExactAlarm)
+            AlarmPermissionRow("通知", notificationGranted, "允许锁屏显示提醒", onRequestNotification)
+            AlarmPermissionRow("全屏提醒", fullScreenGranted, "允许响铃时自动展示提醒页", onRequestFullScreen)
+        }
+    }
+}
+
+@Composable
+private fun AlarmPermissionRow(
+    title: String,
+    granted: Boolean,
+    description: String,
+    onRequest: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("$title：${if (granted) "已就绪" else "需要授权"}", fontSize = 14.sp)
+            Text(description, fontSize = 12.sp, color = Color.Gray)
+        }
+        if (!granted) {
+            TextButton(onClick = onRequest) { Text("去开启") }
+        }
     }
 }
 

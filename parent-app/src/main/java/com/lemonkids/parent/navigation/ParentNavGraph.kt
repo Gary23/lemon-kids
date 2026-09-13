@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,6 +39,7 @@ import androidx.navigation.navArgument
 import com.lemonkids.parent.feature.auth.ParentCreateFamilyScreen
 import com.lemonkids.parent.feature.auth.ParentLoginScreen
 import com.lemonkids.parent.feature.auth.ParentRegisterScreen
+import com.lemonkids.parent.feature.alarm.AlarmScreen
 import com.lemonkids.parent.feature.monitor.MonitorScreen
 import com.lemonkids.parent.feature.profile.CategoryManageScreen
 import com.lemonkids.parent.feature.profile.DeviceStatusLogScreen
@@ -55,6 +57,7 @@ sealed class ParentTab(
     val icon: ImageVector
 ) {
     data object Tasks : ParentTab("tasks", "任务", Icons.Filled.DateRange)
+    data object Alarm : ParentTab("alarm", "闹钟", Icons.Filled.Alarm)
     data object Monitor : ParentTab("monitor", "监控", Icons.Filled.Insights)
     data object Profile : ParentTab("profile", "我的", Icons.Filled.Person)
 }
@@ -115,7 +118,7 @@ fun ParentNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
 @Composable
 private fun ParentMainScreen() {
     val navController = rememberNavController()
-        val tabs = listOf(ParentTab.Tasks, ParentTab.Monitor, ParentTab.Profile)
+    val tabs = listOf(ParentTab.Tasks, ParentTab.Alarm, ParentTab.Monitor, ParentTab.Profile)
 
     Scaffold(
         bottomBar = {
@@ -170,6 +173,7 @@ private fun ParentMainScreen() {
                 TaskEditScreen(taskId = taskId, onBack = { navController.popBackStack() }, viewModel = tasksViewModel)
             }
             composable(ParentTab.Monitor.route) { MonitorScreen() }
+            composable(ParentTab.Alarm.route) { AlarmScreen() }
             composable(ParentTab.Profile.route) {
                 ParentProfileScreen(onFamilyManageClick = {
                     navController.navigate("family_manage")
