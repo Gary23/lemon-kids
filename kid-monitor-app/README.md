@@ -14,6 +14,7 @@
 | 监控执行 | `monitor/LimitEnforcementService.kt`、`AppLimitAccessibilityService.kt`、`AppLimitEvaluator.kt` |
 | 数据采集/保活 | `monitor/UsageCollectWorker.kt`、`KeepAliveWorker.kt`、`DeviceStatusWorker.kt`、`BootReceiver.kt` |
 | 悬浮与拦截 UI | `UsageFloatingService.kt`、`LimitBlockActivity.kt` |
+| 闹钟全局展示 | `alarm/AlarmPresentationCoordinator.kt`、`AlarmOverlayController.kt`；锁屏使用全屏通知/`AlarmActivity`，已解锁且页面不可见时使用无障碍或普通悬浮层 |
 | 使用详情 | `feature/usage/` |
 
 ## 高风险约束

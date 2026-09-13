@@ -103,6 +103,12 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
         alarmId, revision, AlarmDeliveryStatus.DISMISSED, AlarmEventType.DISMISSED, "已在 Pad 关闭"
     )
 
+    /** 状态仍为 deployed/ringing；error_code 仅标记可选增强展示不可用，不能误报下发失败。 */
+    suspend fun reportOverlayUnavailable(alarmId: String, revision: Long, reason: String) = report(
+        alarmId, revision, AlarmDeliveryStatus.RINGING, AlarmEventType.OVERLAY_UNAVAILABLE,
+        "闹钟悬浮增强展示不可用：$reason", errorCode = reason
+    )
+
     private suspend fun reportCapability(alarmId: String, revision: Long) {
         when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -111,7 +117,12 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
                 !context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent() ->
                 report(alarmId, revision, AlarmDeliveryStatus.FULL_SCREEN_DENIED, AlarmEventType.PERMISSION_DENIED, "全屏通知资格未开启")
-            else -> report(alarmId, revision, AlarmDeliveryStatus.DEPLOYED, AlarmEventType.DEPLOYED, "已登记系统闹钟")
+            else -> {
+                val overlayError = if (Settings.canDrawOverlays(context)) null else "overlay_permission_missing"
+                report(alarmId, revision, AlarmDeliveryStatus.DEPLOYED, AlarmEventType.DEPLOYED,
+                    if (overlayError == null) "已登记系统闹钟" else "已登记系统闹钟；未开启悬浮窗增强展示",
+                    errorCode = overlayError)
+            }
         }
     }
 
@@ -120,12 +131,13 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
         revision: Long,
         status: AlarmDeliveryStatus,
         eventType: AlarmEventType,
-        detail: String
+        detail: String,
+        errorCode: String? = if (eventType == AlarmEventType.PERMISSION_DENIED) status.value else null
     ) {
         val deviceId = deviceId()
         remoteAlarmRepository.updateDelivery(
             AlarmDelivery(alarmId = alarmId, deviceId = deviceId, revision = revision, status = status.value,
-                errorCode = if (eventType == AlarmEventType.PERMISSION_DENIED) status.value else null,
+                errorCode = errorCode,
                 ackAt = Instant.now().toString())
         ).onFailure { Log.w(TAG, "闹钟回执更新失败 alarmId=$alarmId", it) }
         remoteAlarmRepository.recordEvent(

@@ -1,7 +1,7 @@
 package com.lemonkids.kidmonitor.alarm
 
-import android.os.Bundle
 import android.os.Build
+import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,6 +17,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -26,8 +30,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lemonkids.kidmonitor.ui.theme.KidMonitorTheme
 
-/** 锁屏全屏提醒。只在用户操作关闭后停止音频，防止误触通知即静音。 */
+/** 锁屏全屏提醒；与覆盖层共用同一展示模型和二次确认关闭规则。 */
 class AlarmActivity : ComponentActivity() {
+    private lateinit var presentation: AlarmPresentation
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -35,42 +41,61 @@ class AlarmActivity : ComponentActivity() {
             setTurnScreenOn(true)
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val alarmId = intent.getStringExtra(AlarmRingService.EXTRA_ALARM_ID).orEmpty()
-        val revision = intent.getLongExtra(AlarmRingService.EXTRA_REVISION, -1L)
-        val title = intent.getStringExtra(EXTRA_TITLE) ?: "闹钟时间到了"
-        val message = intent.getStringExtra(EXTRA_MESSAGE) ?: "请完成家长设置的提醒"
+        presentation = AlarmPresentation(
+            alarmId = intent.getStringExtra(AlarmRingService.EXTRA_ALARM_ID).orEmpty(),
+            revision = intent.getLongExtra(AlarmRingService.EXTRA_REVISION, -1L),
+            title = intent.getStringExtra(EXTRA_TITLE) ?: AlarmPresentation.DEFAULT_TITLE,
+            message = intent.getStringExtra(EXTRA_MESSAGE) ?: AlarmPresentation.DEFAULT_MESSAGE,
+            requiresConfirmation = intent.getBooleanExtra(EXTRA_REQUIRES_CONFIRMATION, true)
+        )
         setContent {
             KidMonitorTheme {
+                var awaitingConfirmation by remember { mutableStateOf(false) }
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF173B22))
-                        .padding(32.dp),
+                    modifier = Modifier.fillMaxSize().background(Color(0xFF173B22)).padding(32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Text("🍋", fontSize = 88.sp)
+                    Text(AlarmPresentationUi.ICON, fontSize = 88.sp)
                     Spacer(Modifier.height(20.dp))
-                    Text(title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center)
+                    Text(presentation.title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(12.dp))
-                    Text(message, fontSize = 18.sp, color = Color.White.copy(alpha = 0.86f), textAlign = TextAlign.Center)
+                    Text(presentation.message, fontSize = 18.sp, color = Color.White.copy(alpha = 0.86f), textAlign = TextAlign.Center)
                     Spacer(Modifier.height(42.dp))
                     Button(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD84A), contentColor = Color(0xFF173B22)),
                         onClick = {
-                            startService(AlarmRingService.stopIntent(this@AlarmActivity, alarmId, revision))
-                            finish()
+                            if (presentation.requiresConfirmation && !awaitingConfirmation) awaitingConfirmation = true
+                            else {
+                                startService(AlarmRingService.stopIntent(this@AlarmActivity, presentation.alarmId, presentation.revision))
+                                finish()
+                            }
                         }
-                    ) { Text("我知道了，关闭闹钟", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+                    ) { Text(AlarmPresentationUi.dismissLabel(presentation, awaitingConfirmation), fontSize = 18.sp, fontWeight = FontWeight.Bold) }
                 }
             }
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        AlarmPresentationRegistry.activityVisible(presentation.session)
+    }
+
+    override fun onPause() {
+        AlarmPresentationRegistry.activityHidden(presentation.session)
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        AlarmPresentationRegistry.activityHidden(presentation.session)
+        super.onDestroy()
+    }
+
     companion object {
         const val EXTRA_TITLE = "title"
         const val EXTRA_MESSAGE = "message"
+        const val EXTRA_REQUIRES_CONFIRMATION = "requires_confirmation"
     }
 }

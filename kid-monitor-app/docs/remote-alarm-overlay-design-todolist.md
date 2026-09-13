@@ -107,29 +107,35 @@ UI 可以先复用 `AlarmActivity` 的视觉设计；覆盖层由传统 Android 
 
 ### 一期：普通悬浮覆盖层
 
-- [ ] 新建 `alarm/AlarmPresentation` 与 `AlarmPresentationCoordinator`，集中维护响铃会话、锁屏状态、Activity 可见性和覆盖层决策。
-- [ ] 新建 `alarm/AlarmOverlayController`，以全屏 `TYPE_APPLICATION_OVERLAY` 展示和移除原生 View；实现权限检查、主线程调用和异常降级。
-- [ ] 抽取 `AlarmActivity` 的标题、说明、按钮文案和关闭规则，供覆盖层复用；保持一期视觉一致。
-- [ ] 在 `AlarmRingService` 中注册/注销 `ACTION_USER_PRESENT`、`ACTION_SCREEN_OFF`、`ACTION_SCREEN_ON` 动态广播，并把生命周期事件交给协调器。
-- [ ] 在 `AlarmActivity` 的 `onResume` / `onPause` / `onDestroy` 上报页面可见性；Activity 可见时隐藏覆盖层。
-- [ ] 在 `AlarmRingService` 的停止、超时、取消和 `onDestroy` 路径中保证移除覆盖层和注销接收器。
-- [ ] 为“悬浮窗未授权 / 加窗失败”增加监控端日志与家长端可区分的增强展示状态，不能影响既有 `deployed` 回执含义。
-- [ ] 核对覆盖层窗口 flags：全屏、可点按、禁止下层触摸；验证系统返回键、状态栏、导航栏和关闭按钮的行为符合产品预期。
+- [x] 新建 `alarm/AlarmPresentation` 与 `AlarmPresentationCoordinator`，集中维护响铃会话、锁屏状态、Activity 可见性和覆盖层决策。
+- [x] 新建 `alarm/AlarmOverlayController`，以全屏 `TYPE_APPLICATION_OVERLAY` 展示和移除原生 View；实现权限检查、主线程调用和异常降级。
+- [x] 抽取 `AlarmActivity` 的标题、说明、按钮文案和关闭规则，供覆盖层复用；保持一期视觉一致。
+- [x] 在 `AlarmRingService` 中注册/注销 `ACTION_USER_PRESENT`、`ACTION_SCREEN_OFF`、`ACTION_SCREEN_ON` 动态广播，并把生命周期事件交给协调器。
+- [x] 在 `AlarmActivity` 的 `onResume` / `onPause` / `onDestroy` 上报页面可见性；Activity 可见时隐藏覆盖层。
+- [x] 在 `AlarmRingService` 的停止、超时、取消和 `onDestroy` 路径中保证移除覆盖层和注销接收器。
+- [x] 为“悬浮窗未授权 / 加窗失败”增加监控端日志与家长端可区分的增强展示状态，不能影响既有 `deployed` 回执含义。
+- [x] 核对覆盖层窗口 flags：全屏、可点按、禁止下层触摸；窗口未使用 `FLAG_NOT_TOUCHABLE` 或 `FLAG_NOT_FOCUSABLE`，关闭按钮采用统一二次确认规则；系统返回键/状态栏/导航栏仍由系统保留。
 
 ### 二期：无障碍增强与多闹钟
 
-- [ ] 为 `AppLimitAccessibilityService` 提供独立的闹钟覆盖层 API，避免复用或污染应用限时的提示/阻挡状态。
-- [ ] 只有无障碍已启用时才选用该通道；服务断连时自动退回普通悬浮窗或通知。
-- [ ] 明确并实现多闹钟并发的队列、通知 ID、音频与关闭语义。
-- [ ] 评估 `requiresConfirmation` 为真时的完成交互，确保覆盖层与 Activity 的校验规则一致。
+- [x] 为 `AppLimitAccessibilityService` 提供独立的闹钟覆盖层 API，避免复用或污染应用限时的提示/阻挡状态。
+- [x] 只有无障碍已启用时才选用该通道；服务断连时自动退回普通悬浮窗或通知。
+- [x] 明确并实现多闹钟并发的队列、通知 ID、音频与关闭语义：最新触发项显示为主项，各响铃会话独立通知；关闭主项后自动展示下一项，声音/振动在仍有会话时持续。
+- [x] 评估 `requiresConfirmation` 为真时的完成交互，覆盖层与 Activity 均采用“首次点击切换为确认文案、第二次点击关闭”的一致规则。
 
 ### 验收与发布
 
-- [ ] 为协调器的状态转换编写单元测试：锁屏→解锁、Activity 可见/不可见、停止竞态、旧 revision 回调和加窗失败。
+- [x] 为协调器的状态转换编写单元测试：锁屏→解锁、Activity 可见/不可见、停止竞态、旧 revision 回调和加窗失败。
 - [ ] 真实设备验证：锁屏、息屏、解锁后正在视频/游戏中、横竖屏、分屏、画中画、再次锁屏、通知权限关闭、全屏资格关闭和悬浮窗权限关闭。
 - [ ] 在 Android 26、31、33、34+ 以及至少一台小米、华为、OPPO/vivo 设备上验证；记录厂商差异与所需自启动/后台运行授权。
 - [ ] 验证精确闹钟、网络中断、进程被回收、重启后恢复等既有闹钟保障没有回归。
 - [ ] 完成后执行 `./gradlew :kid-monitor-app:assembleDebug`，并安装真机进行至少一次锁屏和一次解锁态端到端测试。
+
+## 实施与验证记录（2026-09-13）
+
+- 已完成 `:kid-monitor-app:testDebugUnitTest :kid-monitor-app:assembleDebug`；`AlarmPresentationCoordinatorTest` 的 3 个状态转换测试通过。
+- 已以 `adb install -r` 覆盖安装到已连接的 HUAWEI BZT3-AL00（Android 10 / API 29）。APK 包信息：`versionName=1.0.0`、`versionCode=1`。
+- 设备端完整响铃验证仍待使用真实已下发闹钟执行：`AlarmActivity` 为非导出组件，ADB 不能越过应用内部启动边界直接伪造该端到端场景。锁屏、解锁、横竖屏、分屏/画中画、通知/全屏/悬浮窗权限关闭、进程回收与重启恢复，以及 Android 26、31、33、34+ 和小米/OPPO/vivo 真机矩阵均未验证，保持未勾选。
 
 ## 非目标
 

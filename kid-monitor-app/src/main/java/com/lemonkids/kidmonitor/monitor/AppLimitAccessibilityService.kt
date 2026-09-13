@@ -21,6 +21,8 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import com.lemonkids.kidmonitor.R
+import com.lemonkids.kidmonitor.alarm.AlarmPresentation
+import com.lemonkids.kidmonitor.alarm.AlarmPresentationUi
 import com.lemonkids.shared.model.DeviceStatusEventType
 import java.lang.ref.WeakReference
 import java.time.LocalDate
@@ -29,6 +31,7 @@ class AppLimitAccessibilityService : AccessibilityService() {
     private lateinit var stateStore: AppLimitStateStore
     private val mainHandler = Handler(Looper.getMainLooper())
     private var blockFeedbackView: View? = null
+    private var alarmOverlayView: View? = null
     private var usageHintView: View? = null
     private var usageHintLabelText: TextView? = null
     private var usageHintTimeText: TextView? = null
@@ -63,6 +66,7 @@ class AppLimitAccessibilityService : AccessibilityService() {
         stopUsageHintRefresh()
         removeUsageHint()
         removeBlockFeedback()
+        removeAlarmOverlay()
         super.onDestroy()
     }
 
@@ -222,6 +226,57 @@ class AppLimitAccessibilityService : AccessibilityService() {
             getSystemService(WindowManager::class.java).removeView(view)
         }
         blockFeedbackView = null
+    }
+
+    /**
+     * 独立于应用限时拦截状态的闹钟无障碍覆盖层。只由闹钟服务在已解锁时调用，
+     * 断连后调用方会退回普通悬浮窗/通知，绝不用于覆盖锁屏或安全界面。
+     */
+    private fun showAlarmOverlay(presentation: AlarmPresentation, onDismiss: () -> Unit): Boolean {
+        if (alarmOverlayView != null) removeAlarmOverlay()
+        var awaitingConfirmation = false
+        val close = Button(this).apply {
+            text = AlarmPresentationUi.dismissLabel(presentation, awaitingConfirmation)
+            setTextColor(Color.rgb(23, 59, 34))
+            setBackgroundColor(Color.rgb(255, 216, 74))
+            textSize = 18f
+            setOnClickListener {
+                if (presentation.requiresConfirmation && !awaitingConfirmation) {
+                    awaitingConfirmation = true
+                    text = AlarmPresentationUi.dismissLabel(presentation, awaitingConfirmation)
+                } else onDismiss()
+            }
+        }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(32), dp(32), dp(32), dp(32))
+            setBackgroundColor(Color.rgb(23, 59, 34))
+            isClickable = true
+            isFocusable = true
+            addView(TextView(this@AppLimitAccessibilityService).apply { text = AlarmPresentationUi.ICON; textSize = 88f; gravity = Gravity.CENTER })
+            addView(TextView(this@AppLimitAccessibilityService).apply { text = presentation.title; textSize = 30f; setTextColor(Color.WHITE); gravity = Gravity.CENTER })
+            addView(TextView(this@AppLimitAccessibilityService).apply { text = presentation.message; textSize = 18f; setTextColor(Color.argb(220, 255, 255, 255)); gravity = Gravity.CENTER })
+            addView(close, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(42) })
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.CENTER }
+        return runCatching {
+            getSystemService(WindowManager::class.java).addView(root, params)
+            alarmOverlayView = root
+            true
+        }.onFailure { Log.w(TAG, "无障碍闹钟覆盖层显示失败", it) }.getOrDefault(false)
+    }
+
+    private fun removeAlarmOverlay() {
+        val current = alarmOverlayView ?: return
+        runCatching { getSystemService(WindowManager::class.java).removeViewImmediate(current) }
+        alarmOverlayView = null
     }
 
     private fun showUsageHint(label: String, timeText: String, progressPercent: Int) {
@@ -472,6 +527,15 @@ class AppLimitAccessibilityService : AccessibilityService() {
                 it.stopUsageHintRefresh()
                 it.removeUsageHint()
             }
+        }
+
+        fun showAlarmOverlay(presentation: AlarmPresentation, onDismiss: () -> Unit): Boolean {
+            val service = activeService?.get() ?: return false
+            return service.showAlarmOverlay(presentation, onDismiss)
+        }
+
+        fun hideAlarmOverlay() {
+            activeService?.get()?.removeAlarmOverlay()
         }
 
         fun showUsageHintForForeground(
