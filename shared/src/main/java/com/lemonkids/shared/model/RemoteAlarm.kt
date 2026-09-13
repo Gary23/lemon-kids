@@ -80,5 +80,6 @@ enum class AlarmEventType(val value: String) {
     PERMISSION_DENIED("permission_denied"),
     RINGING("ringing"),
     DISMISSED("dismissed"),
-    MISSED("missed")
+    MISSED("missed"),
+    OVERLAY_UNAVAILABLE("overlay_unavailable")
 }

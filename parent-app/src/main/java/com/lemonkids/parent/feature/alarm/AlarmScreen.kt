@@ -267,7 +267,8 @@ private fun alarmTimeRangeLabel(alarm: RemoteAlarm): String = runCatching {
     }.getOrDefault("时间格式无效")
 }
 
-private fun deliveryLabel(item: ParentAlarmStatus): String = when (item.delivery?.status) {
+private fun deliveryLabel(item: ParentAlarmStatus): String {
+    val base = when (item.delivery?.status) {
     "pending" -> "等待 Pad 确认"
     "deployed" -> "Pad 已部署"
     "removed" -> "Pad 已移除"
@@ -277,7 +278,13 @@ private fun deliveryLabel(item: ParentAlarmStatus): String = when (item.delivery
     "ringing" -> "正在响铃"
     "dismissed" -> "已关闭"
     "missed" -> "未执行"
-    else -> "等待下发"
+        else -> "等待下发"
+    }
+    return when (item.delivery?.errorCode) {
+        "overlay_permission_missing" -> "$base（未开启悬浮窗增强展示）"
+        "overlay_window_failed" -> "$base（悬浮窗增强展示创建失败）"
+        else -> base
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
