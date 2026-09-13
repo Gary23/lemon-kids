@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- 仅合并到 debug APK，供 adb 立即触发本地展示测试。 -->
+        <receiver
+            android:name=".debug.DebugAlarmReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.lemonkids.kidmonitor.debug.TRIGGER_ALARM" />
+                <action android:name="com.lemonkids.kidmonitor.debug.STOP_ALARM" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

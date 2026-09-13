@@ -32,3 +32,21 @@
 ```
 
 构建成功不等于监控可用。涉及权限、服务、Worker 或拦截行为时，必须在 API 26+ 真机验证授权、重启恢复和限时命中。
+
+## Debug 本地闹钟触发器
+
+Debug APK 才包含 `DebugAlarmReceiver`；它不读写 Room、不登记系统闹钟，也不向 Supabase 上报。使用固定会话键可立即开始和停止展示测试：
+
+```bash
+adb shell am broadcast -a com.lemonkids.kidmonitor.debug.TRIGGER_ALARM \
+  -n com.lemonkids.kidmonitor/.debug.DebugAlarmReceiver \
+  --es alarm_id debug-overlay --el revision 1 \
+  --es title '作业时间' --es message '请开始完成数学作业' \
+  --ez requires_confirmation true
+
+adb shell am broadcast -a com.lemonkids.kidmonitor.debug.STOP_ALARM \
+  -n com.lemonkids.kidmonitor/.debug.DebugAlarmReceiver \
+  --es alarm_id debug-overlay --el revision 1
+```
+
+当前 HUAWEI BZT3-AL00 会限制后台冷启动 Receiver；首次触发前先打开一次监控端，再执行上述命令。调试完成后务必发送停止广播，或在界面中关闭闹钟。

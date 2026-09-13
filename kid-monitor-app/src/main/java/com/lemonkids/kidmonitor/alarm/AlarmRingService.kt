@@ -47,6 +47,8 @@ class AlarmRingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val active = LinkedHashMap<AlarmSession, AlarmPresentation>()
+    /** 仅由 src/debug 的本地 Receiver 创建；不访问 Room、排程或云端回执。 */
+    private val debugSessions = mutableSetOf<AlarmSession>()
     private lateinit var presentationCoordinator: AlarmPresentationCoordinator
     private var receiverRegistered = false
     private var mediaPlayer: MediaPlayer? = null
@@ -82,10 +84,20 @@ class AlarmRingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val alarmId = intent?.getStringExtra(EXTRA_ALARM_ID) ?: return START_NOT_STICKY
         val revision = intent.getLongExtra(EXTRA_REVISION, -1L)
+        // Release APK 没有任何可调用此分支的导出组件，服务本身也是非导出。
+        val debugSession = intent.getBooleanExtra(EXTRA_DEBUG_SESSION, false)
+        Log.i(TAG, "收到闹钟服务请求 alarmId=$alarmId revision=$revision debug=$debugSession action=${intent.action}")
         if (intent.action == ACTION_STOP) {
             mainHandler.post { stopAlarm(AlarmSession(alarmId, revision)) }
         } else if (revision > 0L) {
-            mainHandler.post { startAlarm(AlarmPresentation(alarmId, revision)) }
+            val presentation = AlarmPresentation(
+                alarmId = alarmId,
+                revision = revision,
+                title = intent.getStringExtra(EXTRA_DEBUG_TITLE) ?: AlarmPresentation.DEFAULT_TITLE,
+                message = intent.getStringExtra(EXTRA_DEBUG_MESSAGE) ?: AlarmPresentation.DEFAULT_MESSAGE,
+                requiresConfirmation = intent.getBooleanExtra(EXTRA_DEBUG_REQUIRES_CONFIRMATION, true)
+            )
+            mainHandler.post { startAlarm(presentation, debugSession) }
         }
         return START_NOT_STICKY
     }
@@ -103,11 +115,12 @@ class AlarmRingService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun startAlarm(initial: AlarmPresentation) {
+    private fun startAlarm(initial: AlarmPresentation, debugSession: Boolean) {
         active.keys.filter { it.alarmId == initial.alarmId && it.revision < initial.revision }
             .toList().forEach { stopAlarm(it, reportDismissal = false) }
         val wasEmpty = active.isEmpty()
         active[initial.session] = initial
+        if (debugSession) debugSessions += initial.session
         if (wasEmpty) {
             startForeground(NOTIFICATION_ID, createSummaryNotification())
             acquireWakeLock()
@@ -116,6 +129,13 @@ class AlarmRingService : Service() {
         }
         presentationCoordinator.onAlarmStarted(initial)
         refreshNotifications()
+        if (debugSession) {
+            scope.launch {
+                delay(MAX_RING_MILLIS)
+                mainHandler.post { stopAlarm(initial.session) }
+            }
+            return
+        }
         scope.launch {
             val entryPoint = EntryPointAccessors.fromApplication(applicationContext, AlarmEntryPoint::class.java)
             val alarm = runCatching { entryPoint.alarmDao.get(initial.alarmId) }.getOrNull()
@@ -144,9 +164,10 @@ class AlarmRingService : Service() {
 
     private fun stopAlarm(session: AlarmSession, reportDismissal: Boolean = true) {
         if (active.remove(session) == null) return
+        val debugSession = debugSessions.remove(session)
         presentationCoordinator.onAlarmStopped(session)
         getSystemService(NotificationManager::class.java).cancel(notificationId(session))
-        if (reportDismissal) scope.launch {
+        if (reportDismissal && !debugSession) scope.launch {
             runCatching {
                 val entryPoint = EntryPointAccessors.fromApplication(applicationContext, AlarmEntryPoint::class.java)
                 entryPoint.alarmDao.updateState(session.alarmId, DeviceAlarmEntity.STATE_DISMISSED)
@@ -235,6 +256,7 @@ class AlarmRingService : Service() {
         stopIntent(this, presentation.alarmId, presentation.revision), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     private fun reportOverlayState(presentation: AlarmPresentation, reason: String) = scope.launch {
+        if (debugSessions.contains(presentation.session)) return@launch
         EntryPointAccessors.fromApplication(applicationContext, AlarmEntryPoint::class.java).remoteAlarmSyncCoordinator
             .reportOverlayUnavailable(presentation.alarmId, presentation.revision, reason)
     }
@@ -254,8 +276,18 @@ class AlarmRingService : Service() {
         private const val ACTION_STOP = "com.lemonkids.kidmonitor.alarm.STOP"
         const val EXTRA_ALARM_ID = "alarm_id"
         const val EXTRA_REVISION = "revision"
+        const val EXTRA_DEBUG_SESSION = "debug_session"
+        const val EXTRA_DEBUG_TITLE = "debug_title"
+        const val EXTRA_DEBUG_MESSAGE = "debug_message"
+        const val EXTRA_DEBUG_REQUIRES_CONFIRMATION = "debug_requires_confirmation"
         fun startIntent(context: Context, alarmId: String, revision: Long) = Intent(context, AlarmRingService::class.java).apply { putExtra(EXTRA_ALARM_ID, alarmId); putExtra(EXTRA_REVISION, revision) }
         fun stopIntent(context: Context, alarmId: String, revision: Long) = Intent(context, AlarmRingService::class.java).apply { action = ACTION_STOP; putExtra(EXTRA_ALARM_ID, alarmId); putExtra(EXTRA_REVISION, revision) }
+        fun debugStartIntent(context: Context, alarmId: String, revision: Long, title: String, message: String, requiresConfirmation: Boolean) =
+            Intent(context, AlarmRingService::class.java).apply {
+                putExtra(EXTRA_ALARM_ID, alarmId); putExtra(EXTRA_REVISION, revision)
+                putExtra(EXTRA_DEBUG_SESSION, true); putExtra(EXTRA_DEBUG_TITLE, title); putExtra(EXTRA_DEBUG_MESSAGE, message)
+                putExtra(EXTRA_DEBUG_REQUIRES_CONFIRMATION, requiresConfirmation)
+            }
         private fun notificationId(session: AlarmSession): Int = 40_000 + ((session.alarmId.hashCode() * 31 + session.revision.hashCode()) and 0x3fffffff) % 1_000_000
     }
 }

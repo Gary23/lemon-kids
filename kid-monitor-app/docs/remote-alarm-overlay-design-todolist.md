@@ -135,6 +135,8 @@ UI 可以先复用 `AlarmActivity` 的视觉设计；覆盖层由传统 Android 
 
 - 已完成 `:kid-monitor-app:testDebugUnitTest :kid-monitor-app:assembleDebug`；`AlarmPresentationCoordinatorTest` 的 3 个状态转换测试通过。
 - 已以 `adb install -r` 覆盖安装到已连接的 HUAWEI BZT3-AL00（Android 10 / API 29）。APK 包信息：`versionName=1.0.0`、`versionCode=1`。
+- Debug APK 提供 `DebugAlarmReceiver` 本地触发器，可通过 ADB 在数秒内验证展示链路；它只创建内存调试会话，不访问 Room、AlarmManager 或 Supabase，命令见监控端 README。
+- 本地触发器已在该 HUAWEI BZT3-AL00 上实测：先启动监控端解除厂商后台限制后，ADB 广播可启动 `AlarmRingService` 前台服务并发布闹钟通知；同一设备的后台冷启动广播会被限制。
 - 设备端完整响铃验证仍待使用真实已下发闹钟执行：`AlarmActivity` 为非导出组件，ADB 不能越过应用内部启动边界直接伪造该端到端场景。锁屏、解锁、横竖屏、分屏/画中画、通知/全屏/悬浮窗权限关闭、进程回收与重启恢复，以及 Android 26、31、33、34+ 和小米/OPPO/vivo 真机矩阵均未验证，保持未勾选。
 
 ## 非目标
