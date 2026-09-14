@@ -33,15 +33,17 @@ data class RemoteAlarm(
     @SerialName("updated_at") val updatedAt: String = ""
 )
 
-/** 首期只提供一首应用内置的轻柔钟声，服务端迁移会以同一白名单约束写入值。 */
+/** 仅提供应用内置的离线背景音乐，服务端迁移会以同一白名单约束写入值。 */
 object AlarmBackgroundMusic {
     const val GENTLE_BELL_V1 = "gentle_bell_v1"
+    const val SEASIDE_SUNRISE_V1 = "seaside_sunrise_v1"
     const val DEFAULT_ID = GENTLE_BELL_V1
-    val supportedIds = setOf(GENTLE_BELL_V1)
+    val supportedIds = listOf(GENTLE_BELL_V1, SEASIDE_SUNRISE_V1)
 
     fun normalized(id: String): String = id.takeIf { it in supportedIds } ?: DEFAULT_ID
     fun displayName(id: String): String = when (normalized(id)) {
         GENTLE_BELL_V1 -> "轻柔钟声"
+        SEASIDE_SUNRISE_V1 -> "海边晨光"
         else -> "轻柔钟声"
     }
 }

@@ -19,7 +19,7 @@ import java.util.Locale
 /**
  * 单次响铃生命周期内唯一的音频协调器。
  *
- * 背景部分使用应用内合成的轻柔钟声循环，避免到点依赖网络或第三方音乐版权；人声优先
+ * 背景部分使用应用内合成的钟声或海边环境音乐循环，避免到点依赖网络或第三方音乐版权；人声优先
  * 使用落地后的语音资产（后续接入），当前以系统 TTS 作为可靠离线实现。两个声源共用一次
  * `USAGE_ALARM` 焦点，人声开始时只压低背景，不会中断自己的闹铃音。
  */
@@ -101,10 +101,13 @@ class AlarmAudioController(private val context: Context) {
     }
 
     private fun startBackground(musicId: String) {
-        // 音乐 ID 已在入口白名单化；当前首期资源为代码内置的循环轻柔钟声。
+        // 音乐 ID 已在入口白名单化；资源均由代码本地合成并循环播放。
         runCatching {
-            require(musicId == AlarmBackgroundMusic.GENTLE_BELL_V1)
-            val pcm = gentleBellPcm()
+            val pcm = when (musicId) {
+                AlarmBackgroundMusic.GENTLE_BELL_V1 -> gentleBellPcm()
+                AlarmBackgroundMusic.SEASIDE_SUNRISE_V1 -> seasideSunrisePcm()
+                else -> error("不支持的背景音乐：$musicId")
+            }
             AudioTrack.Builder()
                 .setAudioAttributes(musicAttributes)
                 .setAudioFormat(AudioFormat.Builder()
@@ -193,22 +196,63 @@ class AlarmAudioController(private val context: Context) {
     }
 
     /** 6 秒的钟声动机，循环播放；不依赖外置媒体或网络。 */
-    private fun gentleBellPcm(): ShortArray = ShortArray(SAMPLE_RATE * LOOP_SECONDS) { index ->
+    private fun gentleBellPcm(): ShortArray = ShortArray(SAMPLE_RATE * GENTLE_BELL_LOOP_SECONDS) { index ->
         val second = index.toDouble() / SAMPLE_RATE
         val noteStart = (second / NOTE_PERIOD_SECONDS).toInt() * NOTE_PERIOD_SECONDS
         val elapsed = second - noteStart
         val note = NOTES[((second / NOTE_PERIOD_SECONDS).toInt()) % NOTES.size]
         val envelope = if (elapsed < 0.9) kotlin.math.exp(-3.5 * elapsed) else 0.0
-        // AudioTrack 的播放音量已经是 100%，因此提高 PCM 振幅以将背景铃声音量加倍。
-        (kotlin.math.sin(2.0 * Math.PI * note * elapsed) * envelope * Short.MAX_VALUE * 0.26).toInt().toShort()
+        // AudioTrack 的播放音量已经是 100%，因此提高 PCM 振幅以再将背景铃声音量加倍。
+        (kotlin.math.sin(2.0 * Math.PI * note * elapsed) * envelope * Short.MAX_VALUE * 0.52).toInt().toShort()
     }
+
+    /**
+     * 12 秒海边晨光环境声：缓慢起伏的海浪、两次海鸥鸣叫与明亮和声音色。
+     * 全部样本由确定性公式产生，既可离线播放也不需要引入受版权限制的录音素材。
+     */
+    private fun seasideSunrisePcm(): ShortArray = ShortArray(SAMPLE_RATE * SEASIDE_LOOP_SECONDS) { index ->
+        val second = index.toDouble() / SAMPLE_RATE
+        val waveRise = 0.5 + 0.5 * kotlin.math.sin(2.0 * Math.PI * 0.085 * second - Math.PI / 2)
+        val foam = seaNoise(second) * (0.075 + 0.09 * waveRise)
+        val undertow = kotlin.math.sin(2.0 * Math.PI * 93.0 * second) * 0.025
+        val surf = foam + undertow
+        val gull = gullCall(second, 2.2) + gullCall(second, 8.1)
+        val sunlight = sunlightChord(second, 0.25) + sunlightChord(second, 6.25)
+        ((surf + gull + sunlight).coerceIn(-0.92, 0.92) * Short.MAX_VALUE * SEASIDE_VOLUME).toInt().toShort()
+    }
+
+    private fun gullCall(second: Double, start: Double): Double {
+        val elapsed = second - start
+        if (elapsed !in 0.0..0.72) return 0.0
+        val contour = kotlin.math.sin(Math.PI * elapsed / 0.72)
+        val frequency = if (elapsed < 0.36) 1_050.0 + elapsed * 1_250.0 else 1_500.0 - (elapsed - 0.36) * 1_000.0
+        return kotlin.math.sin(2.0 * Math.PI * frequency * elapsed) * contour * 0.12
+    }
+
+    private fun sunlightChord(second: Double, start: Double): Double {
+        val elapsed = second - start
+        if (elapsed !in 0.0..1.6) return 0.0
+        val envelope = kotlin.math.exp(-2.2 * elapsed)
+        return (kotlin.math.sin(2.0 * Math.PI * 523.25 * elapsed) +
+            kotlin.math.sin(2.0 * Math.PI * 659.25 * elapsed) +
+            kotlin.math.sin(2.0 * Math.PI * 783.99 * elapsed)) * envelope * 0.018
+    }
+
+    /** 使用与 12 秒循环对齐的多个高频正弦波模拟海浪白噪声，循环接缝保持连续。 */
+    private fun seaNoise(second: Double): Double =
+        (kotlin.math.sin(2.0 * Math.PI * 53.0 * second / SEASIDE_LOOP_SECONDS + 0.3) +
+            kotlin.math.sin(2.0 * Math.PI * 89.0 * second / SEASIDE_LOOP_SECONDS + 1.1) +
+            kotlin.math.sin(2.0 * Math.PI * 149.0 * second / SEASIDE_LOOP_SECONDS + 2.4) +
+            kotlin.math.sin(2.0 * Math.PI * 257.0 * second / SEASIDE_LOOP_SECONDS + 0.7)) / 4.0
 
     companion object {
         private const val TAG = "AlarmAudioController"
         private const val SAMPLE_RATE = 16_000
-        private const val LOOP_SECONDS = 6
+        private const val GENTLE_BELL_LOOP_SECONDS = 6
+        private const val SEASIDE_LOOP_SECONDS = 12
         private const val NOTE_PERIOD_SECONDS = 1.5
         private val NOTES = doubleArrayOf(523.25, 659.25, 783.99, 659.25)
+        private const val SEASIDE_VOLUME = 0.5
         private const val MUSIC_VOLUME = 1f
         private const val DUCKED_VOLUME = .25f
         private const val VOICE_REPEAT_INTERVAL_MILLIS = 6_000L

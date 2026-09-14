@@ -54,3 +54,4 @@ adb shell am broadcast -a com.lemonkids.kidmonitor.debug.STOP_ALARM \
 当前 HUAWEI BZT3-AL00 会限制后台冷启动 Receiver；首次触发前先打开一次监控端，再执行上述命令。调试完成后务必发送停止广播，或在界面中关闭闹钟。
 
 音频参数均可省略：默认播放 `gentle_bell_v1` 并朗读“标题。提醒内容”。将 `--ez voice_enabled false` 可只测背景音乐。
+将 `background_music_id` 改为 `seaside_sunrise_v1` 可测试内置的“海边晨光”（海浪、海鸥与明亮和声）。

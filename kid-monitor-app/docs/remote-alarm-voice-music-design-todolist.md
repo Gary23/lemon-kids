@@ -149,7 +149,7 @@ RLS 必须限制父母只能管理本家庭闹钟，监控 Pad 只能读取与�
 
 - [x] 家长端已增加内置“轻柔钟声”选择、语音开关和实时播报文本预览；标题、备注、音乐或语音开关的保存都会生成新 revision。
 - [x] `RemoteAlarm`、Pad 同步快照与 Room 已加入 `background_music_id`、`voice_enabled`、`voice_text`；新增 `20260914_alarm_voice_music.sql`，上线前须先在 Supabase 审查执行。
-- [x] Pad 已接入 `AlarmAudioController`：一次 `USAGE_ALARM` 焦点、离线循环轻柔钟声、语音时压低至 25%、语音结束恢复并固定 6 秒重播；关闭、超时和销毁会统一释放音频、振动和焦点。
+- [x] Pad 已接入 `AlarmAudioController`：一次 `USAGE_ALARM` 焦点、离线循环的轻柔钟声与海边晨光（海浪、海鸥、明亮和声）、语音时压低至 25%、语音结束恢复并固定 6 秒重播；关闭、超时和销毁会统一释放音频、振动和焦点。
 - [x] 腾讯云语音资产尚未就绪时，当前版本明确使用 Android 本地 TTS 作为离线正式兜底；到点路径不发网络请求。腾讯预生成 MP3 缓存、资产队列和就绪回执仍按以下待办继续实施，不能将本地 TTS 状态误报为云端缓存就绪。
 
 ### 需求与资源定稿
