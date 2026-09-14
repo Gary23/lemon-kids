@@ -89,6 +89,16 @@ class SupabaseRemoteAlarmRepository @Inject constructor(
         }
     }
 
+    override suspend fun updateBackgroundMusicCacheStatus(
+        alarmId: String, deviceId: String, revision: Long, state: String, errorCode: String?
+    ): Result<Unit> = runCatching {
+        postgrest.from("alarm_deliveries").update(
+            mapOf("background_music_cache_state" to state, "background_music_cache_error" to errorCode)
+        ) {
+            filter { eq("alarm_id", alarmId); eq("device_id", deviceId); eq("revision", revision) }
+        }
+    }
+
     override suspend fun recordEvent(event: AlarmEvent): Result<Unit> = runCatching {
         postgrest.from("alarm_events").insert(event)
     }

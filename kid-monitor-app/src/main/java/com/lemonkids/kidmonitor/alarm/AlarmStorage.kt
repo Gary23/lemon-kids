@@ -32,6 +32,12 @@ data class DeviceAlarmEntity(
     val title: String,
     val message: String,
     val backgroundMusicId: String = "gentle_bell_v1",
+    val backgroundMusicVersion: String = "",
+    val backgroundMusicMimeType: String = "",
+    val backgroundMusicSizeBytes: Long = 0,
+    val backgroundMusicSha256: String = "",
+    val backgroundMusicCacheFile: String = "",
+    val backgroundMusicCacheState: String = MUSIC_CACHE_PENDING,
     val voiceEnabled: Boolean = true,
     val voiceText: String = "",
     val enabled: Boolean,
@@ -43,6 +49,10 @@ data class DeviceAlarmEntity(
         const val STATE_SCHEDULED = "scheduled"
         const val STATE_RINGING = "ringing"
         const val STATE_DISMISSED = "dismissed"
+        const val MUSIC_CACHE_NOT_REQUIRED = "not_required"
+        const val MUSIC_CACHE_PENDING = "pending_download"
+        const val MUSIC_CACHE_READY = "ready"
+        const val MUSIC_CACHE_FAILED = "failed"
     }
 }
 
@@ -57,6 +67,9 @@ interface AlarmDao {
     @Query("UPDATE device_alarms SET state = :state WHERE alarmId = :alarmId")
     suspend fun updateState(alarmId: String, state: String)
 
+    @Query("SELECT backgroundMusicCacheFile FROM device_alarms WHERE enabled = 1 AND backgroundMusicCacheFile != ''")
+    suspend fun getBackgroundMusicCacheFiles(): List<String>
+
     /** 只暴露 Pad 当前仍会执行或正在响铃的记录；禁用/删除版本作为本地墓碑保留。 */
     @Query("""
         SELECT * FROM device_alarms
@@ -69,7 +82,7 @@ interface AlarmDao {
     fun observeEffectiveAlarms(nowMillis: Long = System.currentTimeMillis()): Flow<List<DeviceAlarmEntity>>
 }
 
-@Database(entities = [DeviceAlarmEntity::class], version = 4, exportSchema = false)
+@Database(entities = [DeviceAlarmEntity::class], version = 5, exportSchema = false)
 abstract class AlarmDatabase : RoomDatabase() {
     abstract fun alarmDao(): AlarmDao
 }
@@ -81,7 +94,7 @@ object AlarmStorageModule {
     @Singleton
     fun provideAlarmDatabase(@ApplicationContext context: Context): AlarmDatabase =
         Room.databaseBuilder(context, AlarmDatabase::class.java, "lemon_alarm.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .build()
 
     @Provides
@@ -107,6 +120,17 @@ object AlarmStorageModule {
             database.execSQL("ALTER TABLE device_alarms ADD COLUMN backgroundMusicId TEXT NOT NULL DEFAULT 'gentle_bell_v1'")
             database.execSQL("ALTER TABLE device_alarms ADD COLUMN voiceEnabled INTEGER NOT NULL DEFAULT 1")
             database.execSQL("ALTER TABLE device_alarms ADD COLUMN voiceText TEXT NOT NULL DEFAULT ''")
+        }
+    }
+
+    private val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE device_alarms ADD COLUMN backgroundMusicVersion TEXT NOT NULL DEFAULT ''")
+            database.execSQL("ALTER TABLE device_alarms ADD COLUMN backgroundMusicMimeType TEXT NOT NULL DEFAULT ''")
+            database.execSQL("ALTER TABLE device_alarms ADD COLUMN backgroundMusicSizeBytes INTEGER NOT NULL DEFAULT 0")
+            database.execSQL("ALTER TABLE device_alarms ADD COLUMN backgroundMusicSha256 TEXT NOT NULL DEFAULT ''")
+            database.execSQL("ALTER TABLE device_alarms ADD COLUMN backgroundMusicCacheFile TEXT NOT NULL DEFAULT ''")
+            database.execSQL("ALTER TABLE device_alarms ADD COLUMN backgroundMusicCacheState TEXT NOT NULL DEFAULT 'pending_download'")
         }
     }
 }

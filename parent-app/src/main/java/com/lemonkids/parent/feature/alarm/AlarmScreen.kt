@@ -1,5 +1,10 @@
 package com.lemonkids.parent.feature.alarm
 
+import android.content.Context
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,7 +13,10 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -32,12 +40,14 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -52,6 +62,8 @@ import com.lemonkids.shared.model.ParentAlarmStatus
 import com.lemonkids.shared.model.RemoteAlarm
 import com.lemonkids.shared.model.AlarmBackgroundMusic
 import com.lemonkids.shared.model.AlarmVoiceText
+import com.lemonkids.shared.model.FamilyAlarmMusicUpload
+import java.io.ByteArrayOutputStream
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -64,9 +76,18 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var showAlarmDialog by remember { mutableStateOf(false) }
     var editingAlarm by remember { mutableStateOf<RemoteAlarm?>(null) }
     var deletingAlarm by remember { mutableStateOf<RemoteAlarm?>(null) }
+    val musicPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching { readFamilyAlarmMusic(context, uri) }
+            .onSuccess(viewModel::uploadFamilyMusic)
+            .onFailure { viewModel.reportMusicUploadError(it.message ?: "无法读取该音频文件") }
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -129,6 +150,7 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
                 AlarmListSection(
                     childName = uiState.selectedChild!!.name,
                     monitorDevices = uiState.monitorDevices,
+                    musicCatalog = uiState.musicCatalog,
                     hasMonitorPad = uiState.monitorDevices.isNotEmpty(),
                     alarms = uiState.remoteAlarms,
                     error = uiState.error,
@@ -147,7 +169,13 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
         RemoteAlarmEditDialog(
             existing = editingAlarm,
             monitorDevices = uiState.monitorDevices,
+            musicCatalog = uiState.musicCatalog,
+            musicCatalogError = uiState.musicCatalogError,
+            musicUploadError = uiState.musicUploadError,
+            saveError = uiState.error,
             isSaving = uiState.isSaving,
+            isUploadingMusic = uiState.isUploadingMusic,
+            onUploadMusic = { musicPickerLauncher.launch(arrayOf("audio/mpeg", "audio/ogg")) },
             onDismiss = { showAlarmDialog = false },
             onSave = { targetDeviceId, triggerAt, endAt, title, message, backgroundMusicId, voiceEnabled, requiresConfirmation ->
                 viewModel.saveRemoteAlarm(editingAlarm, targetDeviceId, triggerAt, endAt, title, message, backgroundMusicId, voiceEnabled, requiresConfirmation) {
@@ -182,6 +210,7 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
 private fun AlarmListSection(
     childName: String,
     monitorDevices: List<MonitorDevice>,
+    musicCatalog: List<com.lemonkids.shared.model.AlarmBackgroundMusicAsset>,
     hasMonitorPad: Boolean,
     alarms: List<ParentAlarmStatus>,
     error: String?,
@@ -236,7 +265,7 @@ private fun AlarmListSection(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "${AlarmBackgroundMusic.displayName(alarm.backgroundMusicId)} · ${if (alarm.voiceEnabled) "语音播报" else "仅背景音乐"}",
+                            "${musicDisplayName(alarm.backgroundMusicId, musicCatalog)} · ${if (alarm.voiceEnabled) "语音播报" else "仅背景音乐"}",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -287,10 +316,16 @@ private fun deliveryLabel(item: ParentAlarmStatus): String {
     "missed" -> "未执行"
         else -> "等待下发"
     }
-    return when (item.delivery?.errorCode) {
-        "overlay_permission_missing" -> "$base（未开启悬浮窗增强展示）"
-        "overlay_window_failed" -> "$base（悬浮窗增强展示创建失败）"
+    val withMusic = when (item.delivery?.backgroundMusicCacheState) {
+        "ready" -> "$base · 音乐已缓存"
+        "failed" -> "$base · 音乐缓存失败（将使用离线铃声）"
+        "pending" -> "$base · 音乐缓存中"
         else -> base
+    }
+    return when (item.delivery?.errorCode) {
+        "overlay_permission_missing" -> "$withMusic（未开启悬浮窗增强展示）"
+        "overlay_window_failed" -> "$withMusic（悬浮窗增强展示创建失败）"
+        else -> withMusic
     }
 }
 
@@ -299,7 +334,13 @@ private fun deliveryLabel(item: ParentAlarmStatus): String {
 private fun RemoteAlarmEditDialog(
     existing: RemoteAlarm?,
     monitorDevices: List<MonitorDevice>,
+    musicCatalog: List<com.lemonkids.shared.model.AlarmBackgroundMusicAsset>,
+    musicCatalogError: String?,
+    musicUploadError: String?,
+    saveError: String?,
     isSaving: Boolean,
+    isUploadingMusic: Boolean,
+    onUploadMusic: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (String, Instant, Instant, String, String, String, Boolean, Boolean) -> Unit
 ) {
@@ -333,7 +374,7 @@ private fun RemoteAlarmEditDialog(
     var title by remember(existing?.id) { mutableStateOf(existing?.title ?: "起床提醒") }
     var message by remember(existing?.id) { mutableStateOf(existing?.message ?: "") }
     var backgroundMusicId by remember(existing?.id) {
-        mutableStateOf(AlarmBackgroundMusic.normalized(existing?.backgroundMusicId.orEmpty()))
+        mutableStateOf(existing?.backgroundMusicId ?: musicCatalog.firstOrNull()?.id.orEmpty())
     }
     var voiceEnabled by remember(existing?.id) { mutableStateOf(existing?.voiceEnabled ?: true) }
     var requiresConfirmation by remember(existing?.id) { mutableStateOf(existing?.requiresConfirmation ?: true) }
@@ -343,14 +384,37 @@ private fun RemoteAlarmEditDialog(
             monitorDevices.any { it.deviceId == selectedId }
         }.orEmpty())
     }
-    var error by remember { mutableStateOf<String?>(null) }
+    var localError by remember(existing?.id) { mutableStateOf<String?>(null) }
+    val displayedError = localError ?: saveError
+    val scrollState = rememberScrollState()
+
+    // 保存按钮位于弹层固定操作区，而表单内容可滚动。无论错误来自本地校验还是
+    // 服务端写入，都回到内容顶部展示，避免用户误以为按钮没有响应。
+    LaunchedEffect(displayedError) {
+        if (displayedError != null) scrollState.animateScrollTo(0)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existing == null) "新建远程闹钟" else "编辑远程闹钟") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // AlertDialog 不会自动让超出屏幕的 text slot 滚动；曲目和设备较多时
+            // 会导致下方表单及操作按钮无法触达。限制内容区高度并让它独立滚动。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Text("在生效日期范围内，Pad 会每天在指定时间响铃；开始日和结束日均包含。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                displayedError?.let {
+                    Text(
+                        text = it,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
                 Text("目标监控 Pad", fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     monitorDevices.forEachIndexed { index, device ->
@@ -358,7 +422,7 @@ private fun RemoteAlarmEditDialog(
                             selected = selectedDeviceId == device.deviceId,
                             onClick = {
                                 selectedDeviceId = device.deviceId
-                                error = null
+                                localError = null
                             },
                             label = { Text(monitorDeviceLabel(index)) }
                         )
@@ -393,15 +457,35 @@ private fun RemoteAlarmEditDialog(
                 OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(message, { message = it }, label = { Text("提醒内容（可选）") }, modifier = Modifier.fillMaxWidth())
                 Text("背景音乐", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "可上传本家庭的 MP3 / OGG（最多 5 MB、30～90 秒）",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(enabled = !isUploadingMusic && !isSaving, onClick = onUploadMusic) {
+                        Text(if (isUploadingMusic) "上传中…" else "上传音乐")
+                    }
+                }
+                val selectableMusic = musicCatalog + listOfNotNull(
+                    existing?.backgroundMusicId?.takeIf { id -> musicCatalog.none { it.id == id } }?.let {
+                        com.lemonkids.shared.model.AlarmBackgroundMusicAsset(id = it, name = "当前曲目（已下架）")
+                    }
+                )
+                if (selectableMusic.isEmpty()) {
+                    Text(musicCatalogError ?: "正在读取已发布背景音乐目录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AlarmBackgroundMusic.supportedIds.forEach { id ->
+                    selectableMusic.forEach { music ->
                         FilterChip(
-                            selected = backgroundMusicId == id,
-                            onClick = { backgroundMusicId = id },
-                            label = { Text(AlarmBackgroundMusic.displayName(id)) }
+                            selected = backgroundMusicId == music.id,
+                            onClick = { backgroundMusicId = music.id },
+                            label = { Text(music.name) }
                         )
                     }
                 }
+                musicUploadError?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("语音播报", fontSize = 14.sp)
@@ -418,11 +502,10 @@ private fun RemoteAlarmEditDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
                         Text("需要手动确认", fontSize = 14.sp)
-                        Text("开启后由孩子手动关闭本次提醒；最长响铃 60 分钟", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("开启后由孩子手动关闭本次提醒；最长响铃 5 分钟", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = requiresConfirmation, onCheckedChange = { requiresConfirmation = it })
                 }
-                error?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
@@ -430,10 +513,14 @@ private fun RemoteAlarmEditDialog(
                 val trigger = LocalDateTime.of(startDate, alarmTime).atZone(ZoneId.systemDefault()).toInstant()
                 val end = LocalDateTime.of(endDate, alarmTime).atZone(ZoneId.systemDefault()).toInstant()
                 when {
-                    selectedDeviceId.isBlank() -> error = "请选择要响铃的监控 Pad"
-                    end.isBefore(trigger) -> error = "结束日期不能早于开始日期"
-                    AlarmVoiceText.build(title, message).length > AlarmVoiceText.MAX_LENGTH -> error = "播报内容不能超过 ${AlarmVoiceText.MAX_LENGTH} 个字符"
-                    else -> onSave(selectedDeviceId, trigger, end, title, message, backgroundMusicId, voiceEnabled, requiresConfirmation)
+                    selectedDeviceId.isBlank() -> localError = "请选择要响铃的监控 Pad"
+                    end.isBefore(trigger) -> localError = "结束日期不能早于开始日期"
+                    backgroundMusicId.isBlank() -> localError = musicCatalogError ?: "请先选择背景音乐；目录仍在加载时请稍候"
+                    AlarmVoiceText.build(title, message).length > AlarmVoiceText.MAX_LENGTH -> localError = "播报内容不能超过 ${AlarmVoiceText.MAX_LENGTH} 个字符"
+                    else -> {
+                        localError = null
+                        onSave(selectedDeviceId, trigger, end, title, message, backgroundMusicId, voiceEnabled, requiresConfirmation)
+                    }
                 }
             }) { Text(if (isSaving) "保存中" else "保存") }
         },
@@ -476,6 +563,42 @@ private fun RemoteAlarmEditDialog(
         )
     }
 }
+
+/** 文件选择页可能给出未知长度的流，因此读取时硬性截断，避免超大文件占满家长端内存。 */
+private fun readFamilyAlarmMusic(context: Context, uri: Uri): FamilyAlarmMusicUpload {
+    val mimeType = context.contentResolver.getType(uri)?.lowercase()
+        ?: throw IllegalArgumentException("无法识别音频格式")
+    require(mimeType in setOf("audio/mpeg", "audio/ogg")) { "仅支持 MP3 或 OGG 音频" }
+    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+        ByteArrayOutputStream().use { output ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                output.write(buffer, 0, count)
+                require(output.size() <= 5 * 1024 * 1024) { "音频文件不能超过 5 MB" }
+            }
+            output.toByteArray()
+        }
+    } ?: throw IllegalArgumentException("无法读取音频文件")
+    val duration = MediaMetadataRetriever().run {
+        try {
+            setDataSource(context, uri)
+            extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                ?: throw IllegalArgumentException("无法读取音频时长")
+        } finally {
+            release()
+        }
+    }
+    require(duration in 30_000..90_000) { "音频时长需为 30 至 90 秒" }
+    val rawName = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.')?.trim().orEmpty()
+    return FamilyAlarmMusicUpload(rawName.ifBlank { "我的背景音乐" }.take(80), mimeType, bytes, duration)
+}
+
+private fun musicDisplayName(id: String, catalog: List<com.lemonkids.shared.model.AlarmBackgroundMusicAsset>): String =
+    catalog.firstOrNull { it.id == id }?.name ?: if (id in AlarmBackgroundMusic.supportedIds) {
+        AlarmBackgroundMusic.displayName(id)
+    } else "已下架曲目"
 
 private fun monitorDeviceLabel(index: Int): String = "监控 Pad ${index + 1}"
 

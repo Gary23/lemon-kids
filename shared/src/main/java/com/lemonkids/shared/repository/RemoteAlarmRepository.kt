@@ -14,5 +14,8 @@ interface RemoteAlarmRepository {
     suspend fun createAlarm(alarm: RemoteAlarm): Result<Unit>
     suspend fun updateAlarm(alarm: RemoteAlarm): Result<Unit>
     suspend fun updateDelivery(delivery: AlarmDelivery): Result<Unit>
+    suspend fun updateBackgroundMusicCacheStatus(
+        alarmId: String, deviceId: String, revision: Long, state: String, errorCode: String? = null
+    ): Result<Unit>
     suspend fun recordEvent(event: AlarmEvent): Result<Unit>
 }

@@ -37,6 +37,7 @@ class AlarmRingService : Service() {
         val alarmDao: AlarmDao
         val remoteAlarmApplier: RemoteAlarmApplier
         val remoteAlarmSyncCoordinator: RemoteAlarmSyncCoordinator
+        val musicCache: AlarmBackgroundMusicCache
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -95,6 +96,7 @@ class AlarmRingService : Service() {
             val debugAudioConfig = if (debugSession) {
                 AlarmAudioController.Config(
                     backgroundMusicId = intent.getStringExtra(EXTRA_DEBUG_BACKGROUND_MUSIC_ID) ?: "gentle_bell_v1",
+                    backgroundMusicFilePath = intent.getStringExtra(EXTRA_DEBUG_BACKGROUND_MUSIC_FILE),
                     voiceEnabled = intent.getBooleanExtra(EXTRA_DEBUG_VOICE_ENABLED, true),
                     voiceText = intent.getStringExtra(EXTRA_DEBUG_VOICE_TEXT)
                         ?: "${presentation.title}。${presentation.message}"
@@ -160,7 +162,9 @@ class AlarmRingService : Service() {
                 if (active.containsKey(initial.session)) {
                     active[initial.session] = presentation
                     audioController.updateAndSpeak(
-                        AlarmAudioController.Config(alarm?.backgroundMusicId ?: "gentle_bell_v1", alarm?.voiceEnabled ?: true,
+                        AlarmAudioController.Config(alarm?.backgroundMusicId ?: "gentle_bell_v1",
+                            alarm?.let { entryPoint.musicCache.cachedFile(it.backgroundMusicCacheFile)?.absolutePath },
+                            alarm?.voiceEnabled ?: true,
                             alarm?.voiceText?.ifBlank { "${presentation.title}。${presentation.message}" } ?: "${presentation.title}。${presentation.message}")
                     )
                     presentationCoordinator.onAlarmUpdated(presentation)
@@ -265,7 +269,8 @@ class AlarmRingService : Service() {
         private const val CHANNEL_ID = "lemon_alarm_ringing"
         private const val NOTIFICATION_ID = 3107
         private const val STOP_REQUEST_XOR = 0x4A17
-        private const val MAX_RING_MILLIS = 60 * 60 * 1000L
+        /** 无论是否要求手动确认，闹钟最多响 5 分钟，避免持续占用音频与唤醒锁。 */
+        private const val MAX_RING_MILLIS = 5 * 60 * 1000L
         private const val ACTION_STOP = "com.lemonkids.kidmonitor.alarm.STOP"
         const val EXTRA_ALARM_ID = "alarm_id"
         const val EXTRA_REVISION = "revision"
@@ -274,6 +279,8 @@ class AlarmRingService : Service() {
         const val EXTRA_DEBUG_MESSAGE = "debug_message"
         const val EXTRA_DEBUG_REQUIRES_CONFIRMATION = "debug_requires_confirmation"
         const val EXTRA_DEBUG_BACKGROUND_MUSIC_ID = "debug_background_music_id"
+        /** 仅 Debug 试听入口传入已校验的应用私有缓存文件，绝不接收网络地址。 */
+        const val EXTRA_DEBUG_BACKGROUND_MUSIC_FILE = "debug_background_music_file"
         const val EXTRA_DEBUG_VOICE_ENABLED = "debug_voice_enabled"
         const val EXTRA_DEBUG_VOICE_TEXT = "debug_voice_text"
         fun startIntent(context: Context, alarmId: String, revision: Long) = Intent(context, AlarmRingService::class.java).apply { putExtra(EXTRA_ALARM_ID, alarmId); putExtra(EXTRA_REVISION, revision) }
@@ -286,6 +293,7 @@ class AlarmRingService : Service() {
             message: String,
             requiresConfirmation: Boolean,
             backgroundMusicId: String,
+            backgroundMusicFilePath: String? = null,
             voiceEnabled: Boolean,
             voiceText: String?
         ) =
@@ -294,6 +302,7 @@ class AlarmRingService : Service() {
                 putExtra(EXTRA_DEBUG_SESSION, true); putExtra(EXTRA_DEBUG_TITLE, title); putExtra(EXTRA_DEBUG_MESSAGE, message)
                 putExtra(EXTRA_DEBUG_REQUIRES_CONFIRMATION, requiresConfirmation)
                 putExtra(EXTRA_DEBUG_BACKGROUND_MUSIC_ID, backgroundMusicId)
+                backgroundMusicFilePath?.let { putExtra(EXTRA_DEBUG_BACKGROUND_MUSIC_FILE, it) }
                 putExtra(EXTRA_DEBUG_VOICE_ENABLED, voiceEnabled)
                 voiceText?.let { putExtra(EXTRA_DEBUG_VOICE_TEXT, it) }
             }

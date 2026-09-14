@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaPlayer
 import android.media.RingtoneManager
+import android.media.audiofx.LoudnessEnhancer
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -21,11 +22,13 @@ import java.util.Locale
  *
  * 背景部分使用应用内合成的钟声或海边环境音乐循环，避免到点依赖网络或第三方音乐版权；人声优先
  * 使用落地后的语音资产（后续接入），当前以系统 TTS 作为可靠离线实现。两个声源共用一次
- * `USAGE_ALARM` 焦点，人声开始时只压低背景，不会中断自己的闹铃音。
+ * `USAGE_ALARM` 焦点；背景音乐以较低固定音量持续播放，语音播报期间也不会被暂停或压低。
  */
 class AlarmAudioController(private val context: Context) {
     data class Config(
         val backgroundMusicId: String = AlarmBackgroundMusic.DEFAULT_ID,
+        /** 已校验的私有缓存绝对路径；为空时只使用内置合成音乐。 */
+        val backgroundMusicFilePath: String? = null,
         val voiceEnabled: Boolean = true,
         val voiceText: String = ""
     )
@@ -43,6 +46,7 @@ class AlarmAudioController(private val context: Context) {
     private var focusRequest: AudioFocusRequest? = null
     private var backgroundTrack: AudioTrack? = null
     private var fallbackPlayer: MediaPlayer? = null
+    private var backgroundLoudnessEnhancer: LoudnessEnhancer? = null
     private var textToSpeech: TextToSpeech? = null
     private var ttsReady = false
     private var config = Config()
@@ -52,7 +56,8 @@ class AlarmAudioController(private val context: Context) {
     private val focusListener = AudioManager.OnAudioFocusChangeListener { focus ->
         when (focus) {
             AudioManager.AUDIOFOCUS_LOSS -> stop()
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> setMusicVolume(0f)
+            // 部分系统 TTS 引擎会在播报时申请瞬时焦点；不能因此把同一闹钟的背景音乐静音。
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> Unit
             AudioManager.AUDIOFOCUS_GAIN -> setMusicVolume(MUSIC_VOLUME)
         }
     }
@@ -61,8 +66,8 @@ class AlarmAudioController(private val context: Context) {
         stop()
         stopped = false
         requestFocus()
-        startBackground(AlarmBackgroundMusic.normalized(initial.backgroundMusicId))
         config = initial
+        startBackground(AlarmBackgroundMusic.normalized(initial.backgroundMusicId), initial.backgroundMusicFilePath)
         ensureTts()
         if (initial.voiceEnabled) speakCurrentText()
     }
@@ -70,7 +75,12 @@ class AlarmAudioController(private val context: Context) {
     /** 配置在 Room 读取完成后更新；不在 AlarmReceiver 冷启动路径执行网络请求。 */
     fun updateAndSpeak(updated: Config) {
         if (stopped) return
-        config = updated.copy(backgroundMusicId = AlarmBackgroundMusic.normalized(updated.backgroundMusicId))
+        val normalized = updated.copy(backgroundMusicId = AlarmBackgroundMusic.normalized(updated.backgroundMusicId))
+        if (config.backgroundMusicId != normalized.backgroundMusicId || config.backgroundMusicFilePath != normalized.backgroundMusicFilePath) {
+            stopBackground()
+            startBackground(normalized.backgroundMusicId, normalized.backgroundMusicFilePath)
+        }
+        config = normalized
         handler.removeCallbacks(repeatVoice)
         textToSpeech?.stop()
         ensureTts()
@@ -84,10 +94,7 @@ class AlarmAudioController(private val context: Context) {
         textToSpeech?.shutdown()
         textToSpeech = null
         ttsReady = false
-        backgroundTrack?.runCatching { pause(); flush(); release() }
-        backgroundTrack = null
-        fallbackPlayer?.runCatching { stop(); release() }
-        fallbackPlayer = null
+        stopBackground()
         focusRequest?.let(audioManager::abandonAudioFocusRequest)
         focusRequest = null
     }
@@ -100,13 +107,30 @@ class AlarmAudioController(private val context: Context) {
         audioManager.requestAudioFocus(requireNotNull(focusRequest))
     }
 
-    private fun startBackground(musicId: String) {
-        // 音乐 ID 已在入口白名单化；资源均由代码本地合成并循环播放。
+    private fun startBackground(musicId: String, cachedFilePath: String? = null) {
+        // 所有来源均已落地到本机；到点路径不读取网络或签名 URL。
+        if (!cachedFilePath.isNullOrBlank()) {
+            val started = runCatching {
+                MediaPlayer().apply {
+                    setAudioAttributes(musicAttributes)
+                    setDataSource(cachedFilePath)
+                    isLooping = true
+                    prepare()
+                    setVolume(MUSIC_VOLUME, MUSIC_VOLUME)
+                    enableBackgroundBoost(audioSessionId)
+                    start()
+                    fallbackPlayer = this
+                }
+            }.isSuccess
+            if (started) return
+            Log.w(TAG, "已缓存背景音乐初始化失败，回退内置音乐")
+        }
         runCatching {
             val pcm = when (musicId) {
                 AlarmBackgroundMusic.GENTLE_BELL_V1 -> gentleBellPcm()
                 AlarmBackgroundMusic.SEASIDE_SUNRISE_V1 -> seasideSunrisePcm()
-                else -> error("不支持的背景音乐：$musicId")
+                // 运营曲目未缓存、已下架或文件损坏时，必须仍能离线响铃。
+                else -> gentleBellPcm()
             }
             AudioTrack.Builder()
                 .setAudioAttributes(musicAttributes)
@@ -122,6 +146,7 @@ class AlarmAudioController(private val context: Context) {
                     check(track.write(pcm, 0, pcm.size) == pcm.size)
                     track.setLoopPoints(0, pcm.size, -1)
                     track.setVolume(MUSIC_VOLUME)
+                    enableBackgroundBoost(track.audioSessionId)
                     track.play()
                     backgroundTrack = track
                 }
@@ -142,6 +167,15 @@ class AlarmAudioController(private val context: Context) {
         }
     }
 
+    private fun stopBackground() {
+        backgroundLoudnessEnhancer?.runCatching { release() }
+        backgroundLoudnessEnhancer = null
+        backgroundTrack?.runCatching { pause(); flush(); release() }
+        backgroundTrack = null
+        fallbackPlayer?.runCatching { stop(); release() }
+        fallbackPlayer = null
+    }
+
     private fun ensureTts() {
         if (textToSpeech != null) return
         textToSpeech = TextToSpeech(context.applicationContext) { status ->
@@ -150,9 +184,7 @@ class AlarmAudioController(private val context: Context) {
             engine.language = Locale.SIMPLIFIED_CHINESE
             engine.setAudioAttributes(speechAttributes)
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String) {
-                    handler.post { setMusicVolume(DUCKED_VOLUME) }
-                }
+                override fun onStart(utteranceId: String) = Unit
                 override fun onDone(utteranceId: String) {
                     handler.post { onVoiceFinished() }
                 }
@@ -176,14 +208,12 @@ class AlarmAudioController(private val context: Context) {
             return
         }
         handler.removeCallbacks(repeatVoice)
-        setMusicVolume(DUCKED_VOLUME)
         val result = textToSpeech?.speak(config.voiceText, TextToSpeech.QUEUE_FLUSH, null, UTTERANCE_ID)
         if (result != TextToSpeech.SUCCESS) onVoiceFinished()
     }
 
     private fun onVoiceFinished() {
         if (stopped) return
-        setMusicVolume(MUSIC_VOLUME)
         if (config.voiceEnabled && config.voiceText.isNotBlank()) {
             handler.removeCallbacks(repeatVoice)
             handler.postDelayed(repeatVoice, VOICE_REPEAT_INTERVAL_MILLIS)
@@ -193,6 +223,19 @@ class AlarmAudioController(private val context: Context) {
     private fun setMusicVolume(volume: Float) {
         backgroundTrack?.setVolume(volume)
         fallbackPlayer?.setVolume(volume, volume)
+    }
+
+    /**
+     * 原先的 .40 音量提高 3 倍需要达到 1.20，超过 Android 播放器音量上限。
+     * 先使用满音量（2.5 倍），再用会话级响度增强补足剩余 1.2 倍，合计为原来的 3 倍。
+     */
+    private fun enableBackgroundBoost(audioSessionId: Int) {
+        backgroundLoudnessEnhancer = runCatching {
+            LoudnessEnhancer(audioSessionId).apply {
+                setTargetGain(BACKGROUND_BOOST_MILLIBELS)
+                enabled = true
+            }
+        }.getOrNull()
     }
 
     /** 6 秒的钟声动机，循环播放；不依赖外置媒体或网络。 */
@@ -255,8 +298,9 @@ class AlarmAudioController(private val context: Context) {
         private const val NOTE_PERIOD_SECONDS = 1.5
         private val NOTES = doubleArrayOf(523.25, 659.25, 783.99, 659.25)
         private const val SEASIDE_VOLUME = 1.1
+        /** 满音量输出，额外的 1.2 倍响度由 [LoudnessEnhancer] 处理。 */
         private const val MUSIC_VOLUME = 1f
-        private const val DUCKED_VOLUME = .25f
+        private const val BACKGROUND_BOOST_MILLIBELS = 158
         private const val VOICE_REPEAT_INTERVAL_MILLIS = 6_000L
         private const val UTTERANCE_ID = "lemon-alarm-voice"
     }

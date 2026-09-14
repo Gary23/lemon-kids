@@ -14,6 +14,7 @@ import com.lemonkids.shared.model.AlarmEvent
 import com.lemonkids.shared.model.AlarmEventType
 import com.lemonkids.shared.model.AlarmBackgroundMusic
 import com.lemonkids.shared.model.AlarmVoiceText
+import com.lemonkids.shared.repository.AlarmBackgroundMusicRepository
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.RemoteAlarmRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -31,7 +32,10 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
     @ApplicationContext private val context: Context,
     private val authRepository: AuthRepository,
     private val remoteAlarmRepository: RemoteAlarmRepository,
-    private val remoteAlarmApplier: RemoteAlarmApplier
+    private val remoteAlarmApplier: RemoteAlarmApplier,
+    private val musicRepository: AlarmBackgroundMusicRepository,
+    private val musicCache: AlarmBackgroundMusicCache,
+    private val alarmDao: AlarmDao
 ) {
     suspend fun sync(): Result<Unit> = runCatching {
         // WorkManager 可以在应用进程刚创建时运行；此时 StateFlow 的初始值仍为 null，
@@ -44,6 +48,11 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
             ?: error("监控端尚未完成登录，暂不对账")
         val deviceId = deviceId()
         val alarms = remoteAlarmRepository.getAlarmsForDevice(deviceId).getOrThrow()
+        // 目录不可用不能阻塞精确闹钟下发；旧缓存和内置铃声仍是到点兜底。
+        val musicById = musicRepository.getPublishedMusic().getOrElse {
+            Log.w(TAG, "曲目目录读取失败，本轮只同步闹钟", it)
+            emptyList()
+        }.associateBy { it.id }
         alarms.forEach { alarm ->
             // 已删除的云端记录仍会投递给目标 Pad，确保离线期间已登记的系统闹钟能被撤销。
             val shouldRemove = !alarm.enabled || alarm.deletedAt != null
@@ -65,9 +74,14 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
             // 日期范围闹钟只登记范围内下一次尚未来临的每日时刻；不会因前几天未部署而补响。
             if (!shouldRemove && AlarmOccurrence.nextInRange(triggerAt, endAt, alarm.timezone) == null) {
                 remoteAlarmApplier.markMissed(
-                    RemoteAlarmSnapshot(alarm.id, alarm.revision, triggerAt, endAt, alarm.timezone, alarm.title, alarm.message,
-                        AlarmBackgroundMusic.normalized(alarm.backgroundMusicId), alarm.voiceEnabled,
-                        alarm.voiceText.ifBlank { AlarmVoiceText.limited(alarm.title, alarm.message) }, false, alarm.requiresConfirmation)
+                    RemoteAlarmSnapshot(
+                        alarmId = alarm.id, revision = alarm.revision, triggerAtMillis = triggerAt, endAtMillis = endAt,
+                        timezone = alarm.timezone, title = alarm.title, message = alarm.message,
+                        backgroundMusicId = AlarmBackgroundMusic.normalized(alarm.backgroundMusicId),
+                        backgroundMusic = musicById[alarm.backgroundMusicId], voiceEnabled = alarm.voiceEnabled,
+                        voiceText = alarm.voiceText.ifBlank { AlarmVoiceText.limited(alarm.title, alarm.message) },
+                        enabled = false, requiresConfirmation = alarm.requiresConfirmation
+                    )
                 )
                 report(alarm.id, alarm.revision, AlarmDeliveryStatus.MISSED, AlarmEventType.MISSED, "日期范围内已无待执行提醒")
                 return@forEach
@@ -82,6 +96,7 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
                     title = alarm.title,
                     message = alarm.message,
                     backgroundMusicId = AlarmBackgroundMusic.normalized(alarm.backgroundMusicId),
+                    backgroundMusic = musicById[alarm.backgroundMusicId],
                     voiceEnabled = alarm.voiceEnabled,
                     voiceText = alarm.voiceText.ifBlank { AlarmVoiceText.limited(alarm.title, alarm.message) },
                     enabled = !shouldRemove,
@@ -98,8 +113,56 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
                     alarm.id, alarm.revision, AlarmDeliveryStatus.REMOVED, AlarmEventType.REMOVED, "已从本机移除闹钟"
                 )
             }
+            // 不等待下一次闹钟；网络仅发生在同步期，失败绝不撤销刚完成的部署。
+            musicById[alarm.backgroundMusicId]?.let { music ->
+                syncMusicCache(alarm.id, alarm.revision, deviceId, music)
+            }
         }
+        musicCache.cleanUnreferenced(alarmDao.getBackgroundMusicCacheFiles().toSet())
         Log.d(TAG, "远程闹钟对账完成 device=$deviceId count=${alarms.size} user=${user.uid}")
+    }
+
+    private suspend fun syncMusicCache(
+        alarmId: String, revision: Long, deviceId: String, music: com.lemonkids.shared.model.AlarmBackgroundMusicAsset
+    ) {
+        val current = alarmDao.get(alarmId) ?: return
+        if (current.revision != revision || !current.enabled) return
+        if (current.backgroundMusicSha256 == music.sha256 &&
+            musicCache.cachedFile(current.backgroundMusicCacheFile) != null
+        ) {
+            if (current.backgroundMusicCacheState != DeviceAlarmEntity.MUSIC_CACHE_READY) {
+                alarmDao.upsert(current.copy(backgroundMusicCacheState = DeviceAlarmEntity.MUSIC_CACHE_READY))
+            }
+            reportMusicCache(alarmId, revision, deviceId, DeviceAlarmEntity.MUSIC_CACHE_READY)
+            return
+        }
+        musicCache.cache(music).fold(
+            onSuccess = { cached ->
+                val latest = alarmDao.get(alarmId)
+                if (latest?.revision == revision && latest.backgroundMusicSha256 == music.sha256) {
+                    alarmDao.upsert(latest.copy(backgroundMusicCacheFile = cached.fileName, backgroundMusicCacheState = DeviceAlarmEntity.MUSIC_CACHE_READY))
+                    reportMusicCache(alarmId, revision, deviceId, DeviceAlarmEntity.MUSIC_CACHE_READY)
+                }
+            },
+            onFailure = { error ->
+                val latest = alarmDao.get(alarmId)
+                if (latest?.revision == revision && latest.backgroundMusicSha256 == music.sha256) {
+                    alarmDao.upsert(latest.copy(backgroundMusicCacheState = DeviceAlarmEntity.MUSIC_CACHE_FAILED))
+                }
+                Log.w(TAG, "背景音乐缓存失败 alarmId=$alarmId", error)
+                reportMusicCache(alarmId, revision, deviceId, DeviceAlarmEntity.MUSIC_CACHE_FAILED, "download_or_verify_failed")
+            }
+        )
+    }
+
+    private suspend fun reportMusicCache(alarmId: String, revision: Long, deviceId: String, state: String, errorCode: String? = null) {
+        remoteAlarmRepository.updateBackgroundMusicCacheStatus(alarmId, deviceId, revision, state, errorCode)
+            .onFailure { Log.w(TAG, "背景音乐缓存状态回执失败 alarmId=$alarmId", it) }
+        remoteAlarmRepository.recordEvent(AlarmEvent(
+            alarmId, deviceId, revision,
+            if (state == DeviceAlarmEntity.MUSIC_CACHE_READY) AlarmEventType.MUSIC_CACHE_READY.value else AlarmEventType.MUSIC_CACHE_FAILED.value,
+            if (state == DeviceAlarmEntity.MUSIC_CACHE_READY) "背景音乐已缓存" else "背景音乐缓存失败"
+        )).onFailure { Log.w(TAG, "背景音乐缓存事件写入失败 alarmId=$alarmId", it) }
     }
 
     suspend fun reportRinging(alarmId: String, revision: Long) = report(
