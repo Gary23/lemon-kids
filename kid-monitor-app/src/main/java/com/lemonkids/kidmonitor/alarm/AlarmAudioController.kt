@@ -213,12 +213,14 @@ class AlarmAudioController(private val context: Context) {
     private fun seasideSunrisePcm(): ShortArray = ShortArray(SAMPLE_RATE * SEASIDE_LOOP_SECONDS) { index ->
         val second = index.toDouble() / SAMPLE_RATE
         val waveRise = 0.5 + 0.5 * kotlin.math.sin(2.0 * Math.PI * 0.085 * second - Math.PI / 2)
-        val foam = seaNoise(second) * (0.075 + 0.09 * waveRise)
-        val undertow = kotlin.math.sin(2.0 * Math.PI * 93.0 * second) * 0.025
+        // 海浪作为主要声部，峰值随潮汐起伏；首版环境声过轻，此处按闹钟背景音标准提高响度。
+        val foam = seaNoise(second) * (0.24 + 0.22 * waveRise)
+        val undertow = kotlin.math.sin(2.0 * Math.PI * 93.0 * second) * 0.055
         val surf = foam + undertow
         val gull = gullCall(second, 2.2) + gullCall(second, 8.1)
         val sunlight = sunlightChord(second, 0.25) + sunlightChord(second, 6.25)
-        ((surf + gull + sunlight).coerceIn(-0.92, 0.92) * Short.MAX_VALUE * SEASIDE_VOLUME).toInt().toShort()
+        ((surf + gull + sunlight) * SEASIDE_VOLUME).coerceIn(-0.92, 0.92)
+            .times(Short.MAX_VALUE).toInt().toShort()
     }
 
     private fun gullCall(second: Double, start: Double): Double {
@@ -226,7 +228,7 @@ class AlarmAudioController(private val context: Context) {
         if (elapsed !in 0.0..0.72) return 0.0
         val contour = kotlin.math.sin(Math.PI * elapsed / 0.72)
         val frequency = if (elapsed < 0.36) 1_050.0 + elapsed * 1_250.0 else 1_500.0 - (elapsed - 0.36) * 1_000.0
-        return kotlin.math.sin(2.0 * Math.PI * frequency * elapsed) * contour * 0.12
+        return kotlin.math.sin(2.0 * Math.PI * frequency * elapsed) * contour * 0.18
     }
 
     private fun sunlightChord(second: Double, start: Double): Double {
@@ -235,15 +237,15 @@ class AlarmAudioController(private val context: Context) {
         val envelope = kotlin.math.exp(-2.2 * elapsed)
         return (kotlin.math.sin(2.0 * Math.PI * 523.25 * elapsed) +
             kotlin.math.sin(2.0 * Math.PI * 659.25 * elapsed) +
-            kotlin.math.sin(2.0 * Math.PI * 783.99 * elapsed)) * envelope * 0.018
+            kotlin.math.sin(2.0 * Math.PI * 783.99 * elapsed)) * envelope * 0.03
     }
 
     /** 使用与 12 秒循环对齐的多个高频正弦波模拟海浪白噪声，循环接缝保持连续。 */
     private fun seaNoise(second: Double): Double =
-        (kotlin.math.sin(2.0 * Math.PI * 53.0 * second / SEASIDE_LOOP_SECONDS + 0.3) +
-            kotlin.math.sin(2.0 * Math.PI * 89.0 * second / SEASIDE_LOOP_SECONDS + 1.1) +
-            kotlin.math.sin(2.0 * Math.PI * 149.0 * second / SEASIDE_LOOP_SECONDS + 2.4) +
-            kotlin.math.sin(2.0 * Math.PI * 257.0 * second / SEASIDE_LOOP_SECONDS + 0.7)) / 4.0
+        (kotlin.math.sin(2.0 * Math.PI * 307.0 * second / SEASIDE_LOOP_SECONDS + 0.3) +
+            kotlin.math.sin(2.0 * Math.PI * 631.0 * second / SEASIDE_LOOP_SECONDS + 1.1) +
+            kotlin.math.sin(2.0 * Math.PI * 1_279.0 * second / SEASIDE_LOOP_SECONDS + 2.4) +
+            kotlin.math.sin(2.0 * Math.PI * 2_537.0 * second / SEASIDE_LOOP_SECONDS + 0.7)) / 4.0
 
     companion object {
         private const val TAG = "AlarmAudioController"
@@ -252,7 +254,7 @@ class AlarmAudioController(private val context: Context) {
         private const val SEASIDE_LOOP_SECONDS = 12
         private const val NOTE_PERIOD_SECONDS = 1.5
         private val NOTES = doubleArrayOf(523.25, 659.25, 783.99, 659.25)
-        private const val SEASIDE_VOLUME = 0.5
+        private const val SEASIDE_VOLUME = 1.1
         private const val MUSIC_VOLUME = 1f
         private const val DUCKED_VOLUME = .25f
         private const val VOICE_REPEAT_INTERVAL_MILLIS = 6_000L
