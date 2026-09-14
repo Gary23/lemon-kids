@@ -92,7 +92,15 @@ class AlarmRingService : Service() {
                 message = intent.getStringExtra(EXTRA_DEBUG_MESSAGE) ?: AlarmPresentation.DEFAULT_MESSAGE,
                 requiresConfirmation = intent.getBooleanExtra(EXTRA_DEBUG_REQUIRES_CONFIRMATION, true)
             )
-            mainHandler.post { startAlarm(presentation, debugSession) }
+            val debugAudioConfig = if (debugSession) {
+                AlarmAudioController.Config(
+                    backgroundMusicId = intent.getStringExtra(EXTRA_DEBUG_BACKGROUND_MUSIC_ID) ?: "gentle_bell_v1",
+                    voiceEnabled = intent.getBooleanExtra(EXTRA_DEBUG_VOICE_ENABLED, true),
+                    voiceText = intent.getStringExtra(EXTRA_DEBUG_VOICE_TEXT)
+                        ?: "${presentation.title}。${presentation.message}"
+                )
+            } else null
+            mainHandler.post { startAlarm(presentation, debugSession, debugAudioConfig) }
         }
         return START_NOT_STICKY
     }
@@ -110,7 +118,11 @@ class AlarmRingService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun startAlarm(initial: AlarmPresentation, debugSession: Boolean) {
+    private fun startAlarm(
+        initial: AlarmPresentation,
+        debugSession: Boolean,
+        debugAudioConfig: AlarmAudioController.Config? = null
+    ) {
         active.keys.filter { it.alarmId == initial.alarmId && it.revision < initial.revision }
             .toList().forEach { stopAlarm(it, reportDismissal = false) }
         val wasEmpty = active.isEmpty()
@@ -119,7 +131,7 @@ class AlarmRingService : Service() {
         if (wasEmpty) {
             startForeground(NOTIFICATION_ID, createSummaryNotification())
             acquireWakeLock()
-            startAlerting()
+            startAlerting(debugAudioConfig)
             registerScreenReceiver()
         }
         presentationCoordinator.onAlarmStarted(initial)
@@ -198,8 +210,8 @@ class AlarmRingService : Service() {
         manager.notify(NOTIFICATION_ID, createSummaryNotification())
     }
 
-    private fun startAlerting() {
-        audioController.start()
+    private fun startAlerting(initialAudioConfig: AlarmAudioController.Config? = null) {
+        audioController.start(initialAudioConfig ?: AlarmAudioController.Config(voiceEnabled = false))
         val vibrator = getSystemService(Vibrator::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 700, 450), 0))
         else @Suppress("DEPRECATION") vibrator.vibrate(longArrayOf(0, 700, 450), 0)
@@ -261,13 +273,29 @@ class AlarmRingService : Service() {
         const val EXTRA_DEBUG_TITLE = "debug_title"
         const val EXTRA_DEBUG_MESSAGE = "debug_message"
         const val EXTRA_DEBUG_REQUIRES_CONFIRMATION = "debug_requires_confirmation"
+        const val EXTRA_DEBUG_BACKGROUND_MUSIC_ID = "debug_background_music_id"
+        const val EXTRA_DEBUG_VOICE_ENABLED = "debug_voice_enabled"
+        const val EXTRA_DEBUG_VOICE_TEXT = "debug_voice_text"
         fun startIntent(context: Context, alarmId: String, revision: Long) = Intent(context, AlarmRingService::class.java).apply { putExtra(EXTRA_ALARM_ID, alarmId); putExtra(EXTRA_REVISION, revision) }
         fun stopIntent(context: Context, alarmId: String, revision: Long) = Intent(context, AlarmRingService::class.java).apply { action = ACTION_STOP; putExtra(EXTRA_ALARM_ID, alarmId); putExtra(EXTRA_REVISION, revision) }
-        fun debugStartIntent(context: Context, alarmId: String, revision: Long, title: String, message: String, requiresConfirmation: Boolean) =
+        fun debugStartIntent(
+            context: Context,
+            alarmId: String,
+            revision: Long,
+            title: String,
+            message: String,
+            requiresConfirmation: Boolean,
+            backgroundMusicId: String,
+            voiceEnabled: Boolean,
+            voiceText: String?
+        ) =
             Intent(context, AlarmRingService::class.java).apply {
                 putExtra(EXTRA_ALARM_ID, alarmId); putExtra(EXTRA_REVISION, revision)
                 putExtra(EXTRA_DEBUG_SESSION, true); putExtra(EXTRA_DEBUG_TITLE, title); putExtra(EXTRA_DEBUG_MESSAGE, message)
                 putExtra(EXTRA_DEBUG_REQUIRES_CONFIRMATION, requiresConfirmation)
+                putExtra(EXTRA_DEBUG_BACKGROUND_MUSIC_ID, backgroundMusicId)
+                putExtra(EXTRA_DEBUG_VOICE_ENABLED, voiceEnabled)
+                voiceText?.let { putExtra(EXTRA_DEBUG_VOICE_TEXT, it) }
             }
         private fun notificationId(session: AlarmSession): Int = 40_000 + ((session.alarmId.hashCode() * 31 + session.revision.hashCode()) and 0x3fffffff) % 1_000_000
     }

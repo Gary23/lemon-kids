@@ -32,7 +32,10 @@ class DebugAlarmReceiver : BroadcastReceiver() {
                 revision = revision,
                 title = intent.getStringExtra(EXTRA_TITLE) ?: AlarmPresentation.DEFAULT_TITLE,
                 message = intent.getStringExtra(EXTRA_MESSAGE) ?: AlarmPresentation.DEFAULT_MESSAGE,
-                requiresConfirmation = intent.getBooleanExtra(EXTRA_REQUIRES_CONFIRMATION, true)
+                requiresConfirmation = intent.getBooleanExtra(EXTRA_REQUIRES_CONFIRMATION, true),
+                backgroundMusicId = intent.getStringExtra(EXTRA_BACKGROUND_MUSIC_ID) ?: "gentle_bell_v1",
+                voiceEnabled = intent.getBooleanExtra(EXTRA_VOICE_ENABLED, true),
+                voiceText = intent.getStringExtra(EXTRA_VOICE_TEXT)
             )
         )
     }
@@ -45,6 +48,9 @@ class DebugAlarmReceiver : BroadcastReceiver() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_MESSAGE = "message"
         const val EXTRA_REQUIRES_CONFIRMATION = "requires_confirmation"
+        const val EXTRA_BACKGROUND_MUSIC_ID = "background_music_id"
+        const val EXTRA_VOICE_ENABLED = "voice_enabled"
+        const val EXTRA_VOICE_TEXT = "voice_text"
         private const val TAG = "DebugAlarmReceiver"
     }
 }

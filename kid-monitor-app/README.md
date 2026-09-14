@@ -36,13 +36,15 @@
 
 ## Debug 本地闹钟触发器
 
-Debug APK 才包含 `DebugAlarmReceiver`；它不读写 Room、不登记系统闹钟，也不向 Supabase 上报。使用固定会话键可立即开始和停止展示测试：
+Debug APK 才包含 `DebugAlarmReceiver`；它不读写 Room、不登记系统闹钟，也不向 Supabase 上报。使用固定会话键可立即开始和停止完整的展示、背景音乐和本地语音测试：
 
 ```bash
 adb shell am broadcast -a com.lemonkids.kidmonitor.debug.TRIGGER_ALARM \
   -n com.lemonkids.kidmonitor/.debug.DebugAlarmReceiver \
   --es alarm_id debug-overlay --el revision 1 \
-  --es title '作业时间' --es message '请开始完成数学作业'
+  --es title '作业时间' --es message '请开始完成数学作业' \
+  --es background_music_id gentle_bell_v1 --ez voice_enabled true \
+  --es voice_text '作业时间。请开始完成数学作业'
 
 adb shell am broadcast -a com.lemonkids.kidmonitor.debug.STOP_ALARM \
   -n com.lemonkids.kidmonitor/.debug.DebugAlarmReceiver \
@@ -50,3 +52,5 @@ adb shell am broadcast -a com.lemonkids.kidmonitor.debug.STOP_ALARM \
 ```
 
 当前 HUAWEI BZT3-AL00 会限制后台冷启动 Receiver；首次触发前先打开一次监控端，再执行上述命令。调试完成后务必发送停止广播，或在界面中关闭闹钟。
+
+音频参数均可省略：默认播放 `gentle_bell_v1` 并朗读“标题。提醒内容”。将 `--ez voice_enabled false` 可只测背景音乐。
