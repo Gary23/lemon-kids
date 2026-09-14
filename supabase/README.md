@@ -13,6 +13,10 @@
 | `sql/20260901_task_templates.sql` | 创建家庭任务模板表和 RLS 策略 | 已有 `families`、`users` 表；家长端任务管理上线前执行 |
 | `sql/20260906_category_task_bundles.sql` | 分类任务包：模板与分类多对多、原子排程、同日同模板去重及分类改名同步 | **破坏性**：清空孩子积分/积分流水、任务、任务模板和分类；依赖任务模板与任务历史迁移 |
 | `sql/20260906_remote_alarms.sql` | 远程闹钟表、Pad 下发回执/审计、最小权限 RLS 与监控设备查询 RPC | 已有 `binding_codes`（含 `device_id`）、监控绑定 RPC、`families`、`users`；不清空业务数据 |
+| `sql/20260914_alarm_background_music_storage.sql` | 私有 `alarm-background-music` bucket、运营曲目目录、下架兼容校验、受控短时下载与 Pad 缓存状态 | 已执行远程闹钟及语音/音乐字段迁移；上线前必须以临时项目核验 RLS，且先上传经授权曲目 |
+| `sql/20260914_alarm_family_background_music.sql` | 家庭私有上传 bucket、家庭曲目目录和家长上传/Pad 只读 RLS | 已执行运营背景音乐迁移；须在其后执行，动态曲目校验由本迁移接管 |
+| `sql/20260915_alarm_family_background_music_storage_rls_fix.sql` | 修复家长向家庭私有音乐 bucket 上传时被 Storage RLS 误拒绝 | 已执行两份 20260914 闹钟音乐迁移；执行后用家长端上传验证 |
+| `sql/20260915_alarm_family_background_music_storage_read_rls_fix.sql` | 修复已绑定监控 Pad 的家庭音乐对象读取策略字段遮蔽问题 | 已执行家庭音乐迁移；须在上传修复后执行并由 Pad 试听验证 |
 | `sql/20260904_task_history_and_cancellation.sql` | 将任务删除改为受控取消；保留历史任务，并提供完成/撤销完成的原子 RPC | 已有任务、用户、积分流水及 `20260812_task_calendar_core.sql` 的任务状态/RPC |
 | `sql/20260904_remove_task_rejection.sql` | 移除已完成任务的家长驳回 RPC；保留既有驳回历史及积分流水 | 已执行创建 `reject_task` 的旧脚本 |
 | `sql/20260901_reset_tasks_and_child_points.sql` | 清空全部任务、孩子积分及其积分流水 | 破坏性维护脚本；执行前确认目标环境与备份 |
@@ -59,6 +63,7 @@
 - 移除任务驳回能力前，在目标项目的 SQL Editor 审查并执行 `sql/20260904_remove_task_rejection.sql`。该脚本会删除 `reject_task` RPC，但不会删除既有的已驳回任务和积分流水。
 - 上线分类任务包前，在目标项目的 SQL Editor 审查并执行 `sql/20260906_category_task_bundles.sql`。该脚本按新版规则清空任务域数据（含孩子积分和积分流水），创建分类-任务模板关联、分类改名与原子排程 RPC；确认目标环境允许清空后才能执行。
 - 上线远程闹钟前，先确认 `binding_codes` 中 monitor 绑定成功后会保留 `device_id` 且状态为 `active` 或 `used`，再审查并执行 `sql/20260906_remote_alarms.sql`。执行后在 Dashboard 核对 `alarms` 的 Realtime 复制；当前 Android 正式保障路径仍是启动/解锁立即对账与 15 分钟网络同步，不能把 Realtime 当作唯一投递机制。
+- 家庭自定义音乐按顺序审查并执行 `20260914_alarm_background_music_storage.sql`、`20260914_alarm_family_background_music.sql`、`20260915_alarm_family_background_music_storage_rls_fix.sql` 与 `20260915_alarm_family_background_music_storage_read_rls_fix.sql`。家长端上传 MP3/OGG 到私有 `alarm-family-background-music` 的 `custom/{family_id}/{music_id}/v1/background.{ogg|mp3}`；仅本人家庭家长可写，本家庭已绑定 Pad 可读。不得向客户端配置 service-role 或对象删除策略。
 - 已执行初版求助表脚本的环境，先执行 `sql/20260801_literacy_help_content.sql`，再依次执行两个 `20260802` 认字迁移、`sql/20260804_literacy_learning_items.sql`、`sql/20260804_recognized_characters.sql`、`sql/20260805_literacy_help_request_sources.sql`、`sql/20260806_literacy_help_request_clicked_character.sql` 和 `sql/20260806_literacy_tts_assets.sql`；完成后不要再执行旧评测或旧建表脚本。
 
 ## 后续迁移规范

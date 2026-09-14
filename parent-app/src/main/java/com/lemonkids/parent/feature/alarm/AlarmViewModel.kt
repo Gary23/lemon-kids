@@ -1,13 +1,20 @@
 package com.lemonkids.parent.feature.alarm
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.MonitorDevice
 import com.lemonkids.shared.model.ParentAlarmStatus
 import com.lemonkids.shared.model.RemoteAlarm
+import com.lemonkids.shared.model.AlarmBackgroundMusic
+import com.lemonkids.shared.model.AlarmVoiceText
+import com.lemonkids.shared.model.AlarmBackgroundMusicAsset
+import com.lemonkids.shared.model.FamilyAlarmMusicUpload
+import com.lemonkids.shared.repository.AlarmBackgroundMusicRepository
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.ChildUserInfo
 import com.lemonkids.shared.repository.RemoteAlarmRepository
+import io.github.jan.supabase.exceptions.RestException
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,15 +33,20 @@ data class AlarmUiState(
     val selectedChild: ChildUserInfo? = null,
     val monitorDevices: List<MonitorDevice> = emptyList(),
     val remoteAlarms: List<ParentAlarmStatus> = emptyList(),
+    val musicCatalog: List<AlarmBackgroundMusicAsset> = emptyList(),
+    val musicCatalogError: String? = null,
+    val musicUploadError: String? = null,
     val error: String? = null,
     val isSaving: Boolean = false,
-    val isRefreshingMonitorDevices: Boolean = false
+    val isRefreshingMonitorDevices: Boolean = false,
+    val isUploadingMusic: Boolean = false
 )
 
 @HiltViewModel
 class AlarmViewModel @Inject constructor(
     private val authRepository: AuthRepository,
-    private val remoteAlarmRepository: RemoteAlarmRepository
+    private val remoteAlarmRepository: RemoteAlarmRepository,
+    private val musicRepository: AlarmBackgroundMusicRepository
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AlarmUiState())
     val uiState: StateFlow<AlarmUiState> = _uiState.asStateFlow()
@@ -114,6 +126,7 @@ class AlarmViewModel @Inject constructor(
                         isRefreshingMonitorDevices = false,
                         error = null
                     )
+                    refreshMusicCatalog()
                     alarmObserveJob = viewModelScope.launch {
                         remoteAlarmRepository.observeParentAlarms(child.uid).collect { alarms ->
                             _uiState.value = _uiState.value.copy(remoteAlarms = alarms)
@@ -132,6 +145,87 @@ class AlarmViewModel @Inject constructor(
         }
     }
 
+    private fun refreshMusicCatalog() = viewModelScope.launch {
+        musicRepository.getPublishedMusic().fold(
+            onSuccess = { catalog -> _uiState.value = _uiState.value.copy(musicCatalog = catalog, musicCatalogError = null) },
+            onFailure = {
+                // 保留本进程中上一次成功目录，编辑历史闹钟仍能明确提示下架状态。
+                _uiState.value = _uiState.value.copy(musicCatalogError = "背景音乐目录暂时不可更新")
+            }
+        )
+    }
+
+    /** 家庭自定义音乐只写入专属 bucket；上传成功后立即加入当前可选目录。 */
+    fun uploadFamilyMusic(upload: FamilyAlarmMusicUpload) {
+        val fid = familyId ?: run {
+            _uiState.value = _uiState.value.copy(musicUploadError = "未找到家庭信息，暂时无法上传")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isUploadingMusic = true, musicUploadError = null)
+            musicRepository.uploadFamilyMusic(fid, upload).fold(
+                onSuccess = { asset ->
+                    _uiState.value = _uiState.value.copy(
+                        isUploadingMusic = false,
+                        musicCatalog = (_uiState.value.musicCatalog + asset).distinctBy { it.id },
+                        musicCatalogError = null
+                    )
+                },
+                onFailure = { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isUploadingMusic = false,
+                        musicUploadError = "上传背景音乐失败：${musicUploadFailureMessage(error)}"
+                    )
+                }
+            )
+        }
+    }
+
+    /** Storage SDK 的原始异常会附带 URL 与请求头，其中可能包含 access token，不能透传到 UI。 */
+    private fun musicUploadFailureMessage(error: Throwable): String {
+        val restError = error.findRestException()
+        // 仅记下状态码与服务端错误码，便于通过 adb 定位；绝不写入 SDK 的 message，
+        // 因为其中包含请求 URL 和 Authorization 请求头。
+        Log.w(
+            MUSIC_UPLOAD_LOG_TAG,
+            "家庭背景音乐上传失败：type=${error::class.simpleName}, " +
+                "httpStatus=${restError?.statusCode ?: "none"}, serverError=${restError?.error ?: "none"}"
+        )
+        val message = restError?.let { "${it.error} ${it.description.orEmpty()}" }.orEmpty()
+        return when {
+            message.startsWith("家庭信息无效") ||
+                message.startsWith("请填写音乐名称") ||
+                message.startsWith("仅支持 MP3 或 OGG") ||
+                message.startsWith("音频文件不能超过") ||
+                message.startsWith("音频时长需为") -> message
+            restError?.statusCode == 401 -> "登录已过期，请退出后重新登录再上传"
+            restError?.statusCode == 403 || message.contains("row-level security", ignoreCase = true) ->
+                "服务器未授予家庭音乐上传权限，请执行最新的 Storage 权限修复 SQL 后重试"
+            restError?.statusCode == 413 -> "音频文件不能超过 5 MB"
+            restError?.statusCode == 415 -> "音频格式不受服务器支持，请选择 MP3 或 OGG"
+            restError?.statusCode == 400 -> "服务器拒绝了该音乐信息，请检查 SQL 是否已完整执行"
+            else -> "上传服务暂时不可用，请检查网络后重试"
+        }
+    }
+
+    /** 异常可能被协程或 SDK 包装，最多沿原因链检查六层。 */
+    private fun Throwable.findRestException(): RestException? {
+        var current: Throwable? = this
+        repeat(6) {
+            if (current is RestException) return current
+            current = current?.cause
+        }
+        return null
+    }
+
+    fun reportMusicUploadError(message: String) {
+        _uiState.value = _uiState.value.copy(musicUploadError = message)
+    }
+
+    private companion object {
+        const val MUSIC_UPLOAD_LOG_TAG = "AlarmMusicUpload"
+    }
+
     fun saveRemoteAlarm(
         existing: RemoteAlarm?,
         targetDeviceId: String,
@@ -139,6 +233,8 @@ class AlarmViewModel @Inject constructor(
         endAt: Instant,
         title: String,
         message: String,
+        backgroundMusicId: String,
+        voiceEnabled: Boolean,
         requiresConfirmation: Boolean,
         onSuccess: () -> Unit
     ) {
@@ -164,6 +260,19 @@ class AlarmViewModel @Inject constructor(
             _uiState.value = state.copy(error = "结束日期不能早于开始日期")
             return
         }
+        val isPublished = state.musicCatalog.any { it.id == backgroundMusicId }
+        val keepsUnpublishedExistingMusic = existing?.backgroundMusicId == backgroundMusicId
+        if (!isPublished && !keepsUnpublishedExistingMusic) {
+            _uiState.value = state.copy(error = "所选背景音乐不可用，请重新选择")
+            return
+        }
+        val normalizedTitle = title.trim()
+        val normalizedMessage = message.trim()
+        val voiceText = AlarmVoiceText.build(normalizedTitle, normalizedMessage)
+        if (voiceText.length > AlarmVoiceText.MAX_LENGTH) {
+            _uiState.value = state.copy(error = "播报内容不能超过 ${AlarmVoiceText.MAX_LENGTH} 个字符")
+            return
+        }
         val alarm = (existing ?: RemoteAlarm(
             id = UUID.randomUUID().toString(),
             familyId = fid,
@@ -174,8 +283,11 @@ class AlarmViewModel @Inject constructor(
             triggerAt = triggerAt.toString(),
             endAt = endAt.toString(),
             timezone = ZoneId.systemDefault().id,
-            title = title.trim(),
-            message = message.trim(),
+            title = normalizedTitle,
+            message = normalizedMessage,
+            backgroundMusicId = backgroundMusicId,
+            voiceEnabled = voiceEnabled,
+            voiceText = voiceText,
             enabled = true,
             deletedAt = null,
             requiresConfirmation = requiresConfirmation,

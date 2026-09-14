@@ -24,6 +24,7 @@
 3. 绑定页使用 `type = "monitor"`；同一码通常只绑定一台设备，重绑经共享 `BindingCodeScreen` 的确认路径处理。
 4. 不能以普通 UI 状态替代限时拦截；限制决策必须经过 `AppLimitEvaluator`，并评估服务、无障碍和拦截页的协作。
 5. 闹钟准点触发必须经过 `AlarmScheduler`，不得以 `LimitEnforcementService`、轮询或 `WorkManager` 代替；远程下发必须经过 `RemoteAlarmApplier`，以保留本地持久化和版本幂等。
+6. 闹钟音频由 `AlarmAudioController` 统一管理：已验证的私有背景音乐缓存优先播放，缺失/损坏时回退内置 `gentle_bell_v1`；它与本地 TTS 共用一次 `USAGE_ALARM` 焦点，并以原设定 3 倍的固定响度持续播放。`AlarmReceiver` 到点路径不得联网，下载只可在 `RemoteAlarmSyncCoordinator` 的联网同步期进行；完整约束见 [远程闹钟设计](docs/remote-alarm-design.md)。
 
 ## 修改后验证
 
@@ -35,13 +36,15 @@
 
 ## Debug 本地闹钟触发器
 
-Debug APK 才包含 `DebugAlarmReceiver`；它不读写 Room、不登记系统闹钟，也不向 Supabase 上报。使用固定会话键可立即开始和停止展示测试：
+Debug APK 才包含 `DebugAlarmReceiver`；它不读写 Room、不登记系统闹钟，也不向 Supabase 上报。使用固定会话键可立即开始和停止完整的展示、背景音乐和本地语音测试：
 
 ```bash
 adb shell am broadcast -a com.lemonkids.kidmonitor.debug.TRIGGER_ALARM \
   -n com.lemonkids.kidmonitor/.debug.DebugAlarmReceiver \
   --es alarm_id debug-overlay --el revision 1 \
-  --es title '作业时间' --es message '请开始完成数学作业'
+  --es title '作业时间' --es message '请开始完成数学作业' \
+  --es background_music_id gentle_bell_v1 --ez voice_enabled true \
+  --es voice_text '作业时间。请开始完成数学作业'
 
 adb shell am broadcast -a com.lemonkids.kidmonitor.debug.STOP_ALARM \
   -n com.lemonkids.kidmonitor/.debug.DebugAlarmReceiver \
@@ -49,3 +52,6 @@ adb shell am broadcast -a com.lemonkids.kidmonitor.debug.STOP_ALARM \
 ```
 
 当前 HUAWEI BZT3-AL00 会限制后台冷启动 Receiver；首次触发前先打开一次监控端，再执行上述命令。调试完成后务必发送停止广播，或在界面中关闭闹钟。
+
+音频参数均可省略：默认播放 `gentle_bell_v1` 并朗读“标题。提醒内容”。将 `--ez voice_enabled false` 可只测背景音乐。
+将 `background_music_id` 改为 `seaside_sunrise_v1` 可测试内置的“海边晨光”（海浪、海鸥与明亮和声）。

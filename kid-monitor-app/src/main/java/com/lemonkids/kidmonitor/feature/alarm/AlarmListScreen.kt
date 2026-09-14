@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +36,8 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun AlarmListScreen(viewModel: AlarmListViewModel = hiltViewModel()) {
     val alarms by viewModel.alarms.collectAsStateWithLifecycle()
+    val musicTestStatus by viewModel.musicTestStatus.collectAsStateWithLifecycle()
+    val isTestingMusic by viewModel.isTestingMusic.collectAsStateWithLifecycle()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -58,6 +61,13 @@ fun AlarmListScreen(viewModel: AlarmListViewModel = hiltViewModel()) {
                 }
             }
         }
+        item {
+            DebugMusicTestCard(
+                status = musicTestStatus,
+                isTesting = isTestingMusic,
+                onTest = viewModel::testSeaSaltSunlightMusic
+            )
+        }
         if (alarms.isEmpty()) {
             item {
                 Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
@@ -66,6 +76,27 @@ fun AlarmListScreen(viewModel: AlarmListViewModel = hiltViewModel()) {
             }
         } else {
             items(alarms, key = { it.alarmId }) { alarm -> AlarmListItem(alarm) }
+        }
+    }
+}
+
+/** 只随 Debug APK 提供，实际播放前会重新下载并校验指定家庭音乐。 */
+@Composable
+private fun DebugMusicTestCard(status: String?, isTesting: Boolean, onTest: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("测试入口", fontWeight = FontWeight.Bold)
+            Text(
+                "试听《海盐日光》Remix坚果果冻（背景音乐与语音同时播放）",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(onClick = onTest, enabled = !isTesting) {
+                Text(if (isTesting) "准备中…" else "播放刚上传的音乐")
+            }
+            status?.let {
+                Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

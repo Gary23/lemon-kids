@@ -1,6 +1,7 @@
 package com.lemonkids.shared.di
 
 import com.lemonkids.shared.repository.AppUsageRepository
+import com.lemonkids.shared.repository.AlarmBackgroundMusicRepository
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.CategoryRepository
 import com.lemonkids.shared.repository.DeviceStatusRepository
@@ -13,6 +14,7 @@ import com.lemonkids.shared.repository.RemoteAlarmRepository
 import com.lemonkids.shared.repository.TaskRepository
 import com.lemonkids.shared.repository.TaskTemplateRepository
 import com.lemonkids.shared.repository.impl.SupabaseAppUsageRepository
+import com.lemonkids.shared.repository.impl.SupabaseAlarmBackgroundMusicRepository
 import com.lemonkids.shared.repository.impl.SupabaseAuthRepository
 import com.lemonkids.shared.repository.impl.SupabaseCategoryRepository
 import com.lemonkids.shared.repository.impl.SupabaseDeviceStatusRepository
@@ -32,6 +34,9 @@ import dagger.hilt.components.SingletonComponent
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class SharedRepositoryModule {
+
+    @Binds
+    abstract fun bindAlarmBackgroundMusicRepository(impl: SupabaseAlarmBackgroundMusicRepository): AlarmBackgroundMusicRepository
 
     @Binds
     abstract fun bindAuthRepository(impl: SupabaseAuthRepository): AuthRepository
