@@ -192,14 +192,15 @@ class AlarmAudioController(private val context: Context) {
         fallbackPlayer?.setVolume(volume, volume)
     }
 
-    /** 6 秒的低音量钟声动机，循环播放；不依赖外置媒体或网络。 */
+    /** 6 秒的钟声动机，循环播放；不依赖外置媒体或网络。 */
     private fun gentleBellPcm(): ShortArray = ShortArray(SAMPLE_RATE * LOOP_SECONDS) { index ->
         val second = index.toDouble() / SAMPLE_RATE
         val noteStart = (second / NOTE_PERIOD_SECONDS).toInt() * NOTE_PERIOD_SECONDS
         val elapsed = second - noteStart
         val note = NOTES[((second / NOTE_PERIOD_SECONDS).toInt()) % NOTES.size]
         val envelope = if (elapsed < 0.9) kotlin.math.exp(-3.5 * elapsed) else 0.0
-        (kotlin.math.sin(2.0 * Math.PI * note * elapsed) * envelope * Short.MAX_VALUE * 0.13).toInt().toShort()
+        // AudioTrack 的播放音量已经是 100%，因此提高 PCM 振幅以将背景铃声音量加倍。
+        (kotlin.math.sin(2.0 * Math.PI * note * elapsed) * envelope * Short.MAX_VALUE * 0.26).toInt().toShort()
     }
 
     companion object {
