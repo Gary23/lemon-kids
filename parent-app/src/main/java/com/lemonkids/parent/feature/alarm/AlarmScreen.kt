@@ -50,6 +50,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lemonkids.shared.model.MonitorDevice
 import com.lemonkids.shared.model.ParentAlarmStatus
 import com.lemonkids.shared.model.RemoteAlarm
+import com.lemonkids.shared.model.AlarmBackgroundMusic
+import com.lemonkids.shared.model.AlarmVoiceText
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -147,8 +149,8 @@ fun AlarmScreen(viewModel: AlarmViewModel = hiltViewModel()) {
             monitorDevices = uiState.monitorDevices,
             isSaving = uiState.isSaving,
             onDismiss = { showAlarmDialog = false },
-            onSave = { targetDeviceId, triggerAt, endAt, title, message, requiresConfirmation ->
-                viewModel.saveRemoteAlarm(editingAlarm, targetDeviceId, triggerAt, endAt, title, message, requiresConfirmation) {
+            onSave = { targetDeviceId, triggerAt, endAt, title, message, backgroundMusicId, voiceEnabled, requiresConfirmation ->
+                viewModel.saveRemoteAlarm(editingAlarm, targetDeviceId, triggerAt, endAt, title, message, backgroundMusicId, voiceEnabled, requiresConfirmation) {
                     showAlarmDialog = false
                 }
             }
@@ -233,6 +235,11 @@ private fun AlarmListSection(
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Text(
+                            "${AlarmBackgroundMusic.displayName(alarm.backgroundMusicId)} · ${if (alarm.voiceEnabled) "语音播报" else "仅背景音乐"}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     TextButton(onClick = { onEdit(alarm) }, enabled = !isSaving) { Text("编辑") }
                     Switch(
@@ -294,7 +301,7 @@ private fun RemoteAlarmEditDialog(
     monitorDevices: List<MonitorDevice>,
     isSaving: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, Instant, Instant, String, String, Boolean) -> Unit
+    onSave: (String, Instant, Instant, String, String, String, Boolean, Boolean) -> Unit
 ) {
     val dateFormatter = remember { DateTimeFormatter.ofPattern("yyyy年M月d日") }
     val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
@@ -325,6 +332,10 @@ private fun RemoteAlarmEditDialog(
     var showTimePicker by remember { mutableStateOf(false) }
     var title by remember(existing?.id) { mutableStateOf(existing?.title ?: "起床提醒") }
     var message by remember(existing?.id) { mutableStateOf(existing?.message ?: "") }
+    var backgroundMusicId by remember(existing?.id) {
+        mutableStateOf(AlarmBackgroundMusic.normalized(existing?.backgroundMusicId.orEmpty()))
+    }
+    var voiceEnabled by remember(existing?.id) { mutableStateOf(existing?.voiceEnabled ?: true) }
     var requiresConfirmation by remember(existing?.id) { mutableStateOf(existing?.requiresConfirmation ?: true) }
     // 新建时必须主动选择；编辑时仅回填仍有效的原目标设备。
     var selectedDeviceId by remember(existing?.id, monitorDevices) {
@@ -381,6 +392,29 @@ private fun RemoteAlarmEditDialog(
                 )
                 OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(message, { message = it }, label = { Text("提醒内容（可选）") }, modifier = Modifier.fillMaxWidth())
+                Text("背景音乐", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AlarmBackgroundMusic.supportedIds.forEach { id ->
+                        FilterChip(
+                            selected = backgroundMusicId == id,
+                            onClick = { backgroundMusicId = id },
+                            label = { Text(AlarmBackgroundMusic.displayName(id)) }
+                        )
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("语音播报", fontSize = 14.sp)
+                        Text(
+                            if (voiceEnabled) "${AlarmVoiceText.build(title, message).length}/${AlarmVoiceText.MAX_LENGTH} 字：${AlarmVoiceText.build(title, message).ifBlank { "请填写标题" }}"
+                            else "关闭后仅播放背景音乐和振动",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2
+                        )
+                    }
+                    Switch(checked = voiceEnabled, onCheckedChange = { voiceEnabled = it })
+                }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
                         Text("需要手动确认", fontSize = 14.sp)
@@ -398,7 +432,8 @@ private fun RemoteAlarmEditDialog(
                 when {
                     selectedDeviceId.isBlank() -> error = "请选择要响铃的监控 Pad"
                     end.isBefore(trigger) -> error = "结束日期不能早于开始日期"
-                    else -> onSave(selectedDeviceId, trigger, end, title, message, requiresConfirmation)
+                    AlarmVoiceText.build(title, message).length > AlarmVoiceText.MAX_LENGTH -> error = "播报内容不能超过 ${AlarmVoiceText.MAX_LENGTH} 个字符"
+                    else -> onSave(selectedDeviceId, trigger, end, title, message, backgroundMusicId, voiceEnabled, requiresConfirmation)
                 }
             }) { Text(if (isSaving) "保存中" else "保存") }
         },

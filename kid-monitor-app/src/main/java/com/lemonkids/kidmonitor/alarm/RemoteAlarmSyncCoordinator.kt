@@ -12,6 +12,8 @@ import com.lemonkids.shared.model.AlarmDelivery
 import com.lemonkids.shared.model.AlarmDeliveryStatus
 import com.lemonkids.shared.model.AlarmEvent
 import com.lemonkids.shared.model.AlarmEventType
+import com.lemonkids.shared.model.AlarmBackgroundMusic
+import com.lemonkids.shared.model.AlarmVoiceText
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.RemoteAlarmRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -63,7 +65,9 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
             // 日期范围闹钟只登记范围内下一次尚未来临的每日时刻；不会因前几天未部署而补响。
             if (!shouldRemove && AlarmOccurrence.nextInRange(triggerAt, endAt, alarm.timezone) == null) {
                 remoteAlarmApplier.markMissed(
-                    RemoteAlarmSnapshot(alarm.id, alarm.revision, triggerAt, endAt, alarm.timezone, alarm.title, alarm.message, false, alarm.requiresConfirmation)
+                    RemoteAlarmSnapshot(alarm.id, alarm.revision, triggerAt, endAt, alarm.timezone, alarm.title, alarm.message,
+                        AlarmBackgroundMusic.normalized(alarm.backgroundMusicId), alarm.voiceEnabled,
+                        alarm.voiceText.ifBlank { AlarmVoiceText.limited(alarm.title, alarm.message) }, false, alarm.requiresConfirmation)
                 )
                 report(alarm.id, alarm.revision, AlarmDeliveryStatus.MISSED, AlarmEventType.MISSED, "日期范围内已无待执行提醒")
                 return@forEach
@@ -77,6 +81,9 @@ class RemoteAlarmSyncCoordinator @Inject constructor(
                     timezone = alarm.timezone,
                     title = alarm.title,
                     message = alarm.message,
+                    backgroundMusicId = AlarmBackgroundMusic.normalized(alarm.backgroundMusicId),
+                    voiceEnabled = alarm.voiceEnabled,
+                    voiceText = alarm.voiceText.ifBlank { AlarmVoiceText.limited(alarm.title, alarm.message) },
                     enabled = !shouldRemove,
                     requiresConfirmation = alarm.requiresConfirmation
                 )

@@ -20,6 +20,11 @@ data class RemoteAlarm(
     @SerialName("timezone") val timezone: String = "Asia/Shanghai",
     @SerialName("title") val title: String = "",
     @SerialName("message") val message: String = "",
+    /** 仅接受客户端内置白名单；未知值由 Pad 回退为默认音乐。 */
+    @SerialName("background_music_id") val backgroundMusicId: String = AlarmBackgroundMusic.DEFAULT_ID,
+    @SerialName("voice_enabled") val voiceEnabled: Boolean = true,
+    /** 保存时冻结的播报文本，避免标题/备注更新竞态下朗读到旧组合。 */
+    @SerialName("voice_text") val voiceText: String = "",
     @SerialName("enabled") val enabled: Boolean = true,
     @SerialName("requires_confirmation") val requiresConfirmation: Boolean = true,
     /** 非空表示已从家长端删除；Pad 仍会接收该版本以撤销离线时已登记的系统闹钟。 */
@@ -27,6 +32,32 @@ data class RemoteAlarm(
     @SerialName("created_at") val createdAt: String = "",
     @SerialName("updated_at") val updatedAt: String = ""
 )
+
+/** 首期只提供一首应用内置的轻柔钟声，服务端迁移会以同一白名单约束写入值。 */
+object AlarmBackgroundMusic {
+    const val GENTLE_BELL_V1 = "gentle_bell_v1"
+    const val DEFAULT_ID = GENTLE_BELL_V1
+    val supportedIds = setOf(GENTLE_BELL_V1)
+
+    fun normalized(id: String): String = id.takeIf { it in supportedIds } ?: DEFAULT_ID
+    fun displayName(id: String): String = when (normalized(id)) {
+        GENTLE_BELL_V1 -> "轻柔钟声"
+        else -> "轻柔钟声"
+    }
+}
+
+/** 腾讯语音尚未就绪时，Pad 会使用同一份规范化文本走 Android 本地 TTS 兜底。 */
+object AlarmVoiceText {
+    const val MAX_LENGTH = 200
+
+    fun build(title: String, message: String): String = listOf(title.trim(), message.trim())
+        .filter { it.isNotEmpty() }
+        .joinToString("。")
+        .replace(Regex("\\s+"), " ")
+
+    /** 仅用于历史数据或客户端异常数据的安全降级；新建/编辑必须先由 UI 明确校验。 */
+    fun limited(title: String, message: String): String = build(title, message).take(MAX_LENGTH)
+}
 
 @Serializable
 data class AlarmDelivery(

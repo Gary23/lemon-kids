@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.MonitorDevice
 import com.lemonkids.shared.model.ParentAlarmStatus
 import com.lemonkids.shared.model.RemoteAlarm
+import com.lemonkids.shared.model.AlarmBackgroundMusic
+import com.lemonkids.shared.model.AlarmVoiceText
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.ChildUserInfo
 import com.lemonkids.shared.repository.RemoteAlarmRepository
@@ -139,6 +141,8 @@ class AlarmViewModel @Inject constructor(
         endAt: Instant,
         title: String,
         message: String,
+        backgroundMusicId: String,
+        voiceEnabled: Boolean,
         requiresConfirmation: Boolean,
         onSuccess: () -> Unit
     ) {
@@ -164,6 +168,17 @@ class AlarmViewModel @Inject constructor(
             _uiState.value = state.copy(error = "结束日期不能早于开始日期")
             return
         }
+        if (backgroundMusicId !in AlarmBackgroundMusic.supportedIds) {
+            _uiState.value = state.copy(error = "所选背景音乐不可用，请重新选择")
+            return
+        }
+        val normalizedTitle = title.trim()
+        val normalizedMessage = message.trim()
+        val voiceText = AlarmVoiceText.build(normalizedTitle, normalizedMessage)
+        if (voiceText.length > AlarmVoiceText.MAX_LENGTH) {
+            _uiState.value = state.copy(error = "播报内容不能超过 ${AlarmVoiceText.MAX_LENGTH} 个字符")
+            return
+        }
         val alarm = (existing ?: RemoteAlarm(
             id = UUID.randomUUID().toString(),
             familyId = fid,
@@ -174,8 +189,11 @@ class AlarmViewModel @Inject constructor(
             triggerAt = triggerAt.toString(),
             endAt = endAt.toString(),
             timezone = ZoneId.systemDefault().id,
-            title = title.trim(),
-            message = message.trim(),
+            title = normalizedTitle,
+            message = normalizedMessage,
+            backgroundMusicId = AlarmBackgroundMusic.normalized(backgroundMusicId),
+            voiceEnabled = voiceEnabled,
+            voiceText = voiceText,
             enabled = true,
             deletedAt = null,
             requiresConfirmation = requiresConfirmation,

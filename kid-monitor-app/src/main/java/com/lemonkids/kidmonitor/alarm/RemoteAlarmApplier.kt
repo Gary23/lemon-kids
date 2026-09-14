@@ -12,6 +12,9 @@ data class RemoteAlarmSnapshot(
     val timezone: String,
     val title: String,
     val message: String,
+    val backgroundMusicId: String,
+    val voiceEnabled: Boolean,
+    val voiceText: String,
     val enabled: Boolean,
     val requiresConfirmation: Boolean
 )
@@ -40,6 +43,9 @@ class RemoteAlarmApplier @Inject constructor(
             timezone = snapshot.timezone,
             title = snapshot.title,
             message = snapshot.message,
+            backgroundMusicId = snapshot.backgroundMusicId,
+            voiceEnabled = snapshot.voiceEnabled,
+            voiceText = snapshot.voiceText,
             enabled = snapshot.enabled && nextTriggerAtMillis != null,
             requiresConfirmation = snapshot.requiresConfirmation
         )
@@ -62,6 +68,9 @@ class RemoteAlarmApplier @Inject constructor(
                 alarmId = snapshot.alarmId, revision = snapshot.revision,
                 triggerAtMillis = snapshot.triggerAtMillis, endAtMillis = snapshot.endAtMillis, timezone = snapshot.timezone,
                 title = snapshot.title, message = snapshot.message,
+                backgroundMusicId = snapshot.backgroundMusicId,
+                voiceEnabled = snapshot.voiceEnabled,
+                voiceText = snapshot.voiceText,
                 enabled = false, requiresConfirmation = snapshot.requiresConfirmation, state = DeviceAlarmEntity.STATE_DISMISSED
             )
         )

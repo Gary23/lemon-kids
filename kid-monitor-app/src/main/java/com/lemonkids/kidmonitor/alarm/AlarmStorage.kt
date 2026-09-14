@@ -31,6 +31,9 @@ data class DeviceAlarmEntity(
     val timezone: String,
     val title: String,
     val message: String,
+    val backgroundMusicId: String = "gentle_bell_v1",
+    val voiceEnabled: Boolean = true,
+    val voiceText: String = "",
     val enabled: Boolean,
     val requiresConfirmation: Boolean,
     val state: String = STATE_SCHEDULED,
@@ -66,7 +69,7 @@ interface AlarmDao {
     fun observeEffectiveAlarms(nowMillis: Long = System.currentTimeMillis()): Flow<List<DeviceAlarmEntity>>
 }
 
-@Database(entities = [DeviceAlarmEntity::class], version = 3, exportSchema = false)
+@Database(entities = [DeviceAlarmEntity::class], version = 4, exportSchema = false)
 abstract class AlarmDatabase : RoomDatabase() {
     abstract fun alarmDao(): AlarmDao
 }
@@ -78,7 +81,7 @@ object AlarmStorageModule {
     @Singleton
     fun provideAlarmDatabase(@ApplicationContext context: Context): AlarmDatabase =
         Room.databaseBuilder(context, AlarmDatabase::class.java, "lemon_alarm.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .build()
 
     @Provides
@@ -96,6 +99,14 @@ object AlarmStorageModule {
         override fun migrate(database: SupportSQLiteDatabase) {
             // 旧记录没有时区；远程闹钟此前已按中国时区创建，使用该值可保持原有触发时刻。
             database.execSQL("ALTER TABLE device_alarms ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai'")
+        }
+    }
+
+    private val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE device_alarms ADD COLUMN backgroundMusicId TEXT NOT NULL DEFAULT 'gentle_bell_v1'")
+            database.execSQL("ALTER TABLE device_alarms ADD COLUMN voiceEnabled INTEGER NOT NULL DEFAULT 1")
+            database.execSQL("ALTER TABLE device_alarms ADD COLUMN voiceText TEXT NOT NULL DEFAULT ''")
         }
     }
 }

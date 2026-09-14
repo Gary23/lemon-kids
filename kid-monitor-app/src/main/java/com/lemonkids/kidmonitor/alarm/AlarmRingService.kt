@@ -10,11 +10,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-import android.media.MediaPlayer
-import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -51,9 +46,8 @@ class AlarmRingService : Service() {
     private val debugSessions = mutableSetOf<AlarmSession>()
     private lateinit var presentationCoordinator: AlarmPresentationCoordinator
     private var receiverRegistered = false
-    private var mediaPlayer: MediaPlayer? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var audioFocusRequest: AudioFocusRequest? = null
+    private lateinit var audioController: AlarmAudioController
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -69,6 +63,7 @@ class AlarmRingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        audioController = AlarmAudioController(applicationContext)
         presentationCoordinator = AlarmPresentationCoordinator(
             isKeyguardLocked = { getSystemService(KeyguardManager::class.java).isKeyguardLocked },
             overlay = AlarmOverlayController(applicationContext),
@@ -152,6 +147,10 @@ class AlarmRingService : Service() {
             mainHandler.post {
                 if (active.containsKey(initial.session)) {
                     active[initial.session] = presentation
+                    audioController.updateAndSpeak(
+                        AlarmAudioController.Config(alarm?.backgroundMusicId ?: "gentle_bell_v1", alarm?.voiceEnabled ?: true,
+                            alarm?.voiceText?.ifBlank { "${presentation.title}。${presentation.message}" } ?: "${presentation.title}。${presentation.message}")
+                    )
                     presentationCoordinator.onAlarmUpdated(presentation)
                     refreshNotifications()
                 }
@@ -200,26 +199,15 @@ class AlarmRingService : Service() {
     }
 
     private fun startAlerting() {
-        val audioManager = getSystemService(AudioManager::class.java)
-        val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE).setAudioAttributes(attributes).build()
-            audioManager.requestAudioFocus(audioFocusRequest!!)
-        } else @Suppress("DEPRECATION") audioManager.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-        val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        mediaPlayer = runCatching { MediaPlayer().apply { setAudioAttributes(attributes); setDataSource(this@AlarmRingService, sound); isLooping = true; prepare(); start() } }.getOrNull()
+        audioController.start()
         val vibrator = getSystemService(Vibrator::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 700, 450), 0))
         else @Suppress("DEPRECATION") vibrator.vibrate(longArrayOf(0, 700, 450), 0)
     }
 
     private fun stopAlerting() {
-        mediaPlayer?.let { runCatching { it.stop() } }; mediaPlayer?.release(); mediaPlayer = null
+        audioController.stop()
         getSystemService(Vibrator::class.java).cancel()
-        val audioManager = getSystemService(AudioManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) audioFocusRequest?.let(audioManager::abandonAudioFocusRequest)
-        else @Suppress("DEPRECATION") audioManager.abandonAudioFocus(null)
-        audioFocusRequest = null
         wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null
     }
 
