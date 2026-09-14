@@ -24,7 +24,7 @@
 3. 绑定页使用 `type = "monitor"`；同一码通常只绑定一台设备，重绑经共享 `BindingCodeScreen` 的确认路径处理。
 4. 不能以普通 UI 状态替代限时拦截；限制决策必须经过 `AppLimitEvaluator`，并评估服务、无障碍和拦截页的协作。
 5. 闹钟准点触发必须经过 `AlarmScheduler`，不得以 `LimitEnforcementService`、轮询或 `WorkManager` 代替；远程下发必须经过 `RemoteAlarmApplier`，以保留本地持久化和版本幂等。
-6. 闹钟音频由 `AlarmAudioController` 统一管理：背景音乐与本地 TTS 共用一次 `USAGE_ALARM` 焦点，语音播放时背景压低，触发路径不得联网。语音+音乐的实现进度见 [设计与待办](docs/remote-alarm-voice-music-design-todolist.md)。
+6. 闹钟音频由 `AlarmAudioController` 统一管理：背景音乐与本地 TTS 共用一次 `USAGE_ALARM` 焦点，语音播放时背景压低，触发路径不得联网。语音+音乐的实现进度见 [设计与待办](docs/remote-alarm-voice-music-design-todolist.md)，真实背景音乐的 Supabase Storage 改造见 [设计与待办](docs/remote-alarm-background-music-supabase-storage-design-todolist.md)。
 
 ## 修改后验证
 
