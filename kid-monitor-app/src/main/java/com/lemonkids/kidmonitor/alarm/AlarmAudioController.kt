@@ -211,7 +211,7 @@ class AlarmAudioController(private val context: Context) {
         private val NOTES = doubleArrayOf(523.25, 659.25, 783.99, 659.25)
         private const val MUSIC_VOLUME = 1f
         private const val DUCKED_VOLUME = .25f
-        private const val VOICE_REPEAT_INTERVAL_MILLIS = 20_000L
+        private const val VOICE_REPEAT_INTERVAL_MILLIS = 6_000L
         private const val UTTERANCE_ID = "lemon-alarm-voice"
     }
 }
