@@ -93,6 +93,11 @@ test('家长通过快照保留补星前状态，并且必须与当前字词句�
     sentences: []
   }, character, 'recognized');
   assert.deepEqual(recognizedSnapshot.sentences, []);
+  const sentenceHiddenSnapshot = _private.normalizeParentPassStarSnapshot({
+    ...snapshot,
+    sentences: []
+  }, character);
+  assert.deepEqual(sentenceHiddenSnapshot.sentences, []);
 });
 
 test('家长通过审计表仅由云函数写入，客户端仅可读取自己的记录', () => {

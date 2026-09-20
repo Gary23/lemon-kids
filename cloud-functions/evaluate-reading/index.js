@@ -1007,7 +1007,11 @@ function normalizeParentPassStarSnapshot(value, character, contentSource = 'task
     }
     return { text: expectedText, earned: state.earned, required: state.required };
   };
-  const normalizeExamples = (states, examples, label) => {
+  const normalizeExamples = (states, examples, label, allowOmitted = false) => {
+    // 星级快照描述的是弹层中实际展示的教学项。部分历史任务和已认识字
+    // 会保留旧句子数据，但复习弹层只展示字词；兼容客户端明确传来的空数组，
+    // 不能因此阻塞家长的“通过”操作。
+    if (allowOmitted && Array.isArray(states) && states.length === 0) return [];
     if (!Array.isArray(states) || states.length !== examples.length) {
       throw new HttpError(400, `${label}星级快照数量与当前教学内容不一致`);
     }
@@ -1021,7 +1025,10 @@ function normalizeParentPassStarSnapshot(value, character, contentSource = 'task
     sentences: normalizeExamples(
       value.sentences,
       contentSource === 'recognized' ? [] : examplesFromJson(character.sentences),
-      '句'
+      '句',
+      // 旧版或历史卡片可能没有将句子渲染到当前弹层；空数组准确表示没有
+      // 可补星的句子。非空时仍逐项校验文本和数量，防止混入其它字的状态。
+      true
     )
   };
 }
