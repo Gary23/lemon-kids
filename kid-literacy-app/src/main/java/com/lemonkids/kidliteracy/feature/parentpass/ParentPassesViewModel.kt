@@ -33,9 +33,11 @@ data class ParentPassStarSnapshot(
 data class ParentPassRecord(
     val id: String,
     @SerialName("character") val character: String,
+    @SerialName("literacy_character_id") val literacyCharacterId: String,
     @SerialName("content_source") val contentSource: String,
     @SerialName("star_snapshot") val starSnapshot: ParentPassStarSnapshot,
-    @SerialName("passed_at") val passedAt: String
+    @SerialName("passed_at") val passedAt: String,
+    @SerialName("undone_at") val undoneAt: String? = null
 )
 
 data class ParentPassesUiState(
@@ -70,5 +72,14 @@ class ParentPassesViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    /** 删除成功后立即移除本地项，避免额外请求造成列表闪动。 */
+    fun removeRecord(recordId: String) {
+        _uiState.value = _uiState.value.copy(records = _uiState.value.records.filterNot { it.id == recordId })
+    }
+
+    fun clearRecords() {
+        _uiState.value = _uiState.value.copy(records = emptyList())
     }
 }

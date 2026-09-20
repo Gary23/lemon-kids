@@ -91,6 +91,12 @@ data class SyncedPracticeProgress(
     ).joinToString("\u001F")
 }
 
+/** 云端确认的“撤销通过”快照行；需要在普通最大值合并前精确应用。 */
+data class PracticeProgressSyncResult(
+    val progress: List<SyncedPracticeProgress>,
+    val resets: List<SyncedPracticeProgress>
+)
+
 data class GeneratedLiteracyTask(
     val character: String,
     val words: List<GeneratedLiteracyExample>,
@@ -230,11 +236,10 @@ class ReadingEvaluationViewModel @Inject constructor(
     }
 
     /** 首页加载时读取同一绑定码在其他设备产生的当天朗读进度。 */
-    suspend fun loadPracticeProgress(): Result<List<SyncedPracticeProgress>> = runCatching {
-        val progress = request("""{"action":"get_literacy_practice_progress"}""")
-            .getValue("progress")
-            .jsonArray
-        progress.map { item ->
+    suspend fun loadPracticeProgress(): Result<PracticeProgressSyncResult> = runCatching {
+        val response = request("""{"action":"get_literacy_practice_progress"}""")
+        fun parseProgress(name: String): List<SyncedPracticeProgress> = (response[name]?.jsonArray ?: emptyList())
+            .map { item ->
             val value = item.jsonObject
             SyncedPracticeProgress(
                 contentSource = ReadingContentSource.entries.firstOrNull {
@@ -246,6 +251,10 @@ class ReadingEvaluationViewModel @Inject constructor(
                 correctReadings = value.requiredString("correctReadings").toInt()
             )
         }
+        PracticeProgressSyncResult(
+            progress = parseProgress("progress"),
+            resets = parseProgress("resets")
+        )
     }
 
     /**
@@ -271,6 +280,24 @@ class ReadingEvaluationViewModel @Inject constructor(
         request(
             """{"action":"record_parent_pass","literacyCharacterId":"${literacyCharacterId.jsonEscape()}","contentSource":"${contentSource.wireValue}","starSnapshot":$serializedSnapshot}"""
         )
+        Unit
+    }
+
+    /** 服务端会按记录的补星前快照恢复当天共享进度，并保留审计记录的撤销标记。 */
+    suspend fun undoParentPass(recordId: String): Result<Unit> = runCatching {
+        request("""{"action":"undo_parent_pass","recordId":"${recordId.jsonEscape()}"}""")
+        Unit
+    }
+
+    /** 通过记录仅能由云函数按当前登录孩子的身份删除，客户端不直接写审计表。 */
+    suspend fun deleteParentPass(recordId: String): Result<Unit> = runCatching {
+        request("""{"action":"delete_parent_pass","recordId":"${recordId.jsonEscape()}"}""")
+        Unit
+    }
+
+    /** 清空也由云函数按当前登录孩子的 child_id 限定，绝不会影响同家庭的其它孩子。 */
+    suspend fun clearParentPassRecords(): Result<Unit> = runCatching {
+        request("""{"action":"clear_parent_pass_records"}""")
         Unit
     }
 

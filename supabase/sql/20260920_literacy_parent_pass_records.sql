@@ -11,8 +11,14 @@ create table if not exists public.literacy_parent_pass_records (
     character text not null check (char_length(btrim(character)) = 1),
     -- { character: {text, earned, required}, words: [...], sentences: [...] }，保存点击前的星级。
     star_snapshot jsonb not null check (jsonb_typeof(star_snapshot) = 'object'),
-    passed_at timestamptz not null default now()
+    passed_at timestamptz not null default now(),
+    -- 撤销不删除审计证据：保留原始通过记录，并标识其星级已按快照恢复。
+    undone_at timestamptz
 );
+
+-- 兼容已执行过首版迁移的环境。
+alter table public.literacy_parent_pass_records
+    add column if not exists undone_at timestamptz;
 
 create index if not exists literacy_parent_pass_records_child_passed_idx
     on public.literacy_parent_pass_records (child_id, passed_at desc);

@@ -98,6 +98,11 @@ test('家长通过快照保留补星前状态，并且必须与当前字词句�
     sentences: []
   }, character);
   assert.deepEqual(sentenceHiddenSnapshot.sentences, []);
+  const sentenceOmittedSnapshot = _private.normalizeParentPassStarSnapshot({
+    character: snapshot.character,
+    words: snapshot.words
+  }, character);
+  assert.deepEqual(sentenceOmittedSnapshot.sentences, []);
 });
 
 test('家长通过审计表仅由云函数写入，客户端仅可读取自己的记录', () => {
@@ -110,6 +115,30 @@ test('家长通过审计表仅由云函数写入，客户端仅可读取自己�
   assert.match(source, /literacy_parent_pass_records/);
   assert.match(migration, /for select using \(child_id = auth\.uid\(\)\)/i);
   assert.doesNotMatch(migration, /for insert/i);
+});
+
+test('家长通过记录的删除和清空均由云函数按当前孩子范围执行', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
+  assert.match(source, /body\.action === 'delete_parent_pass'/);
+  assert.match(source, /body\.action === 'clear_parent_pass_records'/);
+  assert.match(source, /literacy_parent_pass_records\?id=eq\.\$\{encodeURIComponent\(recordId\)\}&child_id=eq\.\$\{encodeURIComponent\(childId\)\}/);
+  assert.match(source, /literacy_parent_pass_records\?child_id=eq\.\$\{encodeURIComponent\(childId\)\}/);
+  assert.equal(_private.requireUuid('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 'recordId'), '6ba7b810-9dad-11d1-80b4-00c04fd430c8');
+  assert.throws(() => _private.requireUuid('not-a-uuid', 'recordId'), /有效的 UUID/);
+});
+
+test('家长通过会同步补满星级，撤销会按快照恢复并保留撤销标记', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
+  const migration = fs.readFileSync(
+    path.resolve(__dirname, '../../../supabase/sql/20260920_literacy_parent_pass_records.sql'),
+    'utf8'
+  );
+  assert.match(source, /async function replacePracticeProgress/);
+  assert.match(source, /parentPassProgressEntries\(childId, target, snapshot, true\)/);
+  assert.match(source, /body\.action === 'undo_parent_pass'/);
+  assert.match(source, /parentPassProgressEntries\(childId, target, snapshot, false\)/);
+  assert.match(source, /loadParentPassProgressResets/);
+  assert.match(migration, /undone_at timestamptz/i);
 });
 
 test('人工音素仅允许腾讯数字拼音格式', () => {
