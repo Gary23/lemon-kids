@@ -12,17 +12,34 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+/**
+ * 柔和、高明度的配色让儿童在平板上长时间使用时更舒适：
+ * 蜜桃色用于主操作，薰衣草和薄荷绿作为信息层级，不再使用高对比霓虹深色界面。
+ */
 private val Colors = lightColorScheme(
-    primary = Color(0xFFE77CA8), onPrimary = Color.White,
-    primaryContainer = Color(0xFFFFD9E7), secondary = Color(0xFF8D78C9),
-    secondaryContainer = Color(0xFFE7DEFF), tertiary = Color(0xFF73BFA3),
-    background = Color(0xFFFFF9FB), surface = Color.White, surfaceVariant = Color(0xFFF9EEF3)
+    primary = Color(0xFFB64F79), onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFFFD9E5), onPrimaryContainer = Color(0xFF3E0020),
+    secondary = Color(0xFF5A648D), onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE0E5FF), onSecondaryContainer = Color(0xFF121B43),
+    tertiary = Color(0xFF386B61), onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFBDEFE1), onTertiaryContainer = Color(0xFF00201A),
+    background = Color(0xFFFFF8F4), onBackground = Color(0xFF24191D),
+    surface = Color(0xFFFFFBFF), onSurface = Color(0xFF24191D),
+    surfaceVariant = Color(0xFFF4E8EC), onSurfaceVariant = Color(0xFF53434A),
+    outline = Color(0xFF85737A),
+    error = Color(0xFFBA1A1A), onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFDAD6), onErrorContainer = Color(0xFF410002)
 )
-private val Shapes = Shapes(small = RoundedCornerShape(12.dp), medium = RoundedCornerShape(20.dp), large = RoundedCornerShape(28.dp))
+private val Shapes = Shapes(
+    small = RoundedCornerShape(14.dp),
+    medium = RoundedCornerShape(22.dp),
+    large = RoundedCornerShape(30.dp),
+)
 private val Type = Typography(
-    headlineLarge = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
-    headlineMedium = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold),
-    titleLarge = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
-    bodyLarge = TextStyle(fontSize = 15.sp)
+    headlineLarge = TextStyle(fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 38.sp),
+    headlineMedium = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold, lineHeight = 31.sp),
+    titleLarge = TextStyle(fontSize = 19.sp, fontWeight = FontWeight.Bold),
+    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
 )
 @Composable fun FamilyVideoTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = Colors, typography = Type, shapes = Shapes, content = content)

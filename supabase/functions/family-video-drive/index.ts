@@ -6,6 +6,9 @@ const SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const PAN_CLIENT_ID = requiredEnv("PAN123_CLIENT_ID");
 const PAN_CLIENT_SECRET = requiredEnv("PAN123_CLIENT_SECRET");
 const PAN_API = "https://open-api.123pan.com";
+const PAN_REQUEST_TIMEOUT_MS = 20_000;
+const PAN_REQUEST_RETRIES = 1;
+const MEDIA_UPSERT_BATCH_SIZE = 100;
 const VIDEO_EXTENSION = /\.(mp4|mkv|mov|m4v|webm|avi|ts)$/i;
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,6 +18,9 @@ const corsHeaders = {
 };
 
 let cachedToken: { value: string; expiresAt: number } | undefined;
+// 一个冷启动窗口内可能同时收到“播放”和“重试”请求。把授权请求合并，避免它们
+// 分别占用 123 云盘连接并同时超时；token 只留在当前 Edge 实例内存中。
+let pendingToken: Promise<string> | undefined;
 
 type Json = Record<string, unknown>;
 type DriveFile = {
@@ -41,8 +47,7 @@ Deno.serve(async (request) => {
       case "connection_status": data = await connectionStatus(context.familyId); break;
       case "connect": data = await connectDrive(context.familyId); break;
       case "browse": data = await browse(payload); break;
-      case "select_root": data = await selectRoot(context.familyId, payload); break;
-      case "sync": data = await syncLibrary(context.familyId, payload); break;
+      case "sync_collection": data = await syncCollection(context.familyId, payload); break;
       case "playback_url": data = await playbackUrl(context.familyId, payload); break;
       default: throw new HttpError("不支持的云盘操作", 400);
     }
@@ -88,14 +93,34 @@ async function supabase<T>(path: string, init: RequestInit = {}): Promise<T> {
   headers.set("Authorization", `Bearer ${SERVICE_ROLE_KEY}`);
   headers.set("Content-Type", "application/json");
   const result = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { ...init, headers });
-  if (!result.ok) throw new HttpError(`数据库操作失败：${await result.text()}`, 500);
-  if (result.status === 204) return undefined as T;
-  return await result.json() as T;
+  const body = await result.text();
+  if (!result.ok) throw new HttpError(`数据库操作失败：${body}`, 500);
+  // PostgREST 在未指定 return=representation 的新增/更新请求中通常返回 201 和空响应体，
+  // 而不是 204。空响应是成功结果，不能继续调用 JSON.parse。
+  if (!body.trim()) return undefined as T;
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    throw new HttpError("数据库返回格式错误", 500);
+  }
 }
 
 async function driveToken(): Promise<string> {
   if (cachedToken && Date.now() < cachedToken.expiresAt - 60_000) return cachedToken.value;
-  const result = await fetch(`${PAN_API}/api/v1/access_token`, {
+  if (pendingToken) return pendingToken;
+
+  const tokenRequest = requestDriveToken();
+  pendingToken = tokenRequest;
+  try {
+    return await tokenRequest;
+  } finally {
+    // 只清理自己的请求，不能误清理后续已发起的刷新请求。
+    if (pendingToken === tokenRequest) pendingToken = undefined;
+  }
+}
+
+async function requestDriveToken(): Promise<string> {
+  const result = await panFetch(`${PAN_API}/api/v1/access_token`, {
     method: "POST",
     headers: { platform: "open_platform", "Content-Type": "application/json" },
     body: JSON.stringify({ clientID: PAN_CLIENT_ID, clientSecret: PAN_CLIENT_SECRET }),
@@ -114,7 +139,7 @@ async function driveToken(): Promise<string> {
 async function pan(path: string, query: Record<string, string> = {}): Promise<Json> {
   const url = new URL(`${PAN_API}${path}`);
   Object.entries(query).forEach(([key, value]) => url.searchParams.set(key, value));
-  const result = await fetch(url, {
+  const result = await panFetch(url, {
     headers: { authorization: `Bearer ${await driveToken()}`, platform: "open_platform" },
   });
   const body = await result.json() as Json;
@@ -125,16 +150,47 @@ async function pan(path: string, query: Record<string, string> = {}): Promise<Js
   return body;
 }
 
+/** 123 云盘网络异常时必须返回错误，避免 Edge Function 和目录选择界面无限等待。 */
+async function panFetch(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; attempt <= PAN_REQUEST_RETRIES; attempt += 1) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, PAN_REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(input, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (!timedOut || attempt === PAN_REQUEST_RETRIES) {
+        if (timedOut) throw new HttpError("123 云盘响应超时，请稍后重试", 504);
+        throw error;
+      }
+      // 123 OpenAPI 偶发长连接超时；读操作重试一次，不会重复写入任何云盘数据。
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new HttpError("123 云盘响应超时，请稍后重试", 504);
+}
+
 async function listFolder(parentFileId: string): Promise<DriveFile[]> {
   const files: DriveFile[] = [];
   let lastFileId = "0";
-  do {
+  const seenCursors = new Set<string>();
+  while (true) {
+    // 123 云盘在末页可能回传与请求相同的游标；若继续请求会无限循环，导致客户端始终显示处理中。
+    if (seenCursors.has(lastFileId)) break;
+    seenCursors.add(lastFileId);
     const body = await pan("/api/v2/file/list", { parentFileId, limit: "100", lastFileId, trashed: "false", searchMode: "", searchData: "" });
     const data = object(body.data);
     const page = Array.isArray(data.fileList) ? data.fileList as DriveFile[] : [];
     files.push(...page.filter((file) => Number(file.trashed ?? 0) === 0));
-    lastFileId = text(data.lastFileId) ?? "-1";
-  } while (lastFileId !== "-1");
+    const nextCursor = text(data.lastFileId);
+    if (!nextCursor || nextCursor === "-1" || seenCursors.has(nextCursor)) break;
+    lastFileId = nextCursor;
+  }
   return files;
 }
 
@@ -164,69 +220,69 @@ async function browse(payload: Json): Promise<Json> {
   return { folders: folders.sort((a, b) => naturalCompare(a.name, b.name)) };
 }
 
-async function selectRoot(familyId: string, payload: Json): Promise<Json> {
-  const folderId = text(payload.folderId);
-  const folderPath = text(payload.folderPath);
-  if (!folderId || !folderPath) throw new HttpError("请选择一个云盘目录", 400);
-  const rows = await supabase<Json[]>("video_drive_connections?on_conflict=family_id", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-    body: JSON.stringify({ family_id: familyId, provider: "123pan", sync_root_folder_id: folderId, sync_root_path: folderPath, authorization_status: "connected", updated_at: new Date().toISOString() }),
-  });
-  return rows[0] ?? { authorization_status: "connected", sync_root_folder_id: folderId, sync_root_path: folderPath };
-}
+/**
+ * 手工创建的每个条目只读取其绑定目录的直接视频：不会递归，也不会自动生成子剧集。
+ * 子剧集由 App 写入 parent_id 后分别绑定目录并调用本接口，因此父/子内容永不重复。
+ */
+async function syncCollection(familyId: string, payload: Json): Promise<Json> {
+  const collectionId = text(payload.collectionId);
+  if (!collectionId) throw new HttpError("缺少媒体条目", 400);
+  const collections = await supabase<Json[]>(`video_collections?id=eq.${encodeURIComponent(collectionId)}&family_id=eq.${encodeURIComponent(familyId)}&select=id,drive_folder_id`);
+  const collection = collections[0];
+  const folderId = text(collection?.drive_folder_id);
+  if (!folderId) throw new HttpError("该条目尚未绑定云盘目录", 400);
 
-async function syncLibrary(familyId: string, payload: Json): Promise<Json> {
-  const connection = await connectionStatus(familyId);
-  const rootFolderId = text(connection.sync_root_folder_id);
-  if (!rootFolderId || rootFolderId !== text(payload.rootFolderId)) throw new HttpError("请先选择同步目录", 400);
-  const rootPath = text(connection.sync_root_path) ?? "123 云盘";
-  const roots = (await listFolder(rootFolderId)).filter((item) => Number(item.type) === 1);
-  const current = await supabase<Json[]>(`video_collections?family_id=eq.${encodeURIComponent(familyId)}&select=id,drive_folder_id`);
-  const currentByDriveId = new Map(current.map((item) => [text(item.drive_folder_id), item]));
-  let added = 0;
-  let updated = 0;
-
-  for (const root of roots) {
-    const folderId = String(root.fileId);
-    if (currentByDriveId.has(folderId)) updated += 1; else added += 1;
-    const collections = await supabase<Json[]>("video_collections?on_conflict=family_id,drive_folder_id", {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-      body: JSON.stringify({ family_id: familyId, drive_folder_id: folderId, name: root.filename, sync_status: "ready", last_synced_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+  try {
+    const videos = (await listFolder(folderId))
+      .filter((entry) => Number(entry.type) !== 1 && VIDEO_EXTENSION.test(entry.filename))
+      .map((entry) => ({ id: String(entry.fileId), name: entry.filename, path: entry.filename, size: typeof entry.size === "number" ? entry.size : null }))
+      .sort((left, right) => naturalCompare(left.name, right.name));
+    await replaceMedia(collectionId, videos);
+    const now = new Date().toISOString();
+    await supabase(`video_collections?id=eq.${encodeURIComponent(collectionId)}`, {
+      method: "PATCH", body: JSON.stringify({ sync_status: "ready", last_synced_at: now, updated_at: now }),
     });
-    const collectionId = text(collections[0]?.id);
-    if (!collectionId) throw new HttpError("无法保存同步目录", 500);
-    const videos = await walkVideos(folderId, `${rootPath} / ${root.filename}`);
-    const ordered = videos.sort((a, b) => naturalCompare(a.name, b.name));
-    for (const [index, video] of ordered.entries()) {
-      await supabase("video_media?on_conflict=collection_id,drive_file_id", {
-        method: "POST",
-        headers: { Prefer: "resolution=merge-duplicates" },
-        body: JSON.stringify({ collection_id: collectionId, drive_file_id: video.id, name: video.name, path: video.path, size_bytes: video.size, sort_order: index, updated_at: new Date().toISOString() }),
-      });
-    }
+    await supabase("video_sync_logs", {
+      method: "POST", body: JSON.stringify({ family_id: familyId, added_count: 0, updated_count: 1, unavailable_count: 0 }),
+    });
+    return { added_count: 0, updated_count: 1, unavailable_count: 0, media_count: videos.length };
+  } catch (error) {
+    const now = new Date().toISOString();
+    await supabase(`video_collections?id=eq.${encodeURIComponent(collectionId)}`, {
+      method: "PATCH", body: JSON.stringify({ sync_status: "error", updated_at: now }),
+    });
+    throw error;
   }
-
-  const rootIds = new Set(roots.map((root) => String(root.fileId)));
-  const unavailable = current.filter((item) => !rootIds.has(text(item.drive_folder_id) ?? ""));
-  await Promise.all(unavailable.map((item) => supabase(`video_collections?id=eq.${encodeURIComponent(text(item.id) ?? "")}`, {
-    method: "PATCH", body: JSON.stringify({ sync_status: "unavailable", updated_at: new Date().toISOString() }),
-  })));
-  const summary = { family_id: familyId, added_count: added, updated_count: updated, unavailable_count: unavailable.length };
-  await supabase("video_sync_logs", { method: "POST", body: JSON.stringify(summary) });
-  await supabase(`video_drive_connections?family_id=eq.${encodeURIComponent(familyId)}`, { method: "PATCH", body: JSON.stringify({ last_synced_at: new Date().toISOString(), authorization_status: "connected", updated_at: new Date().toISOString() }) });
-  return summary;
 }
 
-async function walkVideos(folderId: string, path: string): Promise<Array<{ id: string; name: string; path: string; size: number | null }>> {
-  const entries = await listFolder(folderId);
-  const output: Array<{ id: string; name: string; path: string; size: number | null }> = [];
-  for (const entry of entries) {
-    if (Number(entry.type) === 1) output.push(...await walkVideos(String(entry.fileId), `${path} / ${entry.filename}`));
-    else if (VIDEO_EXTENSION.test(entry.filename)) output.push({ id: String(entry.fileId), name: entry.filename, path: `${path} / ${entry.filename}`, size: typeof entry.size === "number" ? entry.size : null });
+async function upsertMedia(collectionId: string, videos: Array<{ id: string; name: string; path: string; size: number | null }>) {
+  for (let start = 0; start < videos.length; start += MEDIA_UPSERT_BATCH_SIZE) {
+    const updatedAt = new Date().toISOString();
+    const batch = videos.slice(start, start + MEDIA_UPSERT_BATCH_SIZE).map((video, offset) => ({
+      collection_id: collectionId,
+      drive_file_id: video.id,
+      name: video.name,
+      path: video.path,
+      size_bytes: video.size,
+      sort_order: start + offset,
+      updated_at: updatedAt,
+    }));
+    await supabase("video_media?on_conflict=collection_id,drive_file_id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(batch),
+    });
   }
-  return output;
+}
+
+async function replaceMedia(collectionId: string, videos: Array<{ id: string; name: string; path: string; size: number | null }>) {
+  await upsertMedia(collectionId, videos);
+  const previous = await supabase<Json[]>(`video_media?collection_id=eq.${encodeURIComponent(collectionId)}&select=id,drive_file_id`);
+  const currentIds = new Set(videos.map((video) => video.id));
+  // 删除云盘中已不存在的媒体元数据；删除 collection 时仍由外键级联处理。
+  await Promise.all(previous.filter((row) => !currentIds.has(text(row.drive_file_id) ?? "")).map((row) =>
+    supabase(`video_media?id=eq.${encodeURIComponent(text(row.id) ?? "")}`, { method: "DELETE" })
+  ));
 }
 
 async function playbackUrl(familyId: string, payload: Json): Promise<Json> {

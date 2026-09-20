@@ -1,4 +1,4 @@
-# `:family-video-app`：家庭动画
+# `:family-video-app`：柠檬视频
 
 面向家庭儿童的私有动画媒体库 Android App。采用项目现有 Kotlin/Compose、Hilt 与 Supabase 技术栈；登录直接复用家长端相同的邮箱和密码，不存储 123 云盘密码。
 
@@ -7,11 +7,12 @@
 ## 当前范围
 
 - 家长端 Supabase 邮箱密码会话复用；
-- 首页按分类展示家庭媒体库，支持继续观看；
-- 我的页可连接 123 云盘、浏览并选择同步目录、递归同步媒体元数据；
-- 剧集详情、媒体选集和 Media3 在线播放器基础界面；
+- 首页提供仅搜索顶层剧集/电影名称的全库搜索与继续观看；
+- 在 App 内手工创建剧集或电影（名称、类型、封面、云盘目录），支持无限层级子剧集；
+- 每个条目独立刷新其绑定目录的直接视频，绝不递归自动发现或创建云盘目录；
+- 剧集详情、显式子剧集、选集和 Media3 在线播放器；
 - `CloudDriveProvider` 通过受保护的 Supabase Edge Function 调用 123 OpenAPI；应用凭证、短期 access token 与临时播放 URL 均不持久化；
-- `supabase/sql/20260906_family_video_library.sql` 定义数据表和 RLS。
+- `supabase/sql/20260919_family_video_explicit_library.sql` 定义显式父子媒体库迁移与封面存储策略。
 
 ## 开发入口
 
@@ -20,7 +21,7 @@
 | 应用与认证路由 | `FamilyVideoApp.kt`、`navigation/FamilyVideoNavGraph.kt` |
 | 云盘与 Supabase 数据边界 | `data/FamilyVideoRepository.kt` |
 | 首页/详情/播放器 | `feature/home/`、`feature/library/`、`feature/player/` |
-| 同步和分类管理入口 | `feature/profile/VideoProfileScreen.kt` |
+| 媒体库配置入口 | `feature/profile/MediaLibraryManageScreen.kt` |
 | 长期开发/运维说明 | `docs/DEVELOPMENT.md` |
 
 ## 约束

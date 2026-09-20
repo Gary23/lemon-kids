@@ -48,6 +48,7 @@ dependencies {
     implementation(platform(libs.supabase.kt.bom))
     implementation(libs.supabase.postgrest)
     implementation(libs.supabase.auth)
+    implementation(libs.supabase.storage)
     implementation(libs.ktor.client.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coil.compose)

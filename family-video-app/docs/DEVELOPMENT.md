@@ -1,4 +1,4 @@
-# 家庭动画 App 开发与运维说明
+# 柠檬视频 App 开发与运维说明
 
 本文档是 `:family-video-app` 的后续开发入口。它描述当前已实现的边界与部署流程；不记录任何密码、123 应用密钥、Supabase service-role key、用户 access token 或临时播放 URL。
 
@@ -6,11 +6,12 @@
 
 - 使用与家长端相同的 Supabase 邮箱密码登录；登录用户必须已关联 `users.family_id`。
 - 家庭内登录成员不区分家长、孩子权限，访问同一个家庭媒体库。
-- 用户在 App 里选择一个 123 云盘同步根目录；根目录的首层子目录会成为剧集/电影，目录下的视频文件会被递归同步为选集。
+- 用户在 App 内手工创建剧集或电影，仅配置名称、类型、封面和一个云盘目录。子剧集由 `parent_id` 明确关联，可继续嵌套；App 不会在 123 云盘创建目录。
+- 每个条目独立刷新，仅读取其绑定目录中的直接视频，不递归扫描子目录；父剧集可有特别篇，子剧集必须独立绑定目录，因此视频不会在父子条目间重复。
 - 同步仅保存目录与视频元数据。媒体文件始终保留在 123 云盘，播放时手机直连临时播放地址。
-- 云盘中已不存在的首层目录只会标记为 `unavailable`，不会删除 App 分类和播放记录。
+- 封面上传至 `video-covers` bucket，路径按家庭隔离；删除 App 条目不会移动或删除云盘文件。
 
-首版已具备登录、首页、剧集详情、目录选择、手动同步和基础 Media3 播放。分类的完整增删改排序、可靠的播放进度上报、自动下一集及播放链接失效后的续播仍是后续功能。
+当前已具备登录、顶层媒体库搜索、剧集详情、媒体条目及目录配置、手动同步和基础 Media3 播放。可靠的播放进度上报、自动下一集及播放链接失效后的续播仍是后续功能。
 
 ## 2. 架构与代码地图
 
@@ -35,13 +36,14 @@
 按以下顺序在目标 Supabase 项目的 SQL Editor 审查、执行：
 
 1. `supabase/sql/20260906_family_video_library.sql`：创建媒体库表、索引与初版 RLS。
-2. `supabase/sql/20260906_family_video_all_family_access.sql`：将初版“仅家长”策略替换为“同家庭全部登录成员均可访问”。本 App 当前必须执行此脚本。
+2. `supabase/sql/20260906_family_video_all_family_access.sql`：将初版“仅家长”策略替换为“同家庭全部登录成员均可访问”。
+3. `supabase/sql/20260919_family_video_explicit_library.sql`：增加 `parent_id`、`media_type`、`drive_folder_path`，并创建 `video-covers` bucket 与策略。
 
 | 表 | 用途 | 关键关系 |
 | --- | --- | --- |
-| `video_drive_connections` | 每个家庭的一条 123 云盘连接和同步根目录 | `family_id` 唯一。 |
+| `video_drive_connections` | 每个家庭的一条 123 云盘连接 | `family_id` 唯一；旧同步根目录字段不再由 App 使用。 |
 | `video_categories` | 家庭自定义/内置分类 | 归属 `family_id`。 |
-| `video_collections` | 根目录下的剧集或电影 | `(family_id, drive_folder_id)` 唯一。 |
+| `video_collections` | 手工配置的剧集/电影或子剧集 | `parent_id` 表示层级；一个条目绑定一个云盘目录。 |
 | `video_media` | 剧集下的视频文件 | `(collection_id, drive_file_id)` 唯一。 |
 | `video_playback_records` | 每个视频的播放进度 | `media_id` 为主键。 |
 | `video_sync_logs` | 每次同步的计数与错误摘要 | 归属 `family_id`。 |
@@ -54,11 +56,10 @@
 
 | action | 作用 |
 | --- | --- |
-| `connection_status` | 获取当前家庭的连接和同步根目录状态。 |
+| `connection_status` | 获取当前家庭的连接状态。 |
 | `connect` | 使用服务端应用凭据获取短期 123 token，并记录已连接状态。 |
 | `browse` | 浏览指定目录。 |
-| `select_root` | 保存同步根目录。 |
-| `sync` | 扫描根目录、upsert 剧集和视频元数据、标记失效剧集。 |
+| `sync_collection` | 校验当前家庭的指定条目，并同步绑定目录中的直接视频。 |
 | `playback_url` | 按文件 ID 获取短期播放 URL，响应不持久化。 |
 
 函数要求请求带 `Authorization: Bearer <Supabase access token>`。虽然部署时使用 `--no-verify-jwt`，`authenticatedFamily()` 仍会验证登录用户，并从 `users` 表确认该用户有家庭归属。不要把该函数改成接受云盘账号密码、客户端上传 access token 或返回应用密钥。
@@ -91,8 +92,8 @@ supabase functions deploy family-video-drive --project-ref <project-ref> --no-ve
 建议的真机验收顺序：
 
 1. 使用已加入家庭的家长端邮箱密码登录。
-2. 打开“我的”，连接云盘并选择一个含剧集子目录的根目录。
-3. 点击立即同步，确认首页出现剧集，详情页能列出视频。
+2. 打开“设置”，连接云盘；进入“整理媒体库”，新建剧集并选择封面和云盘目录。
+3. 保存并刷新，确认首页出现剧集；在剧集详情中创建子剧集并为其单独绑定目录，确认二者视频不重复。
 4. 打开一个视频，确认 Media3 能获取临时地址并开始播放。
 5. 在 Supabase Functions Logs 检查同步和播放请求没有 5xx；在数据库中检查同步记录和媒体元数据是否符合预期。
 6. 在同一家庭的另一账号登录，确认能看见同一媒体库；这验证第二个 RLS 脚本已生效。

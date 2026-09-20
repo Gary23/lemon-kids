@@ -7,7 +7,7 @@
 | `main` | 稳定主线与基础版本。 | 已推送。 |
 | `product` | 产品集成与发布分支。 | 已合并认字端 v1.2、任务端桌面卡片与任务首页、家长端任务管理改动；发布标签见下表。 |
 | `feature/reading-progress-cloud-sync` | 认字端 App 开发：当天字、词、句朗读进度按绑定码跨设备同步，并在后台静默上传。 | 开发完成，已推送，尚未合并到 `product`；上线前需执行进度迁移并发布评测云函数。 |
-| `feature/family-video-app` | 家庭动画视频 App：复用家长端邮箱密码登录，新增 Supabase 家庭媒体库数据模型；通过受保护的 123 OpenAPI Edge Function 支持连接、目录选择、递归同步和临时直链播放。 | 基础功能开发中；`family-video-drive` 已部署到 `lemon-kid` 项目。上线前仍须核对已执行 `20260906_family_video_library.sql` 及不区分角色权限所需的 `20260906_family_video_all_family_access.sql`，并按 `family-video-app/docs/DEVELOPMENT.md` 完成真机验收。 |
+| `feature/family-video-app` | 柠檬视频 App：复用家长端邮箱密码登录，通过受保护的 123 OpenAPI Edge Function 支持连接、手工媒体条目与显式父子剧集、直接视频刷新和临时直链播放。 | 功能与文档已完成，待合并到 `product`；上线前须依次执行三项家庭视频 SQL 迁移，并按 `family-video-app/docs/DEVELOPMENT.md` 完成真机验收。 |
 
 ## `product` 发布标签
 

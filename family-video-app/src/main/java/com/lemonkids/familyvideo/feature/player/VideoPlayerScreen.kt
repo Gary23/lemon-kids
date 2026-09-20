@@ -2,6 +2,7 @@ package com.lemonkids.familyvideo.feature.player
 
 import android.view.ViewGroup
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -53,8 +54,8 @@ class VideoPlayerViewModel @Inject constructor(private val drive: CloudDriveProv
 @Composable
 fun VideoPlayerScreen(media: VideoMedia?, onBack: () -> Unit, viewModel: VideoPlayerViewModel = hiltViewModel()) {
     LaunchedEffect(media?.driveFileId) { media?.driveFileId?.takeIf { it.isNotBlank() }?.let(viewModel::load) }
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("‹ 返回选集", color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable(onClick = onBack).padding(bottom = 14.dp))
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp)) {
+        Text("‹ 回到选集", color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable(onClick = onBack).padding(bottom = 18.dp))
         Text(media?.name ?: "视频不可用", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(12.dp))
         when {

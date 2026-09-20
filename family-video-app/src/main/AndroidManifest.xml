@@ -4,7 +4,9 @@
     <application
         android:name=".FamilyVideoApp"
         android:allowBackup="true"
-        android:label="家庭动画"
+        android:icon="@drawable/ic_launcher_lemon_video"
+        android:roundIcon="@drawable/ic_launcher_lemon_video"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.FamilyVideo"
         android:usesCleartextTraffic="false">
