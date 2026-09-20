@@ -142,6 +142,10 @@ import com.lemonkids.kidliteracy.feature.home.DailyLiteracyTaskSnapshotStore
 import com.lemonkids.kidliteracy.feature.recognized.RecognizedCharactersViewModel
 import com.lemonkids.kidliteracy.feature.help.HelpedContent
 import com.lemonkids.kidliteracy.feature.help.HelpedCharactersViewModel
+import com.lemonkids.kidliteracy.feature.parentpass.ParentPassRecord
+import com.lemonkids.kidliteracy.feature.parentpass.ParentPassStarSnapshot
+import com.lemonkids.kidliteracy.feature.parentpass.ParentPassStarState
+import com.lemonkids.kidliteracy.feature.parentpass.ParentPassesViewModel
 import com.lemonkids.kidliteracy.feature.reading.ReadingEvaluationViewModel
 import com.lemonkids.kidliteracy.feature.reading.ReadingContentSource
 import com.lemonkids.kidliteracy.feature.reading.ReadingTarget
@@ -162,6 +166,10 @@ import com.lemonkids.shared.ui.auth.AuthViewModel
 import com.lemonkids.shared.ui.auth.BindingCodeScreen
 import dagger.hilt.android.HiltAndroidApp
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -187,7 +195,7 @@ import com.tencent.cloud.soe.listener.TAIListener
 @HiltAndroidApp
 class LemonLiteracyApplication : android.app.Application()
 
-private enum class Page { HOME, PROFILE, KNOWN, PENDING, LIBRARY, HELPED }
+private enum class Page { HOME, PROFILE, KNOWN, PENDING, LIBRARY, HELPED, PARENT_PASSES }
 
 /** ISO 216 A4 纸张的宽高比：1 : √2。 */
 private const val A4_PAPER_WIDTH_TO_HEIGHT = 0.70710677f
@@ -465,6 +473,23 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
         }
         return updatedCorrectReadings
     }
+
+    suspend fun passCharacter(card: LiteracyCard): Result<Unit> {
+        // 先持久化点击前状态；审计写入失败时不改变本地学习进度，便于家长稍后重试。
+        return readingEvaluationViewModel.recordParentPass(
+            literacyCharacterId = card.literacyCharacterId,
+            contentSource = card.contentSource,
+            starSnapshot = card.parentPassStarSnapshot()
+        ).onSuccess {
+            practiceProgressStore.markAllCorrectReadings(card.practiceTargets())
+            practiceProgress = practiceProgressStore.snapshot()
+            if (card.contentSource == ReadingContentSource.TASK) {
+                homeState.groups.flatMap { it.learningCharacters }
+                    .firstOrNull { it.id == card.literacyCharacterId }
+                    ?.let(::completeCharacterIfReady)
+            }
+        }
+    }
     val microphonePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val target = pendingRecordingTarget
         pendingRecordingTarget = null
@@ -584,8 +609,12 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
             val targets = homeState.groups.flatMap(LiteracyCharacterGroup::practiceTargetsForSync)
             readingEvaluationViewModel.loadPracticeProgress()
                 .onSuccess { remoteProgress ->
+                    practiceProgressStore.applyRemoteProgressReset(
+                        remoteProgress.resets.associate { it.syncKey() to it.correctReadings },
+                        targets
+                    )
                     practiceProgressStore.mergeRemoteProgress(
-                        remoteProgress.associate { it.syncKey() to it.correctReadings },
+                        remoteProgress.progress.associate { it.syncKey() to it.correctReadings },
                         targets
                     )
                     practiceProgress = practiceProgressStore.snapshot()
@@ -651,6 +680,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                     onPending = { page = Page.PENDING },
                     onLibrary = { page = Page.LIBRARY },
                     onHelped = { page = Page.HELPED },
+                    onParentPasses = { page = Page.PARENT_PASSES },
                     onGenerateLiteracyTasks = { showGenerateLiteracyTasksDialog = true }
                 )
                 Page.KNOWN -> KnownScreen(
@@ -668,6 +698,14 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                 Page.PENDING -> PendingCharactersScreen(userId = userId, onBack = { page = Page.PROFILE })
                 Page.LIBRARY -> LibraryScreen(userId = userId, onBack = { page = Page.PROFILE })
                 Page.HELPED -> HelpedCharactersScreen(userId = userId, onBack = { page = Page.PROFILE })
+                Page.PARENT_PASSES -> ParentPassesScreen(
+                    userId = userId,
+                    onBack = { page = Page.PROFILE },
+                    onUndoApplied = { record ->
+                        practiceProgressStore.restoreReadings(record.snapshotProgressEntries())
+                        practiceProgress = practiceProgressStore.snapshot()
+                    }
+                )
             }
             if (notice != null) SuccessNotice(notice!!, onDismiss = { notice = null })
         }
@@ -740,7 +778,8 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                         practiceProgressStore.markCharacterAudioPointRead(pointReadTarget.literacyCharacterId)
                     }
                 },
-                onCorrectReadings = ::recordCorrectReadings
+                onCorrectReadings = ::recordCorrectReadings,
+                onParentPass = ::passCharacter
             )
         }
     }
@@ -1384,12 +1423,17 @@ private fun CharacterStudyDialog(
     onSpeak: (ReadingTarget, String) -> Unit,
     onStopPlayback: () -> Unit,
     onCharacterAudioPointRead: (ReadingTarget) -> Unit,
-    onCorrectReadings: (ReadingTarget, Int) -> Int
+    onCorrectReadings: (ReadingTarget, Int) -> Int,
+    onParentPass: suspend (LiteracyCard) -> Result<Unit>
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var activeTarget by remember(card.literacyCharacterId) { mutableStateOf<ReadingTarget?>(null) }
     var activeRecordingState by remember(card.literacyCharacterId) { mutableStateOf<RecordingState?>(null) }
     var pendingTarget by remember(card.literacyCharacterId) { mutableStateOf<ReadingTarget?>(null) }
+    var isPassing by remember(card.literacyCharacterId) { mutableStateOf(false) }
+    var passErrorMessage by remember(card.literacyCharacterId) { mutableStateOf<String?>(null) }
+    var showPassConfirmation by remember(card.literacyCharacterId) { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         activeTarget = if (granted) pendingTarget else null
         activeRecordingState = if (granted && pendingTarget != null) RecordingState.PREPARING else null
@@ -1397,6 +1441,18 @@ private fun CharacterStudyDialog(
     }
     fun isActivePracticeLocked(): Boolean = activeTarget != null &&
         activeRecordingState != RecordingState.FINISHED && activeRecordingState != RecordingState.ERROR
+
+    fun submitParentPass() {
+        coroutineScope.launch {
+            isPassing = true
+            passErrorMessage = null
+            onParentPass(card)
+                .onFailure { error ->
+                    passErrorMessage = error.message ?: "记录通过操作失败，请检查网络后重试"
+                }
+            isPassing = false
+        }
+    }
 
     fun start(content: LearningContent) {
         // 满星内容已完成当天的练习，不再允许重新打开朗读会话。
@@ -1481,6 +1537,62 @@ private fun CharacterStudyDialog(
                                 onCorrectReadings = onCorrectReadings
                             )
                         }
+                    }
+                }
+                HorizontalDivider(modifier = Modifier.padding(top = 10.dp, bottom = 8.dp), color = Line)
+                passErrorMessage?.let {
+                    Text(it, color = Coral, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
+                }
+                Button(
+                    onClick = {
+                        if (isPassing || card.completed) return@Button
+                        showPassConfirmation = true
+                    },
+                    enabled = !isPassing && !card.completed,
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Leaf),
+                    shape = RoundedCornerShape(17.dp)
+                ) {
+                    if (isPassing) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(9.dp))
+                        Text("正在记录…")
+                    } else {
+                        Text(if (card.completed) "已满星" else "通过")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPassConfirmation) {
+        Dialog(onDismissRequest = { if (!isPassing) showPassConfirmation = false }) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text("确认通过？", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        "确认后会将当前未满星的学习项补满，并保存一条通过记录。",
+                        color = Color(0xFF5F6D72)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+                    ) {
+                        TextButton(
+                            onClick = { showPassConfirmation = false },
+                            enabled = !isPassing
+                        ) { Text("取消") }
+                        Button(
+                            onClick = {
+                                showPassConfirmation = false
+                                submitParentPass()
+                            },
+                            enabled = !isPassing,
+                            colors = ButtonDefaults.buttonColors(containerColor = Leaf)
+                        ) { Text("确认通过") }
                     }
                 }
             }
@@ -2662,6 +2774,7 @@ private fun ProfileScreen(
     onPending: () -> Unit,
     onLibrary: () -> Unit,
     onHelped: () -> Unit,
+    onParentPasses: () -> Unit,
     onGenerateLiteracyTasks: () -> Unit,
     libraryViewModel: LibraryViewModel = hiltViewModel()
 ) {
@@ -2711,6 +2824,7 @@ private fun ProfileScreen(
         item { ProfileMenuCard("查看待认识的字", "看看接下来要学习哪些汉字", Icons.Filled.AutoStories, Wheat, WheatLight, onPending) }
         item { ProfileMenuCard("字库", "按拼音收集我的汉字", Icons.Filled.LibraryBooks, Sky, SkyLight, onLibrary) }
         item { ProfileMenuCard("帮助过的内容", "看看我请求朗读过的词和句", Icons.Filled.HelpOutline, Coral, CoralLight, onHelped) }
+        item { ProfileMenuCard("通过记录", "查看家长手动通过时的星星状态", Icons.Filled.CheckCircle, Leaf, LeafLight, onParentPasses) }
         item { ProfileMenuCard("智能添加识字", "输入汉字，自动生成字库范围内的词和句", Icons.Filled.AddCircle, Leaf, LeafLight, onGenerateLiteracyTasks) }
     }
 }
@@ -3177,6 +3291,303 @@ private fun HelpedCharactersScreen(
 private fun List<HelpedContent>.toHelpedContentsTxt(): String {
     // 与列表逐项保持一致：红色高亮的字只是词、句里的定位信息，不单独导出。
     return joinToString(separator = "\n") { it.targetText }
+}
+
+/** 仅在点击“通过”前调用，确保审计记录保留的是补星之前的真实状态。 */
+private fun LiteracyCard.parentPassStarSnapshot() = ParentPassStarSnapshot(
+    character = character.toParentPassStarState(),
+    words = terms.map(LearningContent::toParentPassStarState),
+    sentences = sentences.map(LearningContent::toParentPassStarState)
+)
+
+private fun LiteracyCard.practiceTargets(): List<ReadingTarget> =
+    listOf(character.target) + terms.map { it.target } + sentences.map { it.target }
+
+private fun LearningContent.toParentPassStarState() = ParentPassStarState(
+    text = text,
+    earned = correctReadings,
+    required = requiredReadings
+)
+
+@Composable
+private fun ParentPassesScreen(
+    userId: String,
+    onBack: () -> Unit,
+    onUndoApplied: (ParentPassRecord) -> Unit,
+    viewModel: ParentPassesViewModel = hiltViewModel()
+) {
+    val state by viewModel.uiState.collectAsState()
+    val evaluationViewModel: ReadingEvaluationViewModel = hiltViewModel()
+    val coroutineScope = rememberCoroutineScope()
+    var recordPendingDeletion by remember { mutableStateOf<ParentPassRecord?>(null) }
+    var recordPendingUndo by remember { mutableStateOf<ParentPassRecord?>(null) }
+    var showClearAllConfirmation by remember { mutableStateOf(false) }
+    var deletingRecordId by remember { mutableStateOf<String?>(null) }
+    var undoingRecordId by remember { mutableStateOf<String?>(null) }
+    var isClearing by remember { mutableStateOf(false) }
+    var operationErrorMessage by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(userId) { viewModel.load(userId) }
+    Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
+        BackHeader("通过记录", "家长手动确认时保留的星级快照", onBack)
+        if (state.records.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("共 ${state.records.size} 条记录", fontSize = 13.sp, color = Color(0xFF5B7B68))
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = { showClearAllConfirmation = true },
+                    enabled = deletingRecordId == null && undoingRecordId == null && !isClearing
+                ) { Text(if (isClearing) "正在清空…" else "清空全部", color = Coral) }
+            }
+        }
+        operationErrorMessage?.let { message ->
+            Text(message, color = Coral, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+        Spacer(Modifier.height(12.dp))
+        when {
+            state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Leaf)
+            }
+            state.errorMessage != null -> Column(
+                modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(state.errorMessage!!, color = Color(0xFF839094))
+                Button(onClick = { viewModel.load(userId) }, colors = ButtonDefaults.buttonColors(containerColor = Sky)) {
+                    Text("重新加载")
+                }
+            }
+            state.records.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("还没有家长通过记录", color = Color(0xFF839094), fontSize = 16.sp)
+            }
+            else -> LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp)
+            ) {
+                items(state.records, key = { it.id }) { record ->
+                    Card(
+                        shape = RoundedCornerShape(22.dp),
+                        colors = CardDefaults.cardColors(containerColor = LeafLight)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(record.character, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Ink)
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    if (record.contentSource == ReadingContentSource.RECOGNIZED.wireValue) "已认识字复习" else "待认识字学习",
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF5B7B68)
+                                )
+                                Spacer(Modifier.weight(1f))
+                                IconButton(
+                                    onClick = { recordPendingDeletion = record },
+                                    enabled = deletingRecordId == null && undoingRecordId == null && !isClearing
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Delete,
+                                        contentDescription = "删除“${record.character}”的通过记录",
+                                        tint = Coral
+                                    )
+                                }
+                            }
+                            Text(record.passedAtInChina(), fontSize = 13.sp, color = Color(0xFF5B7B68))
+                            Text("通过前：${record.starSnapshot.describe()}", fontSize = 14.sp, color = Ink)
+                            if (record.undoneAt == null) {
+                                TextButton(
+                                    onClick = { recordPendingUndo = record },
+                                    enabled = deletingRecordId == null && undoingRecordId == null && !isClearing,
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                                ) { Text("撤销通过", color = Color(0xFFB66B27)) }
+                            } else {
+                                Text("已撤销：${record.undoneAtInChina()}", fontSize = 13.sp, color = Color(0xFF5B7B68))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    recordPendingDeletion?.let { record ->
+        Dialog(onDismissRequest = { if (deletingRecordId == null && undoingRecordId == null) recordPendingDeletion = null }) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text("删除这条通过记录？", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("删除后无法恢复。", color = Color(0xFF5F6D72))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+                    ) {
+                        TextButton(
+                            onClick = { recordPendingDeletion = null },
+                            enabled = deletingRecordId == null && undoingRecordId == null
+                        ) { Text("取消") }
+                        Button(
+                            onClick = {
+                                deletingRecordId = record.id
+                                operationErrorMessage = null
+                                coroutineScope.launch {
+                                    evaluationViewModel.deleteParentPass(record.id)
+                                        .onSuccess { viewModel.removeRecord(record.id) }
+                                        .onFailure { error ->
+                                            operationErrorMessage = error.message ?: "删除通过记录失败，请稍后重试"
+                                        }
+                                    deletingRecordId = null
+                                    recordPendingDeletion = null
+                                }
+                            },
+                            enabled = deletingRecordId == null && undoingRecordId == null,
+                            colors = ButtonDefaults.buttonColors(containerColor = Coral)
+                        ) { Text("确认删除") }
+                    }
+                }
+            }
+        }
+    }
+
+    recordPendingUndo?.let { record ->
+        Dialog(onDismissRequest = { if (undoingRecordId == null) recordPendingUndo = null }) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text("撤销这次通过？", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("星星会恢复到通过前的状态，并同步到同一绑定码的其它 Pad。", color = Color(0xFF5F6D72))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+                    ) {
+                        TextButton(
+                            onClick = { recordPendingUndo = null },
+                            enabled = undoingRecordId == null
+                        ) { Text("取消") }
+                        Button(
+                            onClick = {
+                                undoingRecordId = record.id
+                                operationErrorMessage = null
+                                coroutineScope.launch {
+                                    evaluationViewModel.undoParentPass(record.id)
+                                        .onSuccess {
+                                            onUndoApplied(record)
+                                            viewModel.load(userId)
+                                        }
+                                        .onFailure { error ->
+                                            operationErrorMessage = error.message ?: "撤销通过失败，请稍后重试"
+                                        }
+                                    undoingRecordId = null
+                                    recordPendingUndo = null
+                                }
+                            },
+                            enabled = undoingRecordId == null,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB66B27))
+                        ) { Text("确认撤销") }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showClearAllConfirmation) {
+        Dialog(onDismissRequest = { if (!isClearing) showClearAllConfirmation = false }) {
+            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text("清空全部通过记录？", color = Ink, fontWeight = FontWeight.ExtraBold)
+                    Text("将删除当前列表的全部 ${state.records.size} 条通过记录，删除后无法恢复。", color = Color(0xFF5F6D72))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+                    ) {
+                        TextButton(
+                            onClick = { showClearAllConfirmation = false },
+                            enabled = !isClearing
+                        ) { Text("取消") }
+                        Button(
+                            onClick = {
+                                isClearing = true
+                                operationErrorMessage = null
+                                coroutineScope.launch {
+                                    evaluationViewModel.clearParentPassRecords()
+                                        .onSuccess { viewModel.clearRecords() }
+                                        .onFailure { error ->
+                                            operationErrorMessage = error.message ?: "清空通过记录失败，请稍后重试"
+                                        }
+                                    isClearing = false
+                                    showClearAllConfirmation = false
+                                }
+                            },
+                            enabled = !isClearing,
+                            colors = ButtonDefaults.buttonColors(containerColor = Coral)
+                        ) { Text("确认清空") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun ParentPassStarSnapshot.describe(): String = buildList {
+    add("字 ${character.earned}/${character.required}★")
+    words.forEachIndexed { index, state -> add("词${index + 1} ${state.earned}/${state.required}★") }
+    sentences.forEachIndexed { index, state -> add("句${index + 1} ${state.earned}/${state.required}★") }
+}.joinToString("；")
+
+private val chinaZone: ZoneId = ZoneId.of("Asia/Shanghai")
+private val parentPassTimeFormatter: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("uuuu年MM月dd日 HH:mm", Locale.CHINA)
+
+/**
+ * PostgREST 通常返回 ISO-8601 时间，但部分响应会使用空格分隔日期和时间。
+ * 两种格式都按服务端时间的实际偏移换算为北京时间，避免把原始 UTC 字符串直接展示给家长。
+ */
+private fun ParentPassRecord.passedAtInChina(): String = passedAt.toInstantOrNull()
+    ?.atZone(chinaZone)
+    ?.format(parentPassTimeFormatter)
+    ?: passedAt
+
+private fun ParentPassRecord.undoneAtInChina(): String = undoneAt?.toInstantOrNull()
+    ?.atZone(chinaZone)
+    ?.format(parentPassTimeFormatter)
+    ?: undoneAt.orEmpty()
+
+/** 审计快照带有文本和固定顺序，可在当前 Pad 立即恢复本地当天进度。 */
+private fun ParentPassRecord.snapshotProgressEntries(): List<Pair<ReadingTarget, Int>> = buildList {
+    fun addEntry(type: String, order: Int, state: ParentPassStarState) {
+        val target = ReadingTarget(
+            literacyCharacterId = literacyCharacterId,
+            targetType = type,
+            displayText = state.text,
+            itemOrder = order,
+            sentenceText = state.text.takeIf { type == "sentence" },
+            wordText = state.text.takeIf { type == "word" },
+            contentSource = if (contentSource == ReadingContentSource.RECOGNIZED.wireValue) {
+                ReadingContentSource.RECOGNIZED
+            } else ReadingContentSource.TASK,
+            characterRequiredReadings = state.required.takeIf { type == "character" }
+        )
+        add(target to state.earned)
+    }
+    addEntry("character", 0, starSnapshot.character)
+    starSnapshot.words.forEachIndexed { index, state -> addEntry("word", index, state) }
+    starSnapshot.sentences.forEachIndexed { index, state -> addEntry("sentence", index, state) }
+}
+
+private fun String.toInstantOrNull(): Instant? {
+    val normalized = trim().replace(' ', 'T')
+    return runCatching { Instant.parse(normalized) }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(normalized).toInstant() }.getOrNull()
 }
 
 private fun HelpedContent.highlightedTargetText() = buildAnnotatedString {

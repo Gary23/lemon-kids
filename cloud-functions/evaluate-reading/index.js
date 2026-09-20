@@ -9,6 +9,8 @@
  * - issue_session：旧版客户端兼容接口；同时校验指定教学内容并签发短期凭证。
  * - record_help_request：按被长按的字是否属于对应字库，记录孩子请求朗读的动作。
  * - get_literacy_practice_progress / record_literacy_practice_progress：读写当天字、词、句朗读进度，供同码多设备同步。
+ * - record_parent_pass / undo_parent_pass：记录家长手动通过前的星级并同步补满；撤销时按快照精确恢复。
+ * - delete_parent_pass / clear_parent_pass_records：删除当前孩子自己的家长通过审计记录。
  * - complete_literacy_character：本地完成字、词、句练习后，按主字是否点读转入已认识字表或字库。
  * - archive_recognized_character：将一条已认识字存入字库，并移除其复习卡。
  * - preview_literacy_tasks：基于字库和输入汉字生成可编辑的词、句预览。
@@ -900,6 +902,27 @@ async function loadPracticeProgress(childId) {
   }));
 }
 
+/** 将“通过”或“撤销通过”产生的数值精确写入当天共享进度。普通朗读仍走取最大值的 RPC。 */
+async function replacePracticeProgress(entries) {
+  if (!entries.length) return;
+  await supabase(
+    'child_literacy_practice_progress?on_conflict=child_id,progress_date,content_source,literacy_character_id,target_type,item_order',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(entries.map((entry) => ({
+        child_id: entry.childId,
+        progress_date: chinaToday(),
+        content_source: entry.contentSource,
+        literacy_character_id: entry.literacyCharacterId,
+        target_type: entry.targetType,
+        item_order: entry.itemOrder,
+        correct_readings: entry.correctReadings
+      })))
+    }
+  );
+}
+
 async function recordPracticeProgress(childId, body) {
   if (!Number.isInteger(body.itemOrder) || body.itemOrder < 0) {
     throw new HttpError(400, 'itemOrder 必须是非负整数');
@@ -986,6 +1009,201 @@ async function shouldRecordHelpRequest(childId, character) {
     `known_characters?user_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(character)}&select=character&limit=1`
   );
   return Array.isArray(rows) && rows.length > 0;
+}
+
+/**
+ * 审计快照只记录客户端当天的本地星级，但文本、数组长度和数值范围必须与服务端
+ * 当前教学内容相符，避免客户端将其它字的状态伪装到本次“通过”记录中。
+ */
+function normalizeParentPassStarSnapshot(value, character, contentSource = 'task') {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new HttpError(400, 'starSnapshot 必须是星级快照对象');
+  }
+  const normalizeState = (state, expectedText, label) => {
+    if (!state || typeof state !== 'object' || Array.isArray(state) || state.text !== expectedText) {
+      throw new HttpError(400, `${label}星级快照与当前教学内容不一致`);
+    }
+    if (!Number.isInteger(state.earned) || !Number.isInteger(state.required) ||
+        state.earned < 0 || state.required < 1 || state.earned > state.required || state.required > 3) {
+      throw new HttpError(400, `${label}星级快照数值不合法`);
+    }
+    return { text: expectedText, earned: state.earned, required: state.required };
+  };
+  const normalizeExamples = (states, examples, label, allowOmitted = false) => {
+    // 星级快照描述的是弹层中实际展示的教学项。部分历史任务和已认识字
+    // 会保留旧句子数据，但复习弹层只展示字词。Android Kotlin Serialization
+    // 默认不输出等于默认值的空列表，因此兼容客户端传来的空数组或缺失字段，
+    // 不能因此阻塞家长的“通过”操作；其它非数组值仍然必须拒绝。
+    if (allowOmitted && (states === undefined || (Array.isArray(states) && states.length === 0))) return [];
+    if (!Array.isArray(states) || states.length !== examples.length) {
+      throw new HttpError(400, `${label}星级快照数量与当前教学内容不一致`);
+    }
+    return states.map((state, index) => normalizeState(state, examples[index].text, `${label}${index + 1}`));
+  };
+  return {
+    character: normalizeState(value.character, character.character, '字'),
+    words: normalizeExamples(value.words, examplesFromJson(character.words), '词'),
+    // 已认识字是复习模式，客户端只展示字和词；数据库保留的历史句子不属于本次
+    // 可通过的学习项，审计快照也必须为空。
+    sentences: normalizeExamples(
+      value.sentences,
+      contentSource === 'recognized' ? [] : examplesFromJson(character.sentences),
+      '句',
+      // 旧版或历史卡片可能没有将句子渲染到当前弹层；空数组准确表示没有
+      // 可补星的句子。非空时仍逐项校验文本和数量，防止混入其它字的状态。
+      true
+    )
+  };
+}
+
+async function recordParentPass(childId, body) {
+  if (!['task', 'recognized'].includes(body.contentSource)) {
+    throw new HttpError(400, 'contentSource 必须是 task 或 recognized');
+  }
+  // 以主字加载方式校验 ID 归属；词句文本只以服务端主表为准。
+  const target = await loadTarget(childId, body.literacyCharacterId, 'character', undefined, undefined, body.contentSource);
+  const snapshot = normalizeParentPassStarSnapshot(body.starSnapshot, target.character, target.contentSource);
+  await supabase('literacy_parent_pass_records', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify({
+      family_id: target.character.family_id,
+      child_id: target.character.child_id,
+      literacy_character_id: target.character.id,
+      content_source: target.contentSource,
+      character: target.character.character,
+      star_snapshot: snapshot
+    })
+  });
+  // “通过”不是仅限当前 Pad 的视觉状态。服务端在审计成功后立即将全部可见项
+  // 写满，使同一绑定码的其它设备刷新后也能看到相同星级。
+  await replacePracticeProgress(parentPassProgressEntries(childId, target, snapshot, true));
+}
+
+/** 将已校验的审计快照映射为当天进度表的精确行；true 表示补满，false 表示恢复 earned。 */
+function parentPassProgressEntries(childId, target, snapshot, fillToRequired) {
+  const count = (state) => fillToRequired ? state.required : state.earned;
+  const entries = [{
+    childId,
+    contentSource: target.contentSource,
+    literacyCharacterId: target.character.id,
+    targetType: 'character',
+    itemOrder: 0,
+    correctReadings: count(snapshot.character)
+  }];
+  const appendExamples = (states, examples, targetType) => {
+    states.forEach((state, index) => {
+      const example = examples[index];
+      if (!example) return;
+      entries.push({
+        childId,
+        contentSource: target.contentSource,
+        literacyCharacterId: target.character.id,
+        targetType,
+        itemOrder: example.sortOrder,
+        correctReadings: count(state)
+      });
+    });
+  };
+  appendExamples(snapshot.words, examplesFromJson(target.character.words), 'word');
+  appendExamples(snapshot.sentences, examplesFromJson(target.character.sentences), 'sentence');
+  return entries;
+}
+
+function requireUuid(value, fieldName) {
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    throw new HttpError(400, `${fieldName} 必须是有效的 UUID`);
+  }
+  return value;
+}
+
+/** service_role 会绕过 RLS，因此每次删除都必须同时按当前 JWT 对应的 child_id 限定。 */
+async function deleteParentPass(childId, body) {
+  const recordId = requireUuid(body.recordId, 'recordId');
+  const deleted = await supabase(
+    `literacy_parent_pass_records?id=eq.${encodeURIComponent(recordId)}&child_id=eq.${encodeURIComponent(childId)}&select=id`,
+    { method: 'DELETE', headers: { Prefer: 'return=representation' } }
+  );
+  if (!Array.isArray(deleted) || deleted.length !== 1) throw new HttpError(404, '未找到这条通过记录');
+  return deleted[0].id;
+}
+
+function isSameChinaDay(value) {
+  return typeof value === 'string' && !Number.isNaN(Date.parse(value)) &&
+    new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date(value)) === chinaToday();
+}
+
+/**
+ * 只允许撤销当天、同一学习项最新的一次“通过”。恢复前会再次加载当前教学内容，
+ * 因而不会把陈旧快照套到已变化的字词句上。审计记录保留并标记撤销，供其它 Pad
+ * 在刷新时获得一次强制回退信号。
+ */
+async function undoParentPass(childId, body) {
+  const recordId = requireUuid(body.recordId, 'recordId');
+  const rows = await supabase(
+    `literacy_parent_pass_records?id=eq.${encodeURIComponent(recordId)}&child_id=eq.${encodeURIComponent(childId)}` +
+    '&undone_at=is.null&select=id,literacy_character_id,content_source,character,star_snapshot,passed_at&limit=1'
+  );
+  const record = Array.isArray(rows) ? rows[0] : null;
+  if (!record) throw new HttpError(404, '未找到可撤销的通过记录');
+  if (!isSameChinaDay(record.passed_at)) throw new HttpError(409, '仅支持撤销今天的通过记录');
+
+  const later = await supabase(
+    `literacy_parent_pass_records?child_id=eq.${encodeURIComponent(childId)}` +
+    `&literacy_character_id=eq.${encodeURIComponent(record.literacy_character_id)}` +
+    `&content_source=eq.${encodeURIComponent(record.content_source)}` +
+    `&passed_at=gt.${encodeURIComponent(record.passed_at)}&undone_at=is.null&select=id&limit=1`
+  );
+  if (Array.isArray(later) && later.length) {
+    throw new HttpError(409, '请先撤销这一个字最新的通过记录');
+  }
+
+  const target = await loadTarget(
+    childId, record.literacy_character_id, 'character', undefined, undefined, record.content_source
+  );
+  const snapshot = normalizeParentPassStarSnapshot(record.star_snapshot, target.character, target.contentSource);
+  await replacePracticeProgress(parentPassProgressEntries(childId, target, snapshot, false));
+  const undoneAt = new Date().toISOString();
+  const updated = await supabase(
+    `literacy_parent_pass_records?id=eq.${encodeURIComponent(recordId)}&child_id=eq.${encodeURIComponent(childId)}&undone_at=is.null`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify({ undone_at: undoneAt })
+    }
+  );
+  if (!Array.isArray(updated) || updated.length !== 1) throw new HttpError(409, '通过记录状态已变化，请刷新后重试');
+  return { recordId, undoneAt };
+}
+
+/** 返回今天已撤销记录的快照行。客户端会先精确回退，再合并数据库当前进度。 */
+async function loadParentPassProgressResets(childId) {
+  const rows = await supabase(
+    `literacy_parent_pass_records?child_id=eq.${encodeURIComponent(childId)}` +
+    `&undone_at=gte.${encodeURIComponent(`${chinaToday()}T00:00:00+08:00`)}` +
+    '&select=id,literacy_character_id,content_source,star_snapshot,undone_at&order=undone_at.asc'
+  );
+  const resets = [];
+  for (const record of (Array.isArray(rows) ? rows : [])) {
+    try {
+      const target = await loadTarget(childId, record.literacy_character_id, 'character', undefined, undefined, record.content_source);
+      const snapshot = normalizeParentPassStarSnapshot(record.star_snapshot, target.character, target.contentSource);
+      resets.push(...parentPassProgressEntries(childId, target, snapshot, false));
+    } catch (error) {
+      // 已完成收录或已存库的历史任务不在当天首页中，跳过它不能阻塞其它项目同步。
+      console.warn('跳过无法映射的撤销通过快照', { recordId: record.id, error: String(error.message || error) });
+    }
+  }
+  return resets.map(({ childId: ignoredChildId, ...entry }) => entry);
+}
+
+/** 清空操作同样只影响当前已登录孩子，返回实际删除数量以便客户端刷新本地列表。 */
+async function clearParentPassRecords(childId) {
+  const deleted = await supabase(
+    `literacy_parent_pass_records?child_id=eq.${encodeURIComponent(childId)}&select=id`,
+    { method: 'DELETE', headers: { Prefer: 'return=representation' } }
+  );
+  return Array.isArray(deleted) ? deleted.length : 0;
 }
 
 async function issueStsCredentials() {
@@ -1354,7 +1572,11 @@ async function handler(event) {
     return response(200, { evaluation: await prepareEvaluation(childId, body) });
   }
   if (body.action === 'get_literacy_practice_progress') {
-    return response(200, { progress: await loadPracticeProgress(childId) });
+    const [progress, resets] = await Promise.all([
+      loadPracticeProgress(childId),
+      loadParentPassProgressResets(childId)
+    ]);
+    return response(200, { progress, resets });
   }
   if (body.action === 'record_literacy_practice_progress') {
     const correctReadings = await recordPracticeProgress(childId, body);
@@ -1402,6 +1624,22 @@ async function handler(event) {
       })
     });
     return response(201, { status: 'recorded', help: { character: body.character, contextText } });
+  }
+  if (body.action === 'record_parent_pass') {
+    await recordParentPass(childId, body);
+    return response(201, { status: 'recorded' });
+  }
+  if (body.action === 'undo_parent_pass') {
+    const undone = await undoParentPass(childId, body);
+    return response(200, { status: 'undone', ...undone });
+  }
+  if (body.action === 'delete_parent_pass') {
+    const recordId = await deleteParentPass(childId, body);
+    return response(200, { status: 'deleted', recordId });
+  }
+  if (body.action === 'clear_parent_pass_records') {
+    const deletedCount = await clearParentPassRecords(childId);
+    return response(200, { status: 'cleared', deletedCount });
   }
   if (body.action === 'complete_literacy_character') {
     const completed = await completeLiteracyCharacter(childId, body.literacyCharacterId, body.hasCharacterAudioPointRead);
@@ -1460,5 +1698,9 @@ exports._private = {
   phonemesForText,
   normalizePhonemeTokens,
   wordListForPhonemeTokens,
-  requirePhoneticBackfillKey
+  requirePhoneticBackfillKey,
+  normalizeParentPassStarSnapshot,
+  requireUuid,
+  parentPassProgressEntries,
+  isSameChinaDay
 };

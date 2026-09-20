@@ -65,6 +65,40 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         editor.apply()
     }
 
+    /**
+     * “撤销通过”是家长明确要求的回退，不能沿用普通朗读的取最大值规则。
+     * 此方法必须在 mergeRemoteProgress 前调用；后者会再次合并服务器上撤销之后
+     * 真实朗读产生的新进度。撤销值不进入待上传队列，避免旧 Pad 又把满星写回去。
+     */
+    fun applyRemoteProgressReset(resetProgress: Map<String, Int>, targets: Collection<ReadingTarget>) {
+        if (resetProgress.isEmpty() || targets.isEmpty()) return
+        clearExpiredEntries()
+        val editor = preferences.edit()
+        targets.forEach { target ->
+            val resetCount = resetProgress[target.practiceProgressSyncKey()] ?: return@forEach
+            val progressKey = target.practiceProgressKey()
+            editor.putInt(
+                entryPrefix() + encodeKey(progressKey),
+                resetCount.coerceIn(0, target.requiredCorrectReadings())
+            )
+            editor.remove(pendingEntryPrefix() + encodeKey(progressKey))
+        }
+        editor.apply()
+    }
+
+    /** 当前 Pad 刚完成撤销时立即恢复本地星级，无需等待回到首页刷新。 */
+    fun restoreReadings(entries: List<Pair<ReadingTarget, Int>>) {
+        if (entries.isEmpty()) return
+        clearExpiredEntries()
+        val editor = preferences.edit()
+        entries.forEach { (target, count) ->
+            val progressKey = target.practiceProgressKey()
+            editor.putInt(entryPrefix() + encodeKey(progressKey), count.coerceIn(0, target.requiredCorrectReadings()))
+            editor.remove(pendingEntryPrefix() + encodeKey(progressKey))
+        }
+        editor.apply()
+    }
+
     /** 仅返回本设备尚未成功上传的当天进度。 */
     fun pendingProgress(): Map<String, Int> {
         clearExpiredEntries()
@@ -96,6 +130,22 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         if ((preferences.getInt(key, 0)) <= confirmedCount) {
             preferences.edit().remove(key).apply()
         }
+    }
+
+    /**
+     * 家长确认孩子实际已读对时，将当前字的全部可见学习项直接补满。
+     * 调用方必须先完成服务端审计记录，避免只留下“满星”而没有通过记录。
+     */
+    fun markAllCorrectReadings(targets: List<ReadingTarget>) {
+        clearExpiredEntries()
+        val editor = preferences.edit()
+        targets.forEach { target ->
+            editor.putInt(
+                entryPrefix() + encodeKey(target.practiceProgressKey()),
+                target.requiredCorrectReadings()
+            )
+        }
+        editor.apply()
     }
 
     /**

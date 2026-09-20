@@ -35,7 +35,7 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-当前部署包为 `evaluate-reading-web-20260912-smart-add-recognized-transfer.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`、`supabase/sql/20260903_literacy_practice_progress_sync.sql`、`supabase/sql/20260907_literacy_daily_task_snapshot.sql`、`supabase/sql/20260912_smart_add_recognized_to_pending.sql`；智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；已认识字重新添加到待认识时会原子删除旧已认识记录及其音素资产，再写入新的待认识任务，重新添加到已认识时则更新收录时间置顶。朗读进度迁移创建同码多设备共享的当天进度表，任务快照迁移固定同一孩子当天各 Pad 展示的待认识任务及顺序。TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+当前部署包为 `evaluate-reading-web-20260920-parent-pass-undo-sync.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`、`supabase/sql/20260903_literacy_practice_progress_sync.sql`、`supabase/sql/20260907_literacy_daily_task_snapshot.sql`、`supabase/sql/20260912_smart_add_recognized_to_pending.sql`、`supabase/sql/20260920_literacy_parent_pass_records.sql`；智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；已认识字重新添加到待认识时会原子删除旧已认识记录及其音素资产，再写入新的待认识任务，重新添加到已认识时则更新收录时间置顶。朗读进度迁移创建同码多设备共享的当天进度表，任务快照迁移固定同一孩子当天各 Pad 展示的待认识任务及顺序；家长通过记录会保存点击前的星级快照、同步补满进度并允许当天撤销恢复，删除和清空操作会严格按当前登录孩子的范围执行。TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
 
 待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
 [`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
@@ -116,6 +116,33 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 ```
 
 记录接口会从数据库重新校验字、词、句及其顺序，并以最大值合并同一学习项的累计次数，避免多设备请求使进度倒退。
+
+当腾讯评测误判、家长在字词句弹层点击“通过”并二次确认时，客户端会先调用 `record_parent_pass`，服务端校验当前字归属和快照文本后，将**补星前**的字、词、句星级以及服务端时间写入 `literacy_parent_pass_records`，并将全部可见项的满星状态写入当天共享进度；因此另一台 Pad 点击刷新后也会显示满星。通过记录页面可撤销当天、该字最新的一条通过记录：`undo_parent_pass` 会按审计快照精确恢复星级、保留记录并标记 `undone_at`，其它 Pad 刷新时会先应用该恢复值再合并普通朗读进度。已因通过而完成收录的待认识任务不能仅靠星级撤销，需按重新学习流程处理。该表仅允许孩子读取自己的记录，客户端没有直接写、改、删权限；单条删除和清空均须经云函数按当前登录孩子的 `child_id` 限定后执行。部署前须先执行（或对已部署环境补执行）`supabase/sql/20260920_literacy_parent_pass_records.sql`。
+
+```json
+{
+  "action": "record_parent_pass",
+  "literacyCharacterId": "待认识任务或已认识字 UUID",
+  "contentSource": "task",
+  "starSnapshot": {
+    "character": {"text": "春", "earned": 1, "required": 3},
+    "words": [{"text": "春天", "earned": 0, "required": 2}],
+    "sentences": [{"text": "春天来了", "earned": 0, "required": 1}]
+  }
+}
+```
+
+```json
+{"action":"delete_parent_pass","recordId":"通过记录 UUID"}
+```
+
+```json
+{"action":"undo_parent_pass","recordId":"今天的通过记录 UUID"}
+```
+
+```json
+{"action":"clear_parent_pass_records"}
+```
 
 ```json
 {
