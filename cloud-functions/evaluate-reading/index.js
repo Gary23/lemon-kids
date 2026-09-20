@@ -993,7 +993,7 @@ async function shouldRecordHelpRequest(childId, character) {
  * 审计快照只记录客户端当天的本地星级，但文本、数组长度和数值范围必须与服务端
  * 当前教学内容相符，避免客户端将其它字的状态伪装到本次“通过”记录中。
  */
-function normalizeParentPassStarSnapshot(value, character) {
+function normalizeParentPassStarSnapshot(value, character, contentSource = 'task') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new HttpError(400, 'starSnapshot 必须是星级快照对象');
   }
@@ -1016,7 +1016,13 @@ function normalizeParentPassStarSnapshot(value, character) {
   return {
     character: normalizeState(value.character, character.character, '字'),
     words: normalizeExamples(value.words, examplesFromJson(character.words), '词'),
-    sentences: normalizeExamples(value.sentences, examplesFromJson(character.sentences), '句')
+    // 已认识字是复习模式，客户端只展示字和词；数据库保留的历史句子不属于本次
+    // 可通过的学习项，审计快照也必须为空。
+    sentences: normalizeExamples(
+      value.sentences,
+      contentSource === 'recognized' ? [] : examplesFromJson(character.sentences),
+      '句'
+    )
   };
 }
 
@@ -1026,7 +1032,7 @@ async function recordParentPass(childId, body) {
   }
   // 以主字加载方式校验 ID 归属；词句文本只以服务端主表为准。
   const target = await loadTarget(childId, body.literacyCharacterId, 'character', undefined, undefined, body.contentSource);
-  const snapshot = normalizeParentPassStarSnapshot(body.starSnapshot, target.character);
+  const snapshot = normalizeParentPassStarSnapshot(body.starSnapshot, target.character, target.contentSource);
   await supabase('literacy_parent_pass_records', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },

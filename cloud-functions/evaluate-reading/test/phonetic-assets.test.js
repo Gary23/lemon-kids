@@ -88,6 +88,11 @@ test('家长通过快照保留补星前状态，并且必须与当前字词句�
     ...snapshot,
     words: [{ text: '夏天', earned: 0, required: 2 }]
   }, character), /教学内容不一致/);
+  const recognizedSnapshot = _private.normalizeParentPassStarSnapshot({
+    ...snapshot,
+    sentences: []
+  }, character, 'recognized');
+  assert.deepEqual(recognizedSnapshot.sentences, []);
 });
 
 test('家长通过审计表仅由云函数写入，客户端仅可读取自己的记录', () => {
