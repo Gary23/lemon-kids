@@ -8,6 +8,7 @@
  *   复用，参考文本仍由客户端从已授权读取的教学内容中按当前字、词、句单独传给腾讯。
  * - issue_session：旧版客户端兼容接口；同时校验指定教学内容并签发短期凭证。
  * - record_help_request：按被长按的字是否属于对应字库，记录孩子请求朗读的动作。
+ * - record_parent_pass：记录家长手动通过前的字、词、句星级，再由客户端补满本地星星。
  * - complete_literacy_character：本地完成字、词、句练习后，按主字是否点读转入已认识字表或字库。
  * - archive_recognized_character：将一条已认识字存入字库，并移除其复习卡。
  * - preview_literacy_tasks：基于字库和输入汉字生成可编辑的词、句预览。
@@ -931,6 +932,58 @@ async function shouldRecordHelpRequest(childId, character) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
+/**
+ * 审计快照只记录客户端当天的本地星级，但文本、数组长度和数值范围必须与服务端
+ * 当前教学内容相符，避免客户端将其它字的状态伪装到本次“通过”记录中。
+ */
+function normalizeParentPassStarSnapshot(value, character) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new HttpError(400, 'starSnapshot 必须是星级快照对象');
+  }
+  const normalizeState = (state, expectedText, label) => {
+    if (!state || typeof state !== 'object' || Array.isArray(state) || state.text !== expectedText) {
+      throw new HttpError(400, `${label}星级快照与当前教学内容不一致`);
+    }
+    if (!Number.isInteger(state.earned) || !Number.isInteger(state.required) ||
+        state.earned < 0 || state.required < 1 || state.earned > state.required || state.required > 3) {
+      throw new HttpError(400, `${label}星级快照数值不合法`);
+    }
+    return { text: expectedText, earned: state.earned, required: state.required };
+  };
+  const normalizeExamples = (states, examples, label) => {
+    if (!Array.isArray(states) || states.length !== examples.length) {
+      throw new HttpError(400, `${label}星级快照数量与当前教学内容不一致`);
+    }
+    return states.map((state, index) => normalizeState(state, examples[index].text, `${label}${index + 1}`));
+  };
+  return {
+    character: normalizeState(value.character, character.character, '字'),
+    words: normalizeExamples(value.words, examplesFromJson(character.words), '词'),
+    sentences: normalizeExamples(value.sentences, examplesFromJson(character.sentences), '句')
+  };
+}
+
+async function recordParentPass(childId, body) {
+  if (!['task', 'recognized'].includes(body.contentSource)) {
+    throw new HttpError(400, 'contentSource 必须是 task 或 recognized');
+  }
+  // 以主字加载方式校验 ID 归属；词句文本只以服务端主表为准。
+  const target = await loadTarget(childId, body.literacyCharacterId, 'character', undefined, undefined, body.contentSource);
+  const snapshot = normalizeParentPassStarSnapshot(body.starSnapshot, target.character);
+  await supabase('literacy_parent_pass_records', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+    body: JSON.stringify({
+      family_id: target.character.family_id,
+      child_id: target.character.child_id,
+      literacy_character_id: target.character.id,
+      content_source: target.contentSource,
+      character: target.character.character,
+      star_snapshot: snapshot
+    })
+  });
+}
+
 async function issueStsCredentials() {
   const client = new StsClient({
     credential: { secretId: STS_SECRET_ID, secretKey: STS_SECRET_KEY },
@@ -1339,6 +1392,10 @@ async function handler(event) {
     });
     return response(201, { status: 'recorded', help: { character: body.character, contextText } });
   }
+  if (body.action === 'record_parent_pass') {
+    await recordParentPass(childId, body);
+    return response(201, { status: 'recorded' });
+  }
   if (body.action === 'complete_literacy_character') {
     const completed = await completeLiteracyCharacter(childId, body.literacyCharacterId, body.hasCharacterAudioPointRead);
     return response(201, { status: 'completed', completed });
@@ -1396,5 +1453,6 @@ exports._private = {
   phonemesForText,
   normalizePhonemeTokens,
   wordListForPhonemeTokens,
-  requirePhoneticBackfillKey
+  requirePhoneticBackfillKey,
+  normalizeParentPassStarSnapshot
 };

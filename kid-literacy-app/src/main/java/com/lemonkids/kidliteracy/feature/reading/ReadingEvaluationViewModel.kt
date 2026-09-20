@@ -1,6 +1,7 @@
 package com.lemonkids.kidliteracy.feature.reading
 
 import android.util.Log
+import com.lemonkids.kidliteracy.feature.parentpass.ParentPassStarSnapshot
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.auth.SessionRecoveryCoordinator
@@ -210,6 +211,22 @@ class ReadingEvaluationViewModel @Inject constructor(
             character = help.requiredString("character"),
             contextText = help.requiredString("contextText")
         )
+    }
+
+    /**
+     * 家长点击“通过”时，先把点击前的字词句星级交给可信服务端写入审计表。
+     * 只有请求成功，界面才会将本地星星补满。
+     */
+    suspend fun recordParentPass(
+        literacyCharacterId: String,
+        contentSource: ReadingContentSource,
+        starSnapshot: ParentPassStarSnapshot
+    ): Result<Unit> = runCatching {
+        val serializedSnapshot = json.encodeToString(ParentPassStarSnapshot.serializer(), starSnapshot)
+        request(
+            """{"action":"record_parent_pass","literacyCharacterId":"${literacyCharacterId.jsonEscape()}","contentSource":"${contentSource.wireValue}","starSnapshot":$serializedSnapshot}"""
+        )
+        Unit
     }
 
     /**

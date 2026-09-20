@@ -40,6 +40,22 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
     }
 
     /**
+     * 家长确认孩子实际已读对时，将当前字的全部可见学习项直接补满。
+     * 调用方必须先完成服务端审计记录，避免只留下“满星”而没有通过记录。
+     */
+    fun markAllCorrectReadings(targets: List<ReadingTarget>) {
+        clearExpiredEntries()
+        val editor = preferences.edit()
+        targets.forEach { target ->
+            editor.putInt(
+                entryPrefix() + encodeKey(target.practiceProgressKey()),
+                target.requiredCorrectReadings()
+            )
+        }
+        editor.apply()
+    }
+
+    /**
      * 仅记录待认识主字的点读行为。它和朗读星级一起按天保存，以便应用重启后仍能
      * 在整字完成时正确决定收录到“已认识的字”还是直接写入字库。
      */

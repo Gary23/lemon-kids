@@ -72,6 +72,36 @@ test('轻声保留位置但不伪造腾讯不支持的调号', () => {
   assert.deepEqual(_private.phonemesForText('妈妈'), ['ma1', null]);
 });
 
+test('家长通过快照保留补星前状态，并且必须与当前字词句一一对应', () => {
+  const character = {
+    character: '春',
+    words: [{ text: '春天' }],
+    sentences: [{ text: '春天来了' }]
+  };
+  const snapshot = _private.normalizeParentPassStarSnapshot({
+    character: { text: '春', earned: 1, required: 3 },
+    words: [{ text: '春天', earned: 0, required: 2 }],
+    sentences: [{ text: '春天来了', earned: 0, required: 1 }]
+  }, character);
+  assert.deepEqual(snapshot.words[0], { text: '春天', earned: 0, required: 2 });
+  assert.throws(() => _private.normalizeParentPassStarSnapshot({
+    ...snapshot,
+    words: [{ text: '夏天', earned: 0, required: 2 }]
+  }, character), /教学内容不一致/);
+});
+
+test('家长通过审计表仅由云函数写入，客户端仅可读取自己的记录', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
+  const migration = fs.readFileSync(
+    path.resolve(__dirname, '../../../supabase/sql/20260920_literacy_parent_pass_records.sql'),
+    'utf8'
+  );
+  assert.match(source, /body\.action === 'record_parent_pass'/);
+  assert.match(source, /literacy_parent_pass_records/);
+  assert.match(migration, /for select using \(child_id = auth\.uid\(\)\)/i);
+  assert.doesNotMatch(migration, /for insert/i);
+});
+
 test('人工音素仅允许腾讯数字拼音格式', () => {
   assert.deepEqual(_private.normalizePhonemeTokens(['zu3', 'zhang3'], '组长'), ['zu3', 'zhang3']);
   assert.throws(() => _private.normalizePhonemeTokens(['zu', 'zhang3'], '组长'), /第 1 个汉字/);
