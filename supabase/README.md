@@ -19,6 +19,9 @@
 | `sql/20260915_alarm_family_background_music_storage_read_rls_fix.sql` | 修复已绑定监控 Pad 的家庭音乐对象读取策略字段遮蔽问题 | 已执行家庭音乐迁移；须在上传修复后执行并由 Pad 试听验证 |
 | `sql/20260904_task_history_and_cancellation.sql` | 将任务删除改为受控取消；保留历史任务，并提供完成/撤销完成的原子 RPC | 已有任务、用户、积分流水及 `20260812_task_calendar_core.sql` 的任务状态/RPC |
 | `sql/20260904_remove_task_rejection.sql` | 移除已完成任务的家长驳回 RPC；保留既有驳回历史及积分流水 | 已执行创建 `reject_task` 的旧脚本 |
+| `sql/20260906_family_video_library.sql` | 柠檬视频的云盘连接、分类、剧集、视频、播放记录和同步日志表及初版仅家长 RLS | 已有 `users`、`families`；上线前先执行。令牌与云盘密码不得入库。 |
+| `sql/20260906_family_video_all_family_access.sql` | 将柠檬视频的 RLS 从仅家长改为家庭内所有登录成员可访问 | 已执行 `20260906_family_video_library.sql`；当前 App 不区分家长/孩子权限，必须继续执行。 |
+| `sql/20260919_family_video_explicit_library.sql` | 将自动发现的媒体库升级为手工条目、显式父子关系与封面存储策略 | 已执行两项 20260906 视频迁移；上线手工建库、子剧集和封面功能前执行。完整开发与验收见 `../family-video-app/docs/DEVELOPMENT.md`。 |
 | `sql/20260901_reset_tasks_and_child_points.sql` | 清空全部任务、孩子积分及其积分流水 | 破坏性维护脚本；执行前确认目标环境与备份 |
 | `sql/20260731_literacy_pronunciation_evaluation.sql` | 已废弃的旧版认字评测建表脚本 | 勿执行；已由 20260802 清理迁移替代 |
 | `sql/20260731_literacy_pronunciation_batch_upgrade.sql` | 已废弃的旧版评测表升级脚本 | 勿执行 |
