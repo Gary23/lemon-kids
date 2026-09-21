@@ -84,7 +84,7 @@ fun FamilyVideoNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
     val selectedRoute = tabEntry?.destination?.route ?: "home"
     Scaffold(bottomBar = {
         NavigationBar(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface) {
-            listOf("home" to "动画", "profile" to "家长").forEach { (route, label) ->
+            listOf("home" to "动画", "profile" to "我的").forEach { (route, label) ->
                 NavigationBarItem(
                     selected = selectedRoute == route,
                     onClick = { if (selectedRoute != route) tabs.navigate(route) { launchSingleTop = true } },

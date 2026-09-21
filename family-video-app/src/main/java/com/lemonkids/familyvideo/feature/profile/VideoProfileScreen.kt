@@ -49,8 +49,8 @@ fun VideoProfileScreen(onManageLibrary: () -> Unit, onSignedOut: () -> Unit, aut
     LaunchedEffect(Unit) { viewModel.load() }
     val state = viewModel.state
     Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("家长小站", style = MaterialTheme.typography.headlineLarge)
-        Text("在这里整理动画和管理连接", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("我的", style = MaterialTheme.typography.headlineLarge)
+        Text("在这里管理云盘连接和动画库", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("☁️ 123 云盘", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onTertiaryContainer)
             Text(if (state.connection.status == "connected") state.connection.accountHint ?: "已连接" else "未连接")
