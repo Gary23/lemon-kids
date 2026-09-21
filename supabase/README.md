@@ -22,6 +22,7 @@
 | `sql/20260906_family_video_library.sql` | 柠檬视频的云盘连接、分类、剧集、视频、播放记录和同步日志表及初版仅家长 RLS | 已有 `users`、`families`；上线前先执行。令牌与云盘密码不得入库。 |
 | `sql/20260906_family_video_all_family_access.sql` | 将柠檬视频的 RLS 从仅家长改为家庭内所有登录成员可访问 | 已执行 `20260906_family_video_library.sql`；当前 App 不区分家长/孩子权限，必须继续执行。 |
 | `sql/20260919_family_video_explicit_library.sql` | 将自动发现的媒体库升级为手工条目、显式父子关系与封面存储策略 | 已执行两项 20260906 视频迁移；上线手工建库、子剧集和封面功能前执行。完整开发与验收见 `../family-video-app/docs/DEVELOPMENT.md`。 |
+| `sql/20260921_family_video_drive_token_cache.sql` | 创建仅供 `family-video-drive` service-role 使用的短期 123 access token 缓存表 | 已执行柠檬视频三份前置迁移；须先审查并在 SQL Editor 执行，确认 RLS 开启且 `anon`/`authenticated` 没有策略。此脚本有意允许服务端短期明文 token 持久化，以跨 Edge 冷启动复用授权。 |
 | `sql/20260901_reset_tasks_and_child_points.sql` | 清空全部任务、孩子积分及其积分流水 | 破坏性维护脚本；执行前确认目标环境与备份 |
 | `sql/20260731_literacy_pronunciation_evaluation.sql` | 已废弃的旧版认字评测建表脚本 | 勿执行；已由 20260802 清理迁移替代 |
 | `sql/20260731_literacy_pronunciation_batch_upgrade.sql` | 已废弃的旧版评测表升级脚本 | 勿执行 |
@@ -65,6 +66,7 @@
 - 上线任务历史保留规则前，在目标项目的 SQL Editor 审查并执行 `sql/20260904_task_history_and_cancellation.sql`。执行后，删除只会取消上海时区当天及之后的待完成任务；回收站只可物理清理没有完成或积分历史的已取消任务。
 - 移除任务驳回能力前，在目标项目的 SQL Editor 审查并执行 `sql/20260904_remove_task_rejection.sql`。该脚本会删除 `reject_task` RPC，但不会删除既有的已驳回任务和积分流水。
 - 上线分类任务包前，在目标项目的 SQL Editor 审查并执行 `sql/20260906_category_task_bundles.sql`。该脚本按新版规则清空任务域数据（含孩子积分和积分流水），创建分类-任务模板关联、分类改名与原子排程 RPC；确认目标环境允许清空后才能执行。
+- 上线柠檬视频授权复用前，在目标项目 SQL Editor 审查并执行 `sql/20260921_family_video_drive_token_cache.sql`。执行其末尾验证查询时不得展示 `access_token`；应确认表已启用 RLS 且策略查询为空。随后再部署依赖该表的 `family-video-drive` 函数版本。该表只允许 service-role 访问，严禁添加客户端策略或把查询结果、token、请求头、下载链接写入日志。
 - 上线远程闹钟前，先确认 `binding_codes` 中 monitor 绑定成功后会保留 `device_id` 且状态为 `active` 或 `used`，再审查并执行 `sql/20260906_remote_alarms.sql`。执行后在 Dashboard 核对 `alarms` 的 Realtime 复制；当前 Android 正式保障路径仍是启动/解锁立即对账与 15 分钟网络同步，不能把 Realtime 当作唯一投递机制。
 - 家庭自定义音乐按顺序审查并执行 `20260914_alarm_background_music_storage.sql`、`20260914_alarm_family_background_music.sql`、`20260915_alarm_family_background_music_storage_rls_fix.sql` 与 `20260915_alarm_family_background_music_storage_read_rls_fix.sql`。家长端上传 MP3/OGG 到私有 `alarm-family-background-music` 的 `custom/{family_id}/{music_id}/v1/background.{ogg|mp3}`；仅本人家庭家长可写，本家庭已绑定 Pad 可读。不得向客户端配置 service-role 或对象删除策略。
 - 已执行初版求助表脚本的环境，先执行 `sql/20260801_literacy_help_content.sql`，再依次执行两个 `20260802` 认字迁移、`sql/20260804_literacy_learning_items.sql`、`sql/20260804_recognized_characters.sql`、`sql/20260805_literacy_help_request_sources.sql`、`sql/20260806_literacy_help_request_clicked_character.sql` 和 `sql/20260806_literacy_tts_assets.sql`；完成后不要再执行旧评测或旧建表脚本。
