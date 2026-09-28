@@ -97,6 +97,11 @@ fun TaskCard(
     val isDone = task.status == "DONE" || task.status == "VERIFIED"
     val isExpired = task.status == "EXPIRED" || task.status == "REJECTED"
 
+    if (density == TaskCardDensity.Standard) {
+        HomeTaskCard(task, isPlaying, sectionColor, isDone, isExpired, onSpeak, onMarkDone, onUndo)
+        return
+    }
+
     when {
         isDone -> DoneTaskCard(task = task, density = density, onUndo = onUndo)
         isExpired -> ExpiredTaskCard(

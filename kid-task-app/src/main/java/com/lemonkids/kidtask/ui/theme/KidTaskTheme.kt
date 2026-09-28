@@ -12,7 +12,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// ========== 卡通糖果色板（来源 v0 设计稿） ==========
+// 公共壳层与今日任务使用的 Stitch 柠檬主题令牌。
+val Lemon = Color(0xFFFACC15)
+val LemonPressed = Color(0xFFEAB308)
+val LemonShadow = Color(0xFFCA8A04)
+val LemonSoft = Color(0xFFFEF08A)
+val LemonBorder = Color(0xFFFDE68A)
+val Canvas = Color(0xFFFFFDF5)
+val Butter = Color(0xFFFFF9E6)
+val FreshMint = Color(0xFF22C55E)
+val FreshMintSoft = Color(0xFFDCFCE7)
+val FreshMintShadow = Color(0xFF15803D)
+val Strawberry = Color(0xFFFB7185)
+val StrawberrySoft = Color(0xFFFFE4E6)
+val SkyBlue = Color(0xFF38BDF8)
+val SkyBlueSoft = Color(0xFFE0F2FE)
+val SlateInk = Color(0xFF334155)
+val SlateMuted = Color(0xFF64748B)
+val TaskPanel = Color(0xFFF4F7FF)
+
+// 旧页面继续使用原有令牌；后续批次按各自设计替换。
 
 /** 主粉色 #FF85A2 — 按钮主色、选中态 */
 val Pink = Color(0xFFFF85A2)
@@ -48,31 +67,32 @@ val MutedGray = Color(0xFFA3A3A3)
 val MutedBg = Color(0xFFF5F0EB)
 
 private val KidLightColors = lightColorScheme(
-    primary = Pink,
-    onPrimary = Color.White,
-    primaryContainer = PinkSoft,
-    secondary = Lavender,
+    primary = Lemon,
+    onPrimary = SlateInk,
+    primaryContainer = LemonSoft,
+    secondary = FreshMint,
     onSecondary = Color.White,
-    secondaryContainer = LavenderSoft,
-    tertiary = Mint,
-    background = Cream,
+    secondaryContainer = FreshMintSoft,
+    tertiary = Strawberry,
+    background = Canvas,
     surface = Color.White,
-    surfaceVariant = MutedBg,
+    surfaceVariant = Butter,
     error = Coral,
-    outline = Color(0xFFE0D8D0),
-    onSurfaceVariant = MutedGray
+    outline = LemonBorder,
+    onSurface = SlateInk,
+    onSurfaceVariant = SlateMuted
 )
 
 private val KidShapes = Shapes(
     small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(28.dp)
+    medium = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(28.dp),
+    extraLarge = RoundedCornerShape(32.dp)
 )
 
 private val KidTypography = Typography(
-    headlineLarge = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.ExtraBold),
-    headlineMedium = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.ExtraBold),
+    headlineLarge = TextStyle(fontSize = 32.sp, fontWeight = FontWeight.ExtraBold),
+    headlineMedium = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.ExtraBold),
     titleLarge = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold),
     titleMedium = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold),
     bodyLarge = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium),
