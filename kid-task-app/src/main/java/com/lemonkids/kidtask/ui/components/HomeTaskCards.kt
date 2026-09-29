@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -78,7 +77,7 @@ internal fun HomeTaskCard(
                     Text(task.title, color = HomeInk.copy(alpha = 0.75f), fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold, textDecoration = TextDecoration.LineThrough,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("已完成 · 获得 ${task.rewardPoints} 颗星星 ⭐", color = Color(0xFF006E2F),
+                    Text("获得 ${task.rewardPoints} 颗星星", color = Color(0xFF006E2F),
                         fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Text("撤销", modifier = Modifier.clip(RoundedCornerShape(8.dp))
@@ -162,12 +161,8 @@ private fun PendingTaskInfo(
 private fun HomeCompleteButton(onClick: () -> Unit) {
     Surface(shape = CircleShape, color = Lemon, shadowElevation = 3.dp,
         modifier = Modifier.clickable(role = Role.Button, onClick = onClick)) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFF231B00), modifier = Modifier.size(18.dp))
-            Text("我做完啦！", color = Color(0xFF231B00), fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                maxLines = 1)
-        }
+        Text("打卡", modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+            color = Color(0xFF231B00), fontSize = 14.sp, fontWeight = FontWeight.Bold,
+            maxLines = 1)
     }
 }
