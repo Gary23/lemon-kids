@@ -3,7 +3,6 @@ package com.lemonkids.kidtask.feature.calendar
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.Task
-import com.lemonkids.shared.model.TaskStatus
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.RewardRepository
 import com.lemonkids.shared.repository.TaskRepository
@@ -15,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.YearMonth
 import javax.inject.Inject
 
 data class CalendarUiState(
@@ -25,6 +25,51 @@ data class CalendarUiState(
     val isLoading: Boolean = false,
     val confirmDialogTaskId: String? = null,
     val undoDialogTaskId: String? = null
+) {
+    val selectedSummary: DayTaskSummary get() = dayTaskSummary(tasksByDate[selectedDate].orEmpty())
+}
+
+data class DayTaskSummary(val total: Int, val completed: Int, val earnedStars: Int = 0) {
+    val status: DayTaskStatus get() = when {
+        total == 0 -> DayTaskStatus.EMPTY
+        completed == total -> DayTaskStatus.COMPLETE
+        else -> DayTaskStatus.PENDING
+    }
+}
+
+enum class DayTaskStatus { EMPTY, COMPLETE, PENDING }
+
+fun dayTaskSummary(tasks: List<TaskUiItem>): DayTaskSummary {
+    val completed = tasks.filter { it.status == "DONE" || it.status == "VERIFIED" }
+    return DayTaskSummary(tasks.size, completed.size, completed.sumOf { it.rewardPoints })
+}
+
+fun dayDisplayStatus(date: LocalDate, today: LocalDate, summary: DayTaskSummary): DayTaskStatus =
+    when {
+        summary.status == DayTaskStatus.COMPLETE -> DayTaskStatus.COMPLETE
+        date.isAfter(today) || summary.status == DayTaskStatus.EMPTY -> DayTaskStatus.EMPTY
+        else -> DayTaskStatus.PENDING
+    }
+
+fun sortCalendarTasks(tasks: List<TaskUiItem>): List<TaskUiItem> =
+    tasks.sortedWith(compareBy<TaskUiItem> { it.dueTime.isNullOrBlank() }
+        .thenBy { it.dueTime ?: "" })
+
+fun selectedDateForMonth(target: YearMonth, today: LocalDate): LocalDate =
+    if (YearMonth.from(today) == target) today else target.atDay(1)
+
+fun CalendarUiState.withSelectedDate(date: LocalDate): CalendarUiState = copy(
+    year = date.year, month = date.monthValue, selectedDate = date.toString()
+)
+
+/** 无后端来源的看板视觉示例，所有使用处须标明“演示”。 */
+data class CalendarDemoUiState(
+    val checkInDays: String = "12天",
+    val stars: String = "38颗",
+    val perfectDays: String = "8天",
+    val completionRate: String = "86%",
+    val encouragement: String = "每完成一件小事，都是向前迈出的一步。继续加油！",
+    val footprints: List<String> = listOf("认真完成任务", "坚持阅读", "帮助家人")
 )
 
 @HiltViewModel
@@ -49,8 +94,7 @@ class CalendarViewModel @Inject constructor(
                     .filter { !it.dueDate.isNullOrEmpty() }
                     .groupBy { it.dueDate }
                     .mapValues { (_, list) ->
-                        list.map { it.toUiItem() }
-                            .sortedWith(taskSort)
+                        sortCalendarTasks(list.map { it.toUiItem() })
                     }
                 _uiState.value = _uiState.value.copy(
                     tasksByDate = grouped,
@@ -61,22 +105,18 @@ class CalendarViewModel @Inject constructor(
     }
 
     fun selectDate(date: String) {
-        _uiState.value = _uiState.value.copy(selectedDate = date)
+        val selected = runCatching { LocalDate.parse(date) }.getOrNull() ?: return
+        _uiState.value = _uiState.value.withSelectedDate(selected)
     }
 
     fun shiftMonth(delta: Int) {
         val current = _uiState.value
-        val newMonth = current.month + delta
-        val newYear = if (newMonth < 1) {
-            current.year - 1
-        } else if (newMonth > 12) {
-            current.year + 1
-        } else {
-            current.year
-        }
-        val finalMonth = if (newMonth < 1) 12 else if (newMonth > 12) 1 else newMonth
-        _uiState.value = current.copy(year = newYear, month = finalMonth)
+        val target = YearMonth.of(current.year, current.month).plusMonths(delta.toLong())
+        val selected = selectedDateForMonth(target, LocalDate.now())
+        _uiState.value = current.withSelectedDate(selected)
     }
+
+    fun goToToday() = selectDate(LocalDate.now().toString())
 
     // ==================== 完成任务 ====================
 
@@ -130,8 +170,4 @@ class CalendarViewModel @Inject constructor(
         dueDate = dueDate, dueTime = dueTime, rewardPoints = rewardPoints, penaltyPoints = penaltyPoints,
         sourceCategoryId = sourceCategoryId
     )
-}
-
-private val taskSort = compareBy<TaskUiItem> {
-    when (it.status) { "PENDING" -> 0; "DONE", "VERIFIED" -> 1; else -> 2 }
 }

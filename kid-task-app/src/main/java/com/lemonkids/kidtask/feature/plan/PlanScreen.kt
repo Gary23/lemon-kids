@@ -55,6 +55,7 @@ import com.lemonkids.kidtask.ui.theme.MutedGray
 import com.lemonkids.kidtask.ui.theme.Pink
 import com.lemonkids.kidtask.ui.theme.Sunny
 import com.lemonkids.shared.model.TaskStatus
+import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.TaskRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -82,8 +83,25 @@ data class PlanTaskItem(
     val id: String,
     val title: String,
     val rewardPoints: Int,
-    val dueTime: String?
+    val dueTime: String?,
+    val status: TaskStatus
 )
+
+fun buildFutureDateGroups(tasks: List<Task>, today: LocalDate): List<DateGroup> = tasks
+    .mapNotNull { task ->
+        val date = runCatching { LocalDate.parse(task.dueDate) }.getOrNull()
+        if (date != null && date.isAfter(today)) date to task else null
+    }
+    .groupBy({ it.first }, { it.second })
+    .toSortedMap()
+    .map { (date, dayTasks) ->
+        DateGroup(
+            date = date.toString(),
+            display = "${date.year}年${date.monthValue}月${date.dayOfMonth}日计划",
+            tasks = dayTasks.sortedWith(compareBy<Task> { it.dueTime ?: "" }.thenBy { it.title })
+                .map { PlanTaskItem(it.id, it.title, it.rewardPoints, it.dueTime, it.status) }
+        )
+    }
 
 @HiltViewModel
 class PlanViewModel @Inject constructor(
@@ -102,38 +120,9 @@ class PlanViewModel @Inject constructor(
         viewModelScope.launch {
             val userId = authRepository.currentUserId ?: return@launch
             taskRepository.observeChildTasks(userId).collect { tasks ->
-                val today = LocalDate.now()
-                val dayOfWeek = today.dayOfWeek.value
-                val endOfWeek = if (dayOfWeek >= 6) {
-                    today.plusDays(((7 - dayOfWeek) + 7).toLong())
-                } else {
-                    today.plusDays((7 - dayOfWeek).toLong())
-                }
-
-                val grouped = tasks
-                    .filter { task ->
-                        try {
-                            val d = LocalDate.parse(task.dueDate)
-                            d > today && !d.isAfter(endOfWeek) && task.status == TaskStatus.PENDING
-                        } catch (_: Exception) { false }
-                    }
-                    .groupBy { it.dueDate }
-                    .mapValues { (_, list) ->
-                        list.map {
-                            PlanTaskItem(id = it.id, title = it.title, rewardPoints = it.rewardPoints, dueTime = it.dueTime)
-                        }
-                    }
-                    .entries
-                    .sortedBy { it.key }
-                    .map { (date, tasks) ->
-                        val display = try {
-                            val d = LocalDate.parse(date)
-                            "${d.year}年${"%02d".format(d.monthValue)}月${"%02d".format(d.dayOfMonth)}日计划"
-                        } catch (_: Exception) { date }
-                        DateGroup(date = date, display = display, tasks = tasks)
-                    }
-
-                _uiState.value = _uiState.value.copy(isLoading = false, dateGroups = grouped)
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false, dateGroups = buildFutureDateGroups(tasks, LocalDate.now())
+                )
             }
         }
     }
@@ -157,7 +146,7 @@ fun PlanScreen(
     Surface(modifier = Modifier.fillMaxSize(), color = Cream) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
-                title = { Text("计划", fontWeight = FontWeight.ExtraBold) },
+                title = { Text("未来计划", fontWeight = FontWeight.ExtraBold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -166,6 +155,9 @@ fun PlanScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Cream),
                 windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp)
             )
+
+            Text("全部未来有日期的任务 · 只读浏览", modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                color = MutedGray, fontSize = 13.sp)
 
             if (uiState.isLoading && uiState.dateGroups.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -176,7 +168,7 @@ fun PlanScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("🌈", fontSize = 48.sp)
                         Spacer(Modifier.height(12.dp))
-                        Text("暂无计划任务", fontSize = 16.sp, color = MutedGray)
+                        Text("暂无未来日期任务", fontSize = 16.sp, color = MutedGray)
                     }
                 }
             } else {
@@ -252,13 +244,20 @@ private fun DateFoldCard(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    task.title,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = InkBrown,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(task.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = InkBrown)
+                                    Text(
+                                        when (task.status) {
+                                            TaskStatus.PENDING -> "待完成"
+                                            TaskStatus.DONE -> "已完成"
+                                            TaskStatus.VERIFIED -> "已确认"
+                                            TaskStatus.EXPIRED -> "已过期"
+                                            TaskStatus.REJECTED -> "未通过"
+                                        },
+                                        fontSize = 12.sp,
+                                        color = if (task.status == TaskStatus.DONE || task.status == TaskStatus.VERIFIED) com.lemonkids.kidtask.ui.theme.FreshMint else MutedGray
+                                    )
+                                }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Filled.Star, contentDescription = null, tint = Sunny, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(2.dp))

@@ -122,7 +122,7 @@ fun TaskCard(
     }
 }
 
-/** 待完成任务卡片 — 喇叭朗读 + 标题/描述/积分/截止时间 + 我做完啦按钮 */
+/** 待完成任务卡片 — 喇叭朗读 + 标题/描述/积分/截止时间 + 完成图标按钮 */
 @Composable
 fun PendingTaskCard(
     task: TaskUiItem,
@@ -202,23 +202,12 @@ fun PendingTaskCard(
                 }
             }
             Spacer(Modifier.width(if (isCompact) 6.dp else 8.dp))
-            // 完成按钮
-            Button(
-                onClick = { onMarkDone(task.id) },
-                shape = RoundedCornerShape(20.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = sectionColor),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    horizontal = if (isCompact) 12.dp else 16.dp,
-                    vertical = if (isCompact) 8.dp else 12.dp
-                )
-            ) {
-                Text("我做完啦！", fontSize = if (isCompact) 13.sp else 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-            }
+            TaskActionIconButton(density, isExpired = false) { onMarkDone(task.id) }
         }
     }
 }
 
-/** 已完成任务卡片 — 绿色对勾 + 标题 + 积分 + 撤销 */
+/** 已完成任务卡片 — 绿色状态对勾 + 标题 + 积分 + 撤销图标按钮 */
 @Composable
 fun DoneTaskCard(task: TaskUiItem, density: TaskCardDensity, onUndo: (String) -> Unit) {
     val isCompact = density == TaskCardDensity.Compact
@@ -250,18 +239,12 @@ fun DoneTaskCard(task: TaskUiItem, density: TaskCardDensity, onUndo: (String) ->
                 Text(task.title, fontSize = if (isCompact) 16.sp else 17.sp, fontWeight = FontWeight.Bold, color = InkBrown)
                 Text("✅ 已完成 · 得到 ${task.rewardPoints} 颗星星", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Mint)
             }
-            Text(
-                "撤销",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = MutedGray,
-                modifier = Modifier.clickable { onUndo(task.id) }
-            )
+            TaskUndoIconButton(density) { onUndo(task.id) }
         }
     }
 }
 
-/** 过期任务卡片 — 灰色时钟 + 标题 + 截止时间 + 补做啦 */
+/** 过期任务卡片 — 灰色时钟 + 标题 + 截止时间 + 补做图标按钮 */
 @Composable
 fun ExpiredTaskCard(
     task: TaskUiItem,
@@ -297,17 +280,7 @@ fun ExpiredTaskCard(
                 Text(task.title, fontSize = if (isCompact) 16.sp else 17.sp, fontWeight = FontWeight.Bold, color = MutedGray)
                 Text("⏰ 已错过 · 截止 ${task.dueTime ?: ""}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MutedGray)
             }
-            Button(
-                onClick = { onMarkDone(task.id) },
-                shape = RoundedCornerShape(20.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Coral.copy(alpha = 0.9f)),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    horizontal = if (isCompact) 12.dp else 16.dp,
-                    vertical = if (isCompact) 8.dp else 10.dp
-                )
-            ) {
-                Text("补做啦", fontSize = if (isCompact) 13.sp else 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-            }
+            TaskActionIconButton(density, isExpired = true) { onMarkDone(task.id) }
         }
     }
 }

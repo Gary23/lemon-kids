@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CardGiftcard
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -45,7 +44,6 @@ import com.lemonkids.kidtask.ui.theme.LemonBorder
 import com.lemonkids.kidtask.ui.theme.SlateInk
 import com.lemonkids.kidtask.ui.theme.SlateMuted
 import com.lemonkids.kidtask.ui.theme.Strawberry
-import com.lemonkids.kidtask.ui.theme.TaskPanel
 import com.lemonkids.kidtask.ui.theme.KidTaskTheme
 
 @Composable
@@ -84,7 +82,7 @@ fun HomeDashboard(
                 val categoryIds = state.categories.associate { it.name to it.id }
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    TaskColumn("待完成任务", "还有 ${pending.size} 个", Strawberry, pending, categoryIds,
+                    TaskColumn("待完成任务", "还有 ${pending.size} 个", Lemon, pending, categoryIds,
                         playingTaskId, state.syncingTaskIds, onSpeak, onMarkDone, onUndo, Modifier.weight(1.25f))
                     TaskColumn("今天已完成", "${completed.size} 项", FreshMint, completed, categoryIds,
                         playingTaskId, state.syncingTaskIds, onSpeak, onMarkDone, onUndo, Modifier.weight(0.75f))
@@ -100,20 +98,20 @@ private fun ProgressHero(total: Int, layout: HomeTaskLayout) {
     val completed = layout.completed.size
     val progress = layout.progressPercent / 100f
     Surface(
-        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(32.dp), color = TaskPanel,
-        border = BorderStroke(1.dp, LemonBorder.copy(alpha = 0.6f)), shadowElevation = 2.dp
+        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(32.dp), color = Color(0xFFEFF4FF),
+        border = BorderStroke(1.dp, Color(0xFFDCE9FF).copy(alpha = 0.5f)), shadowElevation = 2.dp
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(24.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            ProgressRing(progress, Modifier.size(90.dp))
+            ProgressRing(progress, completed, total, Modifier.size(80.dp))
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text("今日已完成 $completed/$total 项 (${layout.progressPercent}%)", color = SlateInk,
+                Text("今日已完成 $completed/$total 项 (${layout.progressPercent}%)", color = Color(0xFF0D1C2E),
                     fontSize = 25.sp, fontWeight = FontWeight.ExtraBold)
                 Text(if (total == 0) "今天还没有安排任务" else if (completed == total) "太棒啦，今天的成长任务全部完成！"
-                    else "再完成 ${total - completed} 个任务，就能点亮更多星星！", color = SlateMuted, fontSize = 15.sp)
+                    else "再完成 ${total - completed} 个任务，就能点亮更多星星！", color = Color(0xFF4D4632), fontSize = 15.sp)
             }
             MysteryBox()
         }
@@ -121,13 +119,13 @@ private fun ProgressHero(total: Int, layout: HomeTaskLayout) {
 }
 
 @Composable
-private fun ProgressRing(progress: Float, modifier: Modifier = Modifier) {
+private fun ProgressRing(progress: Float, completed: Int, total: Int, modifier: Modifier = Modifier) {
     Box(modifier = modifier.background(Color.White, CircleShape), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxSize().padding(7.dp),
-            color = FreshMint, trackColor = LemonBorder.copy(alpha = 0.5f), strokeWidth = 7.dp)
+        CircularProgressIndicator(progress = { progress }, modifier = Modifier.size(64.dp),
+            color = FreshMint, trackColor = LemonBorder.copy(alpha = 0.5f), strokeWidth = 6.dp)
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("${(progress * 100).toInt()}%", color = SlateInk, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-            Icon(Icons.Filled.Star, contentDescription = null, tint = Lemon, modifier = Modifier.size(14.dp))
+            Text("${(progress * 100).toInt()}%", color = Color(0xFF0D1C2E), fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+            Text("$completed / $total", color = Color(0xFF4D4632), fontSize = 9.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -164,7 +162,7 @@ private fun TaskColumn(
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.width(8.dp).height(28.dp).background(accent, CircleShape))
+            Box(Modifier.width(12.dp).height(28.dp).background(accent, CircleShape))
             Text(title, modifier = Modifier.weight(1f), color = SlateInk, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
             StatusBadge(count, if (accent == FreshMint) FreshMintSoft else LemonBorder,
                 if (accent == FreshMint) FreshMint else SlateInk)
