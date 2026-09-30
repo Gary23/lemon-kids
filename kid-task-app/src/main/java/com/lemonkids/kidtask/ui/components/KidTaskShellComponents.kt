@@ -44,7 +44,7 @@ import com.lemonkids.kidtask.ui.theme.Strawberry
 import com.lemonkids.kidtask.ui.theme.StrawberrySoft
 
 @Composable
-fun ChildSummary(points: Int, streakDays: Int, modifier: Modifier = Modifier) {
+fun ChildSummary(points: Int?, pointsUnavailable: Boolean, streakDays: Int, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Surface(shape = CircleShape, color = Lemon, modifier = Modifier.size(42.dp)) {
@@ -57,7 +57,8 @@ fun ChildSummary(points: Int, streakDays: Int, modifier: Modifier = Modifier) {
         }
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             SummaryBadge(Icons.Filled.LocalFireDepartment, "连续 $streakDays 天", Strawberry, StrawberrySoft, Modifier.fillMaxWidth())
-            SummaryBadge(Icons.Filled.Star, "$points 积分", LemonShadow, LemonBorder, Modifier.fillMaxWidth())
+            val pointsLabel = points?.let { "$it 积分" } ?: if (pointsUnavailable) "积分暂不可用" else "积分读取中"
+            SummaryBadge(Icons.Filled.Star, pointsLabel, LemonShadow, LemonBorder, Modifier.fillMaxWidth())
         }
     }
 }

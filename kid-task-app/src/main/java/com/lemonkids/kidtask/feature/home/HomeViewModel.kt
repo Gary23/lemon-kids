@@ -33,6 +33,9 @@ data class HomeUiState(
     /** 明天及以后的任务，日期升序 */
     val upcomingTasks: List<TaskUiItem> = emptyList(),
     val points: Int = 0,
+    /** 首次真实积分流结果到达前，不能把默认 0 解释为账户余额。 */
+    val isPointsLoaded: Boolean = false,
+    val isPointsLoadTimedOut: Boolean = false,
     val previousPoints: Int = 0,
     val earnedPoints: Int = 0,
     val showPointsAnimation: Boolean = false,
@@ -173,7 +176,18 @@ class HomeViewModel @Inject constructor(
 
             launch {
                 rewardRepository.getCurrentPoints(userId).collect { points ->
-                    _uiState.value = _uiState.value.copy(points = points)
+                    _uiState.value = _uiState.value.copy(
+                        points = points,
+                        isPointsLoaded = true,
+                        isPointsLoadTimedOut = false
+                    )
+                }
+            }
+
+            launch {
+                kotlinx.coroutines.delay(8000)
+                if (!_uiState.value.isPointsLoaded) {
+                    _uiState.value = _uiState.value.copy(isPointsLoadTimedOut = true)
                 }
             }
 

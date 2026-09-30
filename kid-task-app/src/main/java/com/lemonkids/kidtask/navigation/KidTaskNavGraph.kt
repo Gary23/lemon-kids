@@ -231,7 +231,8 @@ fun KidTaskMainScreen() {
         KidTaskSidebar(
             tabs = tabs,
             selectedRoute = selectedTab,
-            points = homeState.points,
+            points = homeState.points.takeIf { homeState.isPointsLoaded },
+            pointsUnavailable = homeState.isPointsLoadTimedOut,
             streakDays = homeState.streakDays,
             onSelect = onSelect
         )
@@ -243,7 +244,8 @@ fun KidTaskMainScreen() {
 private fun KidTaskSidebar(
     tabs: List<KidTaskTab>,
     selectedRoute: String?,
-    points: Int,
+    points: Int?,
+    pointsUnavailable: Boolean,
     streakDays: Int,
     onSelect: (KidTaskTab) -> Unit
 ) {
@@ -292,7 +294,7 @@ private fun KidTaskSidebar(
             }
             Column {
                 HorizontalDivider(color = LemonBorder)
-                ChildSummary(points, streakDays, Modifier.padding(top = 16.dp))
+                ChildSummary(points, pointsUnavailable, streakDays, Modifier.padding(top = 16.dp))
             }
         }
     }
@@ -303,9 +305,22 @@ private fun KidTaskContent(navController: NavHostController, homeViewModel: Home
     NavHost(navController = navController, startDestination = KidTaskTab.Home.route, modifier = modifier) {
         composable(KidTaskTab.Home.route) { HomeScreen(viewModel = homeViewModel) }
         composable(KidTaskTab.Calendar.route) { CalendarScreen() }
-        composable(KidTaskTab.Reward.route) { RewardScreen() }
+        composable(KidTaskTab.Reward.route) {
+            val homeState by homeViewModel.uiState.collectAsState()
+            RewardScreen(
+                realPoints = homeState.points.takeIf { homeState.isPointsLoaded },
+                pointsUnavailable = homeState.isPointsLoadTimedOut,
+                streakDays = homeState.streakDays,
+                onCalendarClick = { navController.navigate(KidTaskTab.Calendar.route) }
+            )
+        }
         composable(KidTaskTab.Profile.route) {
-            ProfileScreen(onPlanClick = { navController.navigate("plan") })
+            val homeState by homeViewModel.uiState.collectAsState()
+            ProfileScreen(
+                realPoints = homeState.points.takeIf { homeState.isPointsLoaded },
+                pointsUnavailable = homeState.isPointsLoadTimedOut,
+                onPlanClick = { navController.navigate("plan") }
+            )
         }
         composable("plan") { PlanScreen(onBack = { navController.popBackStack() }) }
     }
