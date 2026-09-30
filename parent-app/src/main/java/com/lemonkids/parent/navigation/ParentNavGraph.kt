@@ -45,6 +45,7 @@ import com.lemonkids.parent.feature.profile.CategoryManageScreen
 import com.lemonkids.parent.feature.profile.DeviceStatusLogScreen
 import com.lemonkids.parent.feature.profile.FamilyManageScreen
 import com.lemonkids.parent.feature.profile.RecycleBinScreen
+import com.lemonkids.parent.feature.profile.RewardManageScreen
 import com.lemonkids.parent.feature.profile.TaskTemplateManageScreen
 import com.lemonkids.parent.feature.profile.ProfileScreen as ParentProfileScreen
 import com.lemonkids.parent.feature.tasks.TaskEditScreen
@@ -181,6 +182,8 @@ private fun ParentMainScreen() {
                     navController.navigate("task_template_manage")
                 }, onCategoryManageClick = {
                     navController.navigate("category_manage")
+                }, onRewardManageClick = {
+                    navController.navigate("reward_manage")
                 }, onRecycleBinClick = {
                     navController.navigate("recycle_bin")
                 }, onDeviceStatusLogClick = {
@@ -192,6 +195,9 @@ private fun ParentMainScreen() {
             }
             composable("category_manage") {
                 CategoryManageScreen(onBack = { navController.popBackStack() })
+            }
+            composable("reward_manage") {
+                RewardManageScreen(onBack = { navController.popBackStack() })
             }
             composable("task_template_manage") {
                 TaskTemplateManageScreen(onBack = { navController.popBackStack() })

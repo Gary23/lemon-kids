@@ -6,8 +6,10 @@ import kotlinx.coroutines.flow.Flow
 
 interface RewardRepository {
     fun observeRewards(familyId: String): Flow<List<Reward>>
+    suspend fun getAllRewards(familyId: String): Result<List<Reward>>
     suspend fun createReward(reward: Reward): Result<String>
     suspend fun updateReward(reward: Reward): Result<Unit>
+    suspend fun setRewardActive(rewardId: String, familyId: String, active: Boolean): Result<Unit>
     suspend fun deleteReward(rewardId: String): Result<Unit>
     suspend fun redeemReward(rewardId: String, childId: String): Result<Unit>
     fun observePointRecords(childId: String): Flow<List<PointRecord>>

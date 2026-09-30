@@ -16,6 +16,7 @@
 | 任务库 | `feature/profile/TaskTemplateManageScreen.kt`；模板数据由共享的 `TaskTemplateRepository` 管理 |
 | 使用监管 | `feature/monitor/MonitorScreen.kt`、`MonitorViewModel.kt` |
 | 家庭、分类、回收站、日志 | `feature/profile/` |
+| 奖励管理 | `feature/profile/RewardManageScreen.kt`、`RewardManageViewModel.kt`；经 `:shared` 奖励仓库维护家庭奖励目录 |
 
 ## 任务约束
 
@@ -31,6 +32,7 @@
 - 家长删除任务实际为取消：仅当天及未来的待完成任务可取消；昨天及以前或已经完成的任务保留为历史。回收站仅能物理清理没有完成和积分历史的已取消任务。
 - 任务管理首页列表仅展示当天任务；过去和未来日期的任务统一通过日历视图查看。
 - 家长端在应用运行时收到新完成任务会显示系统通知；离线远程推送未接入。
+- 在“我的 > 奖励管理”维护家庭共用的待兑换奖励：创建、编辑、停用和启用，设置正整数价格、一次性或常规类型、说明、预设封面及大心愿。同一家庭最多一个启用的大心愿；停用保留奖励历史。孩子已兑换奖励的使用、取消及退星由孩子端独立处理。
 
 ## 路由与跨端约束
 
