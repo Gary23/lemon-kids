@@ -3,11 +3,11 @@ package com.lemonkids.kidtask.feature.reward
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,16 +23,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,15 +47,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.lemonkids.shared.model.Reward
+import com.lemonkids.shared.model.PointRecord
+import com.lemonkids.shared.model.RewardRedemption
+import com.lemonkids.shared.model.RewardRedemptionStatus
 import com.lemonkids.kidtask.R
 import com.lemonkids.kidtask.ui.components.StatusBadge
-import com.lemonkids.kidtask.ui.theme.Butter
-import com.lemonkids.kidtask.ui.theme.Canvas
 import com.lemonkids.kidtask.ui.theme.FreshMint
 import com.lemonkids.kidtask.ui.theme.FreshMintSoft
+import com.lemonkids.kidtask.ui.theme.FreshMintShadow
 import com.lemonkids.kidtask.ui.theme.Lemon
 import com.lemonkids.kidtask.ui.theme.LemonBorder
 import com.lemonkids.kidtask.ui.theme.LemonShadow
@@ -61,91 +69,132 @@ import com.lemonkids.kidtask.ui.theme.SlateInk
 import com.lemonkids.kidtask.ui.theme.SlateMuted
 import com.lemonkids.kidtask.ui.theme.Strawberry
 import com.lemonkids.kidtask.ui.theme.StrawberrySoft
+import kotlin.math.abs
 
 @Composable
 fun RewardScreen(
-    realPoints: Int?,
-    pointsUnavailable: Boolean,
-    streakDays: Int,
     onCalendarClick: () -> Unit,
     viewModel: RewardViewModel = hiltViewModel()
 ) {
-    val demo by viewModel.demoState.collectAsStateWithLifecycle()
-    demo.feedback?.let { message ->
-        Dialog(onDismissRequest = viewModel::clearFeedback) {
-            Surface(shape = RoundedCornerShape(32.dp), color = Color.White, shadowElevation = 12.dp) {
-                Column(Modifier.fillMaxWidth().padding(26.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text("🎉", fontSize = 52.sp)
-                    Text("演示申请已记录！", fontSize = 25.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk)
-                    Text(message, fontSize = 14.sp, color = SlateMuted)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        DialogNumber("扣除星星", "0 颗 ⭐", Modifier.weight(1f))
-                        DialogNumber("真实余额", realPoints?.let { "$it 颗 ⭐" } ?: if (pointsUnavailable) "暂不可用" else "读取中", Modifier.weight(1f))
-                    }
-                    Button(onClick = viewModel::clearFeedback, modifier = Modifier.fillMaxWidth(),
-                        shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Lemon)) {
-                        Text("太棒啦，我知道了 🥳", fontWeight = FontWeight.Bold, color = SlateInk)
-                    }
-                }
-            }
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refresh()
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-
+    state.confirmation?.let { action ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissConfirmation,
+            title = { Text(when (action.action) {
+                RewardAction.REDEEM -> "确认兑换"
+                RewardAction.USE -> "确认标记已使用"
+                RewardAction.CANCEL -> "确认取消兑换"
+            }) },
+            text = { Text(when (action.action) {
+                RewardAction.REDEEM -> "兑换“${action.title}”将扣除 ${action.cost} 颗星星，预计剩余 ${(state.snapshot?.balance ?: 0) - action.cost} 颗。"
+                RewardAction.USE -> "“${action.title}”将标记为已使用并保留在记录列表，使用后不能取消退星。"
+                RewardAction.CANCEL -> "取消“${action.title}”后将退回兑换时扣除的 ${action.cost} 颗星星。"
+            }) },
+            confirmButton = {
+                Button(onClick = viewModel::submit, enabled = !state.submitting) {
+                    Text(if (state.submitting) "提交中…" else "确认")
+                }
+            },
+            dismissButton = { TextButton(onClick = viewModel::dismissConfirmation, enabled = !state.submitting) { Text("返回") } }
+        )
+    }
+    state.feedback?.let { message ->
+        AlertDialog(onDismissRequest = viewModel::clearFeedback,
+            title = { Text("操作成功") }, text = { Text(message) },
+            confirmButton = { TextButton(onClick = viewModel::clearFeedback) { Text("知道了") } })
+    }
+    val snapshot = state.snapshot
+    val balance = snapshot?.balance
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F9FF)) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val columns = if (maxWidth >= 760.dp) 3 else 2
+            val contentWidth = maxWidth - 44.dp
+            val columns = if (contentWidth >= 714.dp) 3 else if (contentWidth >= 472.dp) 2 else 1
             Column(
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                     .padding(horizontal = 22.dp, vertical = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                RewardGreeting(realPoints, pointsUnavailable, streakDays)
-                BankHeader(realPoints, pointsUnavailable)
-                SectionHeading("正在攒星星的心愿 (进行中大目标)", "特别心愿 · 冲刺中 · 演示")
-                BigWishCard(onCalendarClick)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("随时可兑换的小心愿", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk)
-                        Text("演示心愿：可体验向爸爸妈妈申请兑换的页面效果", fontSize = 13.sp, color = SlateMuted)
-                    }
-                    StatusBadge("${demo.wishes.size} 件现货可兑换 · 演示", FreshMintSoft, FreshMint)
-                }
-                demo.wishes.chunked(columns).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        row.forEach { wish ->
-                            SmallWishCard(
-                                wish, demo.appliedWishIds.contains(wish.id),
-                                { viewModel.requestWish(wish.id) }, Modifier.weight(1f)
-                            )
+                BankHeader(balance, snapshot?.monthlyEarned, state.error != null,
+                    state.refreshing, !state.refreshing && !state.submitting, viewModel::refresh)
+                state.error?.let { error ->
+                    RewardPanel {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(error, color = Strawberry)
+                            TextButton(onClick = viewModel::refresh) { Text("重试") }
                         }
-                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
-                SectionHeading("兑换与奖励记录 📜", "诚实守信，努力看得见 · 演示")
-                RewardPanel {
-                    demo.examples.forEachIndexed { index, example ->
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)
-                                .background(if (index == 0) SkyBlueSoft.copy(alpha = 0.55f) else Butter, RoundedCornerShape(16.dp))
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Surface(shape = RoundedCornerShape(16.dp), color = if (index == 0) SkyBlueSoft else Butter) {
-                                Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) { Text(example.emoji, fontSize = 25.sp) }
+                if (state.loading) {
+                    Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else if (snapshot != null) {
+                    val featured = snapshot.rewards.firstOrNull { it.isFeatured }
+                    if (featured != null) {
+                        SectionHeading("正在攒星星的心愿", "特别心愿 · 冲刺中")
+                        BigWishCard(featured, balance ?: 0,
+                            featured.id in snapshot.unavailableOneTimeIds,
+                            !state.submitting && state.error == null && (state.pendingRequestId == null || state.pendingRewardId == featured.id),
+                            onCalendarClick, { viewModel.confirmRedeem(featured.id) })
+                    }
+                    val ordinary = snapshot.rewards.filter { it.id != featured?.id }
+                    val redeemableCount = ordinary.count { reward ->
+                        reward.redemptionBlockReason(balance, snapshot.unavailableOneTimeIds) == null
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.size(width = 5.dp, height = 30.dp).background(FreshMint, CircleShape))
+                        Column(Modifier.weight(1f)) {
+                            Text("随时可兑换的小心愿", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk)
+                            Text("家长准备的 ${ordinary.size} 件奖励，当前可兑换 $redeemableCount 件", fontSize = 13.sp, color = SlateMuted)
+                        }
+                        StatusBadge("$redeemableCount 件可兑换", FreshMintSoft, FreshMintShadow)
+                    }
+                    if (ordinary.isEmpty()) {
+                        RewardPanel { Text("暂时没有可展示的小心愿", Modifier.padding(22.dp), color = SlateMuted) }
+                    }
+                    ordinary.chunked(columns).forEach { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            row.forEach { reward ->
+                                SmallWishCard(reward, balance ?: 0,
+                                    reward.id in snapshot.unavailableOneTimeIds,
+                                    !state.submitting && state.error == null && (state.pendingRequestId == null || state.pendingRewardId == reward.id),
+                                    { viewModel.confirmRedeem(reward.id) }, Modifier.weight(1f))
                             }
-                            Column(Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("${example.title} ${example.emoji}", fontWeight = FontWeight.Bold, color = SlateInk)
-                                    Spacer(Modifier.width(8.dp))
-                                    StatusBadge("示例 -${example.cost} 颗 ⭐", SkyBlueSoft, Strawberry)
+                            repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.size(width = 5.dp, height = 24.dp).background(SlateMuted, CircleShape))
+                        Text("兑换与奖励记录 📜", Modifier.weight(1f), fontSize = 21.sp,
+                            fontWeight = FontWeight.ExtraBold, color = SlateInk)
+                        Text("诚实守信，努力看得见", fontSize = 12.sp, color = SlateMuted)
+                    }
+                    val records = (snapshot.redemptions
+                        .filter { it.status != RewardRedemptionStatus.CANCELLED }
+                        .map { DisplayRecord(it.redeemedAt, it, null) } +
+                        snapshot.legacyRedemptions.map { DisplayRecord(it.timestamp, null, it) })
+                        .sortedByDescending { it.timestamp }
+                    RewardPanel {
+                        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (records.isEmpty()) RecordEmptyState("还没有兑换记录")
+                            records.forEach { item ->
+                                item.redemption?.let { redemption ->
+                                    RedemptionCard(redemption, !state.submitting && state.error == null && state.pendingRequestId == null,
+                                        { viewModel.confirmUse(redemption.id) }, { viewModel.confirmCancel(redemption.id) })
                                 }
-                                Text(example.note, fontSize = 12.sp, color = SlateMuted)
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text("示例记录", fontSize = 12.sp, color = FreshMint, fontWeight = FontWeight.Bold)
-                                Text(example.date, fontSize = 11.sp, color = SlateMuted)
+                                item.legacy?.let { record ->
+                                    LegacyRedemptionCard(record)
+                                }
                             }
                         }
                     }
@@ -157,35 +206,104 @@ fun RewardScreen(
     }
 }
 
+private data class DisplayRecord(
+    val timestamp: String,
+    val redemption: RewardRedemption?,
+    val legacy: PointRecord?
+)
+
 @Composable
-private fun RewardGreeting(realPoints: Int?, pointsUnavailable: Boolean, streakDays: Int) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text("晚上好，小当家！今天也要加油攒星星～ ☀️", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk)
-            Text("积少成多，离愿望又近一步！", fontSize = 13.sp, color = SlateMuted)
+private fun RedemptionCard(redemption: RewardRedemption, actionsEnabled: Boolean, onUse: () -> Unit, onCancel: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 620.dp && redemption.status == RewardRedemptionStatus.HELD) {
+            Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFFF1F7FC)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RecordSummary("🎁", redemption.title, redemption.cost,
+                        "待使用", redemption.redeemedAt.take(10), Modifier.fillMaxWidth())
+                    RedemptionActions(actionsEnabled, onUse, onCancel, Modifier.align(Alignment.End))
+                }
+            }
+        } else {
+            RecordRow {
+                RecordSummary("🎁", redemption.title, redemption.cost,
+                    if (redemption.status == RewardRedemptionStatus.HELD) "待使用" else "已使用",
+                    redemption.redeemedAt.take(10), Modifier.weight(1f))
+                if (redemption.status == RewardRedemptionStatus.HELD) {
+                    RedemptionActions(actionsEnabled, onUse, onCancel)
+                }
+            }
         }
-        StatusBadge(if (streakDays > 0) "🔥 连续打卡 $streakDays 天" else "🔥 打卡天数待同步", StrawberrySoft, Strawberry)
-        Spacer(Modifier.width(7.dp))
-        StatusBadge("⭐ ${realPoints?.let { "$it 积分" } ?: if (pointsUnavailable) "积分暂不可用" else "读取积分中"}", Butter, LemonShadow)
     }
 }
 
 @Composable
-private fun DialogNumber(label: String, value: String, modifier: Modifier) {
-    Surface(modifier, shape = RoundedCornerShape(18.dp), color = Butter) {
-        Column(Modifier.padding(12.dp)) {
-            Text(label, fontSize = 12.sp, color = SlateMuted)
-            Text(value, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk)
+private fun LegacyRedemptionCard(record: PointRecord) {
+    RecordRow {
+        RecordSummary("📜", record.reason, abs(record.amount).takeIf { it > 0 },
+            "旧版兑换 · 状态未知 · 不可取消退星", record.timestamp.take(10), Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun RedemptionActions(actionsEnabled: Boolean, onUse: () -> Unit, onCancel: () -> Unit,
+                              modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onUse, enabled = actionsEnabled, shape = CircleShape,
+            modifier = Modifier.height(44.dp), contentPadding = PaddingValues(horizontal = 16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006E2F), contentColor = Color.White)) {
+            Text("使用", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Button(onClick = onCancel, enabled = actionsEnabled, shape = CircleShape,
+            modifier = Modifier.height(44.dp), contentPadding = PaddingValues(horizontal = 12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFBE5A34), contentColor = Color.White)) {
+            Text("取消兑换", fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
 
 @Composable
-private fun BankHeader(realPoints: Int?, pointsUnavailable: Boolean) {
-    Surface(
-        shape = RoundedCornerShape(28.dp), color = Lemon,
-        border = BorderStroke(1.dp, LemonBorder), shadowElevation = 5.dp
-    ) {
+private fun RecordRow(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+    Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFFF1F7FC)) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp), content = content)
+    }
+}
+
+@Composable
+private fun RecordSummary(icon: String, title: String, cost: Int?, status: String, date: String,
+                          modifier: Modifier = Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(Modifier.size(44.dp).background(FreshMintSoft, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
+            Text(icon, fontSize = 23.sp)
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(title, Modifier.weight(1f, fill = false), fontWeight = FontWeight.Bold, color = SlateInk,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (cost != null) StatusBadge("-$cost ⭐", Color(0xFFE4EDF4), Strawberry)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(status, Modifier.weight(1f, fill = false), fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    color = if (status == "待使用") Color(0xFF006E2F) else SlateMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(date, fontSize = 12.sp, color = SlateMuted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordEmptyState(message: String) {
+    Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFFF1F7FC)) {
+        Text(message, Modifier.fillMaxWidth().padding(20.dp), color = SlateMuted)
+    }
+}
+
+@Composable
+private fun BankHeader(realPoints: Int?, monthlyEarned: Int?, unavailable: Boolean,
+                       refreshing: Boolean, refreshEnabled: Boolean, onRefresh: () -> Unit) {
+    Surface(shape = RoundedCornerShape(28.dp), color = Lemon,
+        border = BorderStroke(1.dp, LemonBorder), shadowElevation = 5.dp) {
         Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFFFFE083), Lemon, Color(0xFFDCE9FF))))
             .padding(22.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -198,11 +316,19 @@ private fun BankHeader(realPoints: Int?, pointsUnavailable: Boolean) {
                     Text("我的星星银行 🏦", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk)
                     Text("用认真完成的任务，兑换属于你的心愿礼物吧！", fontSize = 13.sp, color = SlateInk)
                 }
-                StatusBadge("爱心愿望池 · 演示", Color.White, Strawberry)
+                Box(Modifier.padding(bottom = 3.dp).background(Color(0xFF005321), CircleShape)) {
+                    Button(onClick = onRefresh, enabled = refreshEnabled, shape = CircleShape,
+                        modifier = Modifier.height(44.dp), contentPadding = PaddingValues(horizontal = 14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF006E2F), contentColor = Color.White,
+                            disabledContainerColor = Color(0xFF006E2F), disabledContentColor = Color.White)) {
+                        Text(if (refreshing) "刷新中…" else "刷新奖励", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                BankBalance("当前可用零花星", realPoints?.toString() ?: if (pointsUnavailable) "暂不可用" else "读取中", "真实积分", false, Modifier.weight(1f))
-                BankBalance("本月累计赚取", "186", "演示数据", true, Modifier.weight(1f))
+                BankBalance("当前可用零花星", realPoints?.toString() ?: if (unavailable) "暂不可用" else "读取中", "真实积分", false, Modifier.weight(1f))
+                BankBalance("本月累计赚取", monthlyEarned?.toString() ?: if (unavailable) "暂不可用" else "读取中", "完成任务所得", true, Modifier.weight(1f))
             }
         }
     }
@@ -231,43 +357,23 @@ private fun BankBalance(title: String, amount: String, tag: String, savings: Boo
 }
 
 @Composable
-private fun BigWishCard(onCalendarClick: () -> Unit) {
-    RewardPanel {
-        Row(Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-            Box {
-                Image(
-                    painter = painterResource(R.drawable.reward_castle), contentDescription = "演示心愿：城堡积木",
-                    modifier = Modifier.size(width = 224.dp, height = 184.dp).clip(RoundedCornerShape(20.dp)),
-                    contentScale = ContentScale.Crop
-                )
-                Surface(Modifier.padding(9.dp), shape = CircleShape, color = Color.White.copy(alpha = 0.92f)) {
-                    Text("终极心愿 🏰", Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                        fontSize = 11.sp, color = Strawberry, fontWeight = FontWeight.Bold)
+private fun BigWishCard(reward: Reward, balance: Int, unavailable: Boolean, actionEnabled: Boolean,
+                        onCalendarClick: () -> Unit, onRedeem: () -> Unit) {
+    val progress = (balance.toFloat() / reward.cost.coerceAtLeast(1)).coerceIn(0f, 1f)
+    val blockReason = reward.redemptionBlockReason(balance, if (unavailable) setOf(reward.id) else emptySet())
+    Surface(shape = RoundedCornerShape(25.dp), color = Color.White,
+        shadowElevation = 10.dp) {
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(20.dp)) {
+            if (maxWidth < 620.dp) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    RewardCover(reward, Modifier.fillMaxWidth().height(170.dp))
+                    BigWishDetails(reward, balance, progress, blockReason, actionEnabled, onCalendarClick, onRedeem)
                 }
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("乐高迪士尼城堡 / 机械组积木套装", Modifier.weight(1f), fontSize = 19.sp,
-                        fontWeight = FontWeight.ExtraBold, color = SlateInk)
-                    Text("⭐ 200 颗", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = LemonShadow)
-                }
-                Text("和爸爸一起拼搭的梦幻城堡，完成每日背诵与早睡任务可以获得额外星星奖励！",
-                    fontSize = 13.sp, color = SlateMuted)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("演示收集进度: 133 / 200 颗", fontWeight = FontWeight.Bold, color = SlateInk, fontSize = 13.sp)
-                    Text("66%", fontWeight = FontWeight.Bold, color = Strawberry, fontSize = 14.sp)
-                }
-                LinearProgressIndicator(
-                    progress = { 0.665f }, modifier = Modifier.fillMaxWidth().height(17.dp).clip(CircleShape),
-                    color = FreshMint, trackColor = SkyBlueSoft
-                )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Text("🚀 还差 67 颗演示星星就能兑换啦！", fontSize = 12.sp, color = FreshMint, fontWeight = FontWeight.Bold)
-                    Row(Modifier.background(SkyBlueSoft, CircleShape).clickable(onClick = onCalendarClick)
-                        .padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("查看任务日历", color = SlateInk, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Icon(Icons.Filled.ChevronRight, null, tint = SlateInk, modifier = Modifier.size(17.dp))
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(22.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RewardCover(reward, Modifier.size(width = 224.dp, height = 184.dp))
+                    Box(Modifier.weight(1f)) {
+                        BigWishDetails(reward, balance, progress, blockReason, actionEnabled, onCalendarClick, onRedeem)
                     }
                 }
             }
@@ -276,44 +382,109 @@ private fun BigWishCard(onCalendarClick: () -> Unit) {
 }
 
 @Composable
-private fun SmallWishCard(wish: DemoWish, applied: Boolean, onRequest: () -> Unit, modifier: Modifier) {
-    Surface(modifier, shape = RoundedCornerShape(24.dp), color = Color.White,
-        border = BorderStroke(1.dp, LemonBorder), shadowElevation = 3.dp) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            val image = when (wish.id) {
-                "park" -> R.drawable.reward_park
+private fun RewardCover(reward: Reward, modifier: Modifier) {
+    val image = when (reward.coverKey) {
+        "toy", "wish" -> R.drawable.reward_castle
+        "outing" -> R.drawable.reward_park
+        "book" -> R.drawable.reward_book
+        "treat" -> R.drawable.reward_icecream
+        else -> null
+    }
+    Box(modifier.clip(RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
+        if (image != null) Image(painterResource(image), contentDescription = reward.title,
+            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Box(Modifier.fillMaxSize().background(SkyBlueSoft), contentAlignment = Alignment.Center) {
+            Text("🎁", fontSize = 52.sp)
+        }
+        Box(Modifier.fillMaxSize().padding(9.dp), contentAlignment = Alignment.TopStart) {
+            Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.92f)) {
+                Text("特别心愿 🌟", Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                    fontSize = 11.sp, color = Strawberry, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BigWishDetails(reward: Reward, balance: Int, progress: Float, blockReason: String?,
+                           actionEnabled: Boolean, onCalendarClick: () -> Unit, onRedeem: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(reward.title, Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.ExtraBold,
+                color = SlateInk, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("⭐ ${reward.cost} 颗", Modifier.padding(start = 8.dp), color = LemonShadow, fontWeight = FontWeight.Bold)
+        }
+        Text(reward.description.orEmpty(), fontSize = 13.sp, color = SlateMuted)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("收集进度：${balance.coerceAtMost(reward.cost)} / ${reward.cost} 颗",
+                Modifier.weight(1f), color = SlateInk, fontWeight = FontWeight.Bold)
+            Text("${(progress * 100).toInt()}%", color = Strawberry, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+        }
+        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(24.dp).clip(CircleShape),
+            color = FreshMint, trackColor = SkyBlueSoft)
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val status = blockReason ?: "星星已攒够，可以兑换啦！"
+            if (maxWidth < 430.dp) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(status, color = if (blockReason == null) FreshMintShadow else Strawberry)
+                    TextButton(onClick = onCalendarClick) { Text("查看任务日历 ›") }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(status, Modifier.weight(1f), color = if (blockReason == null) FreshMintShadow else Strawberry)
+                    TextButton(onClick = onCalendarClick) { Text("查看任务日历 ›") }
+                }
+            }
+        }
+        if (blockReason == null) Button(onClick = onRedeem, enabled = actionEnabled) { Text("兑换奖励") }
+    }
+}
+
+@Composable
+private fun SmallWishCard(reward: Reward, balance: Int, unavailable: Boolean, actionEnabled: Boolean,
+                          onRedeem: () -> Unit, modifier: Modifier) {
+    val blockReason = reward.redemptionBlockReason(balance, if (unavailable) setOf(reward.id) else emptySet())
+    val status = when {
+        blockReason == null -> "可兑换"
+        unavailable -> "已兑完"
+        balance < reward.cost -> "星星不足"
+        else -> "暂不可兑"
+    }
+    Surface(modifier, shape = RoundedCornerShape(24.dp), color = Color.White, shadowElevation = 5.dp) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val image = when (reward.coverKey) {
+                "outing" -> R.drawable.reward_park
                 "book" -> R.drawable.reward_book
-                "icecream" -> R.drawable.reward_icecream
+                "treat" -> R.drawable.reward_icecream
                 else -> null
             }
-            Box {
-                if (image != null) {
-                    Image(painterResource(image), contentDescription = wish.title,
-                        modifier = Modifier.fillMaxWidth().height(116.dp).clip(RoundedCornerShape(16.dp)),
-                        contentScale = ContentScale.Crop)
-                } else {
-                    Box(Modifier.fillMaxWidth().height(116.dp)
-                        .background(if (wish.id == "cartoon") StrawberrySoft else SkyBlueSoft, RoundedCornerShape(16.dp)),
-                        contentAlignment = Alignment.Center) {
-                        Surface(shape = CircleShape, color = if (wish.id == "cartoon") Strawberry else Lemon) {
-                            Box(Modifier.size(62.dp), contentAlignment = Alignment.Center) { Text(wish.emoji, fontSize = 38.sp) }
-                        }
-                    }
-                }
-                Box(Modifier.fillMaxWidth().padding(7.dp), contentAlignment = Alignment.TopEnd) {
-                    StatusBadge(if (applied) "已体验" else "✓ 可兑换 · 演示", FreshMintSoft, FreshMint)
+            Box(Modifier.fillMaxWidth().height(128.dp)) {
+                if (image != null) Image(painterResource(image), contentDescription = reward.title,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Crop)
+                else Box(Modifier.fillMaxSize().background(SkyBlueSoft, RoundedCornerShape(16.dp)),
+                    contentAlignment = Alignment.Center) { Text("🎁", fontSize = 42.sp) }
+                Box(Modifier.fillMaxSize().padding(8.dp), contentAlignment = Alignment.TopEnd) {
+                    StatusBadge(status, if (blockReason == null) FreshMintSoft else StrawberrySoft,
+                        if (blockReason == null) FreshMintShadow else Strawberry)
                 }
             }
-            Text("${wish.title} ${wish.emoji}", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(wish.description, fontSize = 12.sp, color = SlateMuted, minLines = 2, maxLines = 2,
+            Text(reward.title, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(reward.description.orEmpty(), fontSize = 12.sp, color = SlateMuted, minLines = 2, maxLines = 2,
                 overflow = TextOverflow.Ellipsis)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("⭐ ${wish.exampleCost} 星", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LemonShadow)
-                Button(onClick = onRequest, shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = FreshMint)) {
-                    Text("立即申请兑换", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("⭐ ${reward.cost} 星", Modifier.weight(1f), fontSize = 14.sp,
+                    color = LemonShadow, fontWeight = FontWeight.ExtraBold)
+                Box(Modifier.padding(bottom = 3.dp).background(Color(0xFF005321), CircleShape)) {
+                    Button(onClick = onRedeem, enabled = actionEnabled && blockReason == null,
+                        modifier = Modifier.padding(bottom = 3.dp).height(40.dp), shape = CircleShape,
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF006E2F), contentColor = Color.White,
+                            disabledContainerColor = Color(0xFF899B90), disabledContentColor = Color.White)) {
+                        Text("立即兑换", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }

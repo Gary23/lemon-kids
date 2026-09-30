@@ -306,11 +306,7 @@ private fun KidTaskContent(navController: NavHostController, homeViewModel: Home
         composable(KidTaskTab.Home.route) { HomeScreen(viewModel = homeViewModel) }
         composable(KidTaskTab.Calendar.route) { CalendarScreen() }
         composable(KidTaskTab.Reward.route) {
-            val homeState by homeViewModel.uiState.collectAsState()
             RewardScreen(
-                realPoints = homeState.points.takeIf { homeState.isPointsLoaded },
-                pointsUnavailable = homeState.isPointsLoadTimedOut,
-                streakDays = homeState.streakDays,
                 onCalendarClick = { navController.navigate(KidTaskTab.Calendar.route) }
             )
         }

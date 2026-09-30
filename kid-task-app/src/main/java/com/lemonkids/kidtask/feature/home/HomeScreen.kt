@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -109,6 +111,15 @@ fun HomeScreen(
                 UndoConfirmDialog(
                     onClose = { viewModel.dismissUndoDialog() },
                     onConfirm = { viewModel.confirmTaskUndo(uiState.undoDialogTaskId!!) }
+                )
+            }
+
+            uiState.actionError?.let { error ->
+                AlertDialog(
+                    onDismissRequest = viewModel::dismissActionError,
+                    title = { Text("无法撤销任务") },
+                    text = { Text(error) },
+                    confirmButton = { TextButton(onClick = viewModel::dismissActionError) { Text("知道了") } }
                 )
             }
 
