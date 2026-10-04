@@ -11,6 +11,9 @@
 | `sql/functions-fix.sql` | 重新创建任务/奖励 RPC 的历史修复 | 已有相关表；会覆盖函数定义 |
 | `sql/binding-codes-patch.sql` | 绑定码 RPC 修复 | `binding_codes` 表及相关 RPC 已由既有环境创建 |
 | `sql/20260901_task_templates.sql` | 创建家庭任务模板表和 RLS 策略 | 已有 `families`、`users` 表；家长端任务管理上线前执行 |
+| `sql/20260930_parent_reward_catalog_preflight.sql` | 只读检查奖励表、旧数据与兑换函数授权 | 执行家长端奖励目录迁移前，在目标项目 SQL Editor 审查结果 |
+| `sql/20260930_parent_reward_catalog.sql` | 扩展家庭奖励目录字段、约束及家长写入 RLS，并暂停旧兑换函数授权 | 已有 `rewards`、`users`；预检后执行，先于孩子端兑换事务迁移 |
+| `sql/20260930_kid_real_rewards.sql` | 孩子兑换记录、原子兑换/使用/取消与退款流水、权限和一次性奖励限制 | 已执行家长端奖励目录迁移；由用户报告在目标项目 SQL Editor 执行成功 |
 | `sql/20260906_category_task_bundles.sql` | 分类任务包：模板与分类多对多、原子排程、同日同模板去重及分类改名同步 | **破坏性**：清空孩子积分/积分流水、任务、任务模板和分类；依赖任务模板与任务历史迁移 |
 | `sql/20260906_remote_alarms.sql` | 远程闹钟表、Pad 下发回执/审计、最小权限 RLS 与监控设备查询 RPC | 已有 `binding_codes`（含 `device_id`）、监控绑定 RPC、`families`、`users`；不清空业务数据 |
 | `sql/20260914_alarm_background_music_storage.sql` | 私有 `alarm-background-music` bucket、运营曲目目录、下架兼容校验、受控短时下载与 Pad 缓存状态 | 已执行远程闹钟及语音/音乐字段迁移；上线前必须以临时项目核验 RLS，且先上传经授权曲目 |
@@ -57,6 +60,7 @@
 
 ## 当前人工操作
 
+- 家长端奖励目录迁移 `sql/20260930_parent_reward_catalog.sql` 与孩子端兑换事务迁移 `sql/20260930_kid_real_rewards.sql` 均已由用户报告在目标 Supabase 执行成功。后者替换旧 `redeem_reward`，增加兑换记录及原子使用、取消退款接口；孩子端真实兑换已在 Pad 人工验收。
 - 在 Supabase Dashboard 创建 `voices`、`photos`、`avatars` Storage bucket 后，才可应用 `init.sql` 中的 Storage 策略。
 - 在目标项目的 SQL Editor 执行 `sql/20260806_literacy_tts_storage.sql`，创建 `literacy-audio` bucket。该脚本只在 bucket 不存在时创建；同名 bucket 若不是公开读取会中止，避免静默放宽权限。执行后运行脚本末尾两段查询，确认 bucket 配置正确且没有客户端写策略。
 - 随后执行 `sql/20260806_literacy_tts_storage_paths.sql`，使 `literacy_tts_assets.object_path` 只能保存约定的相对路径。该约束是后续生成/清理 SCF 的删除隔离保护，不会写入或删除现有对象。

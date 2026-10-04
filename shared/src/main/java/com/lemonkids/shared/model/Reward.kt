@@ -11,5 +11,8 @@ data class Reward(
     @SerialName("cost") val cost: Int = 0,
     @SerialName("repeatable") val repeatable: Boolean = true,
     @SerialName("is_active") val isActive: Boolean = true,
+    @SerialName("description") val description: String? = null,
+    @SerialName("cover_key") val coverKey: String = "gift",
+    @SerialName("is_featured") val isFeatured: Boolean = false,
     @SerialName("created_at") val createdAt: String = ""
 )

@@ -49,6 +49,7 @@ fun ProfileScreen(
     onFamilyManageClick: () -> Unit,
     onTaskManageClick: () -> Unit,
     onCategoryManageClick: () -> Unit,
+    onRewardManageClick: () -> Unit,
     onRecycleBinClick: () -> Unit,
     onDeviceStatusLogClick: () -> Unit,
     authViewModel: AuthViewModel = hiltViewModel()
@@ -209,7 +210,7 @@ fun ProfileScreen(
             Spacer(Modifier.height(12.dp))
 
             Card(
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().clickable { onRewardManageClick() }
             ) {
                 Row(
                     Modifier.fillMaxWidth().padding(16.dp),

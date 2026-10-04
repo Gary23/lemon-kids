@@ -14,6 +14,7 @@ data class PointRecord(
     @SerialName("type") val type: PointRecordType = PointRecordType.TASK_COMPLETE,
     @SerialName("related_task_id") val relatedTaskId: String? = null,
     @SerialName("related_reward_id") val relatedRewardId: String? = null,
+    @SerialName("related_redemption_id") val relatedRedemptionId: String? = null,
     @SerialName("timestamp") val timestamp: String = ""
 )
 
@@ -23,5 +24,6 @@ enum class PointRecordType {
     @SerialName("task_expired") TASK_EXPIRED,
     @SerialName("task_rejected") TASK_REJECTED,
     @SerialName("reward_redeem") REWARD_REDEEM,
+    @SerialName("reward_refund") REWARD_REFUND,
     @SerialName("manual") MANUAL
 }

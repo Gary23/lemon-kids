@@ -2,16 +2,20 @@ package com.lemonkids.kidtask.navigation
 
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -19,13 +23,10 @@ import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ChildCare
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedButton
@@ -34,8 +35,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -45,19 +44,26 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.NavHostController
 import com.lemonkids.kidtask.feature.calendar.CalendarScreen
 import com.lemonkids.kidtask.feature.home.HomeScreen
+import com.lemonkids.kidtask.feature.home.HomeViewModel
 import com.lemonkids.kidtask.feature.plan.PlanScreen
 import com.lemonkids.kidtask.feature.profile.ProfileScreen
 import com.lemonkids.kidtask.feature.reward.RewardScreen
 import com.lemonkids.kidtask.ui.theme.Pink
-import com.lemonkids.kidtask.ui.theme.PinkSoft
+import com.lemonkids.kidtask.ui.components.ChildSummary
+import com.lemonkids.kidtask.ui.theme.Canvas
+import com.lemonkids.kidtask.ui.theme.Lemon
+import com.lemonkids.kidtask.ui.theme.LemonBorder
+import com.lemonkids.kidtask.ui.theme.LemonShadow
+import com.lemonkids.kidtask.ui.theme.SlateInk
+import com.lemonkids.kidtask.ui.theme.SlateMuted
 import com.lemonkids.shared.ui.auth.AuthViewModel
 import com.lemonkids.shared.ui.auth.BindingCodeScreen
 
@@ -66,10 +72,10 @@ sealed class KidTaskTab(
     val label: String,
     val icon: ImageVector
 ) {
-    data object Home : KidTaskTab("home", "任务", Icons.Filled.Checklist)
-    data object Calendar : KidTaskTab("calendar", "日历", Icons.Filled.CalendarMonth)
-    data object Reward : KidTaskTab("reward", "奖励", Icons.Filled.CardGiftcard)
-    data object Profile : KidTaskTab("profile", "我的", Icons.Filled.ChildCare)
+    data object Home : KidTaskTab("home", "今日任务", Icons.Filled.Checklist)
+    data object Calendar : KidTaskTab("calendar", "任务日历", Icons.Filled.CalendarMonth)
+    data object Reward : KidTaskTab("reward", "奖励兑换", Icons.Filled.CardGiftcard)
+    data object Profile : KidTaskTab("profile", "我的成长", Icons.Filled.ChildCare)
 }
 
 object KidTaskRoutes {
@@ -208,83 +214,111 @@ private fun TaskSessionRecoveryDialog(
 fun KidTaskMainScreen() {
     val navController = rememberNavController()
     val tabs = listOf(KidTaskTab.Home, KidTaskTab.Calendar, KidTaskTab.Reward, KidTaskTab.Profile)
-    val surfaceColor = Color.White
+    val homeViewModel: HomeViewModel = hiltViewModel()
+    val homeState by homeViewModel.uiState.collectAsState()
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val selectedTab = if (currentRoute == "plan") KidTaskTab.Profile.route else currentRoute
+    val onSelect: (KidTaskTab) -> Unit = { tab ->
+        navController.navigate(tab.route) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = tab != KidTaskTab.Profile
+        }
+    }
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .shadow(
-                        elevation = 16.dp,
-                        shape = RoundedCornerShape(28.dp),
-                        ambientColor = Pink.copy(alpha = 0.3f),
-                        spotColor = Pink.copy(alpha = 0.3f)
-                    )
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(surfaceColor),
-                containerColor = surfaceColor,
-                tonalElevation = 0.dp
-            ) {
-                val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentDestination = navBackStackEntry?.destination
+    Row(modifier = Modifier.fillMaxSize().background(Canvas)) {
+        KidTaskSidebar(
+            tabs = tabs,
+            selectedRoute = selectedTab,
+            points = homeState.points.takeIf { homeState.isPointsLoaded },
+            pointsUnavailable = homeState.isPointsLoadTimedOut,
+            streakDays = homeState.streakDays,
+            onSelect = onSelect
+        )
+        KidTaskContent(navController, homeViewModel, Modifier.weight(1f))
+    }
+}
 
-                tabs.forEach { tab ->
-                    val isSelected = currentDestination?.hierarchy?.any { it.route == tab.route } == true
-
-                    NavigationBarItem(
-                        icon = {
-                            Icon(
-                                tab.icon,
-                                contentDescription = tab.label,
-                                modifier = Modifier.size(26.dp)
+@Composable
+private fun KidTaskSidebar(
+    tabs: List<KidTaskTab>,
+    selectedRoute: String?,
+    points: Int?,
+    pointsUnavailable: Boolean,
+    streakDays: Int,
+    onSelect: (KidTaskTab) -> Unit
+) {
+    Surface(
+        modifier = Modifier.width(184.dp).fillMaxHeight(),
+        color = Color.White,
+        border = BorderStroke(1.dp, LemonBorder.copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.fillMaxHeight().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(shape = RoundedCornerShape(16.dp), color = Lemon, modifier = Modifier.size(48.dp)) {
+                        Box(contentAlignment = Alignment.Center) { Text("🍋", fontSize = 27.sp) }
+                    }
+                    Column {
+                        Text("柠檬任务", color = SlateInk, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("LEMON TASKS", color = SlateMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    tabs.forEach { tab ->
+                        val selected = selectedRoute == tab.route
+                        val shape = RoundedCornerShape(22.dp)
+                        Box(modifier = Modifier.fillMaxWidth().height(60.dp)) {
+                            if (selected) Box(
+                                modifier = Modifier.fillMaxWidth().height(56.dp).padding(top = 4.dp)
+                                    .background(LemonShadow, shape)
                             )
-                        },
-                        label = {
-                            Text(
-                                tab.label,
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Normal
-                            )
-                        },
-                        selected = isSelected,
-                        onClick = {
-                            navController.navigate(tab.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().height(56.dp).clickable { onSelect(tab) },
+                                shape = shape,
+                                color = if (selected) Lemon else Color.Transparent
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Icon(tab.icon, contentDescription = null, tint = if (selected) SlateInk else SlateMuted, modifier = Modifier.size(23.dp))
+                                    Text(tab.label, color = SlateInk, fontSize = 15.sp, fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold)
                                 }
-                                launchSingleTop = true
-                                restoreState = tab != KidTaskTab.Profile
                             }
-                        },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Pink,
-                            selectedTextColor = Pink,
-                            unselectedIconColor = Color(0xFFAAAAAA),
-                            unselectedTextColor = Color(0xFFAAAAAA),
-                            indicatorColor = PinkSoft.copy(alpha = 0.3f)
-                        )
-                    )
+                        }
+                    }
                 }
             }
-        }
-    ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = KidTaskTab.Home.route,
-            modifier = Modifier.padding(innerPadding)
-        ) {
-            composable(KidTaskTab.Home.route) { HomeScreen() }
-            composable(KidTaskTab.Calendar.route) { CalendarScreen() }
-            composable(KidTaskTab.Reward.route) { RewardScreen() }
-            composable(KidTaskTab.Profile.route) {
-                ProfileScreen(onPlanClick = { navController.navigate("plan") })
-            }
-            composable("plan") {
-                PlanScreen(onBack = { navController.popBackStack() })
+            Column {
+                HorizontalDivider(color = LemonBorder)
+                ChildSummary(points, pointsUnavailable, streakDays, Modifier.padding(top = 16.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun KidTaskContent(navController: NavHostController, homeViewModel: HomeViewModel, modifier: Modifier) {
+    NavHost(navController = navController, startDestination = KidTaskTab.Home.route, modifier = modifier) {
+        composable(KidTaskTab.Home.route) { HomeScreen(viewModel = homeViewModel) }
+        composable(KidTaskTab.Calendar.route) { CalendarScreen() }
+        composable(KidTaskTab.Reward.route) {
+            RewardScreen(
+                onCalendarClick = { navController.navigate(KidTaskTab.Calendar.route) }
+            )
+        }
+        composable(KidTaskTab.Profile.route) {
+            val homeState by homeViewModel.uiState.collectAsState()
+            ProfileScreen(
+                realPoints = homeState.points.takeIf { homeState.isPointsLoaded },
+                pointsUnavailable = homeState.isPointsLoadTimedOut,
+                onPlanClick = { navController.navigate("plan") }
+            )
+        }
+        composable("plan") { PlanScreen(onBack = { navController.popBackStack() }) }
     }
 }
 

@@ -33,6 +33,9 @@ data class HomeUiState(
     /** 明天及以后的任务，日期升序 */
     val upcomingTasks: List<TaskUiItem> = emptyList(),
     val points: Int = 0,
+    /** 首次真实积分流结果到达前，不能把默认 0 解释为账户余额。 */
+    val isPointsLoaded: Boolean = false,
+    val isPointsLoadTimedOut: Boolean = false,
     val previousPoints: Int = 0,
     val earnedPoints: Int = 0,
     val showPointsAnimation: Boolean = false,
@@ -46,6 +49,7 @@ data class HomeUiState(
     val syncingTaskIds: Set<String> = emptySet(),
     val confirmDialogTaskId: String? = null,
     val undoDialogTaskId: String? = null,
+    val actionError: String? = null,
     /** 折叠面板展开状态 */
     val todayExpanded: Boolean = true,
     val overdueExpanded: Boolean = true,
@@ -173,7 +177,18 @@ class HomeViewModel @Inject constructor(
 
             launch {
                 rewardRepository.getCurrentPoints(userId).collect { points ->
-                    _uiState.value = _uiState.value.copy(points = points)
+                    _uiState.value = _uiState.value.copy(
+                        points = points,
+                        isPointsLoaded = true,
+                        isPointsLoadTimedOut = false
+                    )
+                }
+            }
+
+            launch {
+                kotlinx.coroutines.delay(8000)
+                if (!_uiState.value.isPointsLoaded) {
+                    _uiState.value = _uiState.value.copy(isPointsLoadTimedOut = true)
                 }
             }
 
@@ -239,6 +254,14 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val taskPoints = findTaskById(taskId)?.rewardPoints ?: 0
             val oldPoints = _uiState.value.points
+            if (_uiState.value.isPointsLoaded && oldPoints < taskPoints) {
+                _uiState.value = _uiState.value.copy(
+                    undoDialogTaskId = null,
+                    actionError = "积分已用于兑换，当前余额不足以撤销这项任务"
+                )
+                rewardRepository.requestPointsRefresh()
+                return@launch
+            }
             val userId = authRepository.currentUserId ?: authRepository.observeCurrentUser().first()?.uid
                 ?: return@launch
             applyOptimisticStatus(taskId, TaskStatus.PENDING)
@@ -253,19 +276,22 @@ class HomeViewModel @Inject constructor(
                         syncingTaskIds = _uiState.value.syncingTaskIds - taskId
                     )
                 },
-                onFailure = {
+                onFailure = { error ->
                     optimisticTaskStatuses.remove(taskId)
                     updateTaskStatusInUi(taskId, TaskStatus.VERIFIED)
                     _uiState.value = _uiState.value.copy(
                         points = oldPoints,
-                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId
+                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId,
+                        actionError = error.message ?: "撤销失败，请刷新后重试"
                     )
+                    rewardRepository.requestPointsRefresh()
                 }
             )
         }
     }
 
     fun dismissConfirmDialog() { _uiState.value = _uiState.value.copy(confirmDialogTaskId = null) }
+    fun dismissActionError() { _uiState.value = _uiState.value.copy(actionError = null) }
     fun dismissUndoDialog() { _uiState.value = _uiState.value.copy(undoDialogTaskId = null) }
     fun dismissCelebration() { _uiState.value = _uiState.value.copy(showCelebration = false) }
     fun dismissPointsAnimation() { _uiState.value = _uiState.value.copy(showPointsAnimation = false) }
@@ -277,6 +303,7 @@ class HomeViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(isLoading = true)
             }
             taskRepository.refreshTasks()
+            rewardRepository.requestPointsRefresh()
             kotlinx.coroutines.delay(8_000)
             if (_uiState.value.isLoading) {
                 _uiState.value = _uiState.value.copy(isLoading = false)

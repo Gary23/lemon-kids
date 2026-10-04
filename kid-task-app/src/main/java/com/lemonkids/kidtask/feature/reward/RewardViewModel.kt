@@ -1,50 +1,158 @@
 package com.lemonkids.kidtask.feature.reward
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.lemonkids.shared.model.RewardSnapshot
+import com.lemonkids.shared.model.RewardRedemptionStatus
+import com.lemonkids.shared.repository.AuthRepository
+import com.lemonkids.shared.repository.RewardRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+
+enum class RewardAction { REDEEM, USE, CANCEL }
+
+data class RewardConfirmation(val action: RewardAction, val id: String, val title: String, val cost: Int)
 
 data class RewardUiState(
-    val rewards: List<RewardUiItem> = emptyList(),
-    val points: Int = 0,
-    val pointRecords: List<PointRecordUiItem> = emptyList(),
-    val isLoading: Boolean = false
-)
-
-data class RewardUiItem(
-    val id: String,
-    val title: String,
-    val cost: Int,
-    val affordable: Boolean,
-    val redeemed: Boolean
-)
-
-data class PointRecordUiItem(
-    val id: String,
-    val reason: String,
-    val amount: Int,
-    val balance: Int,
-    val time: String
+    val loading: Boolean = true,
+    val refreshing: Boolean = false,
+    val snapshot: RewardSnapshot? = null,
+    val error: String? = null,
+    val feedback: String? = null,
+    val confirmation: RewardConfirmation? = null,
+    val submitting: Boolean = false,
+    /** 网络结果未知时保留请求 ID，同一意图只能以此 ID 重试。 */
+    val pendingRequestId: String? = null,
+    val pendingRewardId: String? = null
 )
 
 @HiltViewModel
-class RewardViewModel @Inject constructor() : ViewModel() {
-
+class RewardViewModel @Inject constructor(
+    private val authRepository: AuthRepository,
+    private val rewardRepository: RewardRepository
+) : ViewModel() {
     private val _uiState = MutableStateFlow(RewardUiState())
-    val uiState: StateFlow<RewardUiState> = _uiState.asStateFlow()
+    val uiState = _uiState.asStateFlow()
+    private var childId: String? = null
+    private var familyId: String? = null
 
-    fun redeemReward(rewardId: String) {
-        val reward = _uiState.value.rewards.find { it.id == rewardId } ?: return
-        val updated = _uiState.value.rewards.map {
-            if (it.id == rewardId) it.copy(redeemed = true) else it
+    init { refresh() }
+
+    fun refresh() {
+        if (_uiState.value.refreshing || _uiState.value.submitting) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(refreshing = true, error = null)
+            val user = authRepository.observeCurrentUser().first()
+            val child = user?.uid ?: authRepository.currentUserId
+            val family = user?.familyId
+            if (child.isNullOrBlank() || family.isNullOrBlank()) {
+                _uiState.value = _uiState.value.copy(loading = false, refreshing = false, error = "孩子或家庭信息暂不可用，请重新登录后重试")
+                return@launch
+            }
+            childId = child
+            familyId = family
+            rewardRepository.getRewardSnapshot(family, child).fold(
+                onSuccess = { snapshot ->
+                    val pendingConfirmed = _uiState.value.pendingRequestId?.let { id ->
+                        snapshot.redemptions.any { it.id == id }
+                    } == true
+                    _uiState.value = _uiState.value.copy(
+                        loading = false, refreshing = false, snapshot = snapshot, error = null,
+                        pendingRequestId = if (pendingConfirmed) null else _uiState.value.pendingRequestId,
+                        pendingRewardId = if (pendingConfirmed) null else _uiState.value.pendingRewardId,
+                        confirmation = if (pendingConfirmed) null else _uiState.value.confirmation,
+                        feedback = if (pendingConfirmed) "兑换成功，星星已扣除" else _uiState.value.feedback
+                    )
+                    rewardRepository.requestPointsRefresh()
+                },
+                onFailure = { error ->
+                    Log.e("RewardViewModel", "奖励页读取奖励快照失败", error)
+                    _uiState.value = _uiState.value.copy(
+                        loading = false, refreshing = false,
+                        error = "奖励读取失败，请稍后重试；若持续失败，请反馈日志"
+                    )
+                }
+            )
         }
-        val newPoints = _uiState.value.points - reward.cost
-        _uiState.value = _uiState.value.copy(
-            rewards = updated,
-            points = newPoints
-        )
+    }
+
+    fun confirmRedeem(rewardId: String) {
+        val state = _uiState.value
+        val snapshot = state.snapshot ?: return
+        val reward = snapshot.rewards.firstOrNull { it.id == rewardId } ?: return
+        if (state.submitting || state.error != null || state.pendingRequestId != null && state.pendingRewardId != rewardId) return
+        if (reward.redemptionBlockReason(snapshot.balance, snapshot.unavailableOneTimeIds) != null) return
+        _uiState.value = state.copy(confirmation = RewardConfirmation(RewardAction.REDEEM, rewardId, reward.title, reward.cost))
+    }
+
+    fun confirmUse(redemptionId: String) = confirmHeldAction(redemptionId, RewardAction.USE)
+    fun confirmCancel(redemptionId: String) = confirmHeldAction(redemptionId, RewardAction.CANCEL)
+
+    private fun confirmHeldAction(redemptionId: String, action: RewardAction) {
+        val state = _uiState.value
+        if (state.submitting || state.error != null || state.pendingRequestId != null) return
+        val item = state.snapshot?.redemptions?.firstOrNull {
+            it.id == redemptionId && it.status == RewardRedemptionStatus.HELD
+        } ?: return
+        _uiState.value = state.copy(confirmation = RewardConfirmation(action, item.id, item.title, item.cost))
+    }
+
+    fun dismissConfirmation() {
+        if (!_uiState.value.submitting) _uiState.value = _uiState.value.copy(confirmation = null)
+    }
+
+    fun clearFeedback() { _uiState.value = _uiState.value.copy(feedback = null) }
+
+    fun submit() {
+        val state = _uiState.value
+        val action = state.confirmation ?: return
+        val child = childId ?: return
+        val family = familyId ?: return
+        if (state.submitting) return
+        viewModelScope.launch {
+            val requestId = if (action.action == RewardAction.REDEEM) {
+                state.pendingRequestId ?: UUID.randomUUID().toString()
+            } else null
+            _uiState.value = _uiState.value.copy(
+                submitting = true, error = null, feedback = null,
+                pendingRequestId = requestId, pendingRewardId = if (requestId != null) action.id else null
+            )
+            val result = when (action.action) {
+                RewardAction.REDEEM -> rewardRepository.redeemReward(action.id, child, requestId!!)
+                RewardAction.CANCEL -> rewardRepository.cancelRewardRedemption(action.id, child)
+                RewardAction.USE -> rewardRepository.useRewardRedemption(action.id, child)
+            }
+            // 成功和超时都重新读取服务端事实；网络结果不明时保留同一个兑换请求 ID。
+            val snapshotResult = rewardRepository.getRewardSnapshot(family, child)
+            val snapshot = snapshotResult.getOrNull()
+            val redeemed = requestId != null && snapshot?.redemptions?.any { it.id == requestId } == true
+            val actionApplied = when (action.action) {
+                RewardAction.REDEEM -> redeemed
+                RewardAction.CANCEL -> snapshot?.redemptions?.firstOrNull { it.id == action.id }?.status == RewardRedemptionStatus.CANCELLED
+                RewardAction.USE -> snapshot?.redemptions?.firstOrNull { it.id == action.id }?.status == RewardRedemptionStatus.USED
+            }
+            if (snapshot != null) rewardRepository.requestPointsRefresh()
+            _uiState.value = _uiState.value.copy(
+                submitting = false,
+                snapshot = snapshot ?: _uiState.value.snapshot,
+                confirmation = if (snapshot != null && actionApplied) null else action,
+                pendingRequestId = if (action.action == RewardAction.REDEEM && !redeemed) requestId else null,
+                pendingRewardId = if (action.action == RewardAction.REDEEM && !redeemed) action.id else null,
+                feedback = if (snapshot != null && actionApplied) when (action.action) {
+                    RewardAction.REDEEM -> "兑换成功，星星已扣除"
+                    RewardAction.CANCEL -> "兑换已取消，${action.cost} 颗星星已退回"
+                    RewardAction.USE -> "已标记为使用，记录已更新"
+                } else null,
+                error = if (snapshot == null) "操作结果暂无法确认，请刷新或使用同一请求重试" else if (!actionApplied) {
+                    rewardFailureMessage(result.exceptionOrNull()?.message)
+                } else null
+            )
+        }
     }
 }

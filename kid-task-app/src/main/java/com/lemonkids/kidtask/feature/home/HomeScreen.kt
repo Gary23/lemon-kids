@@ -1,49 +1,22 @@
 package com.lemonkids.kidtask.feature.home
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.LocalFireDepartment
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,14 +30,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,25 +42,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.lemonkids.kidtask.di.KidTtsEntryPoint
-import com.lemonkids.kidtask.ui.theme.Coral
-import com.lemonkids.kidtask.ui.theme.CoralSoft
-import com.lemonkids.kidtask.ui.theme.Cream
-import com.lemonkids.kidtask.ui.theme.InkBrown
-import com.lemonkids.kidtask.ui.theme.Lavender
-import com.lemonkids.kidtask.ui.theme.LavenderSoft
-import com.lemonkids.kidtask.ui.theme.Mint
-import com.lemonkids.kidtask.ui.theme.MutedGray
-import com.lemonkids.kidtask.ui.theme.Pink
-import com.lemonkids.kidtask.ui.theme.PinkSoft
-import com.lemonkids.kidtask.ui.theme.Sunny
-import com.lemonkids.kidtask.ui.components.TaskCard
-import com.lemonkids.kidtask.ui.components.stableTaskCategoryAppearance
 import com.lemonkids.kidtask.ui.components.TaskConfirmDialog
 import com.lemonkids.kidtask.ui.components.UndoConfirmDialog
-import com.lemonkids.kidtask.util.KidTtsManager
-import com.lemonkids.shared.model.Category
+import com.lemonkids.kidtask.ui.theme.Canvas
+import com.lemonkids.kidtask.ui.theme.Lemon
+import com.lemonkids.kidtask.ui.theme.SlateInk
+import com.lemonkids.kidtask.ui.theme.SlateMuted
 import dagger.hilt.android.EntryPointAccessors
-import java.time.LocalTime
 import kotlin.math.roundToInt
 
 @Composable
@@ -120,55 +76,15 @@ fun HomeScreen(
         onDispose { }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = Cream) {
+    Surface(modifier = Modifier.fillMaxSize(), color = Canvas) {
         Box(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                HeaderSection(
-                    nickname = "小当家",
-                    points = uiState.points,
-                    streakDays = uiState.streakDays
-                )
-
-                val hasAnyTask = uiState.todayTasks.isNotEmpty()
-
-                // 首屏同时等待任务和分类。否则任务先到达时会先按接口顺序渲染，分类到达后又重排。
-                if (!uiState.isInitialDataReady || (uiState.isLoading && !hasAnyTask)) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Pink, modifier = Modifier.size(40.dp))
-                    }
-                } else if (!hasAnyTask && !uiState.isLoading) {
-                    EmptyTaskView()
-                } else {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Spacer(Modifier.height(8.dp))
-
-                        // 全部完成庆祝卡片
-                        if (uiState.allTasksDoneToday && uiState.todayTasks.isNotEmpty()) {
-                            CelebrationCard()
-                        }
-
-                        // 首页仅按家长端配置的任务分类展示，不再按上午、下午、晚上或日期分段。
-                        if (uiState.todayTasks.isNotEmpty()) {
-                            CategoryTaskList(
-                                tasks = uiState.todayTasks,
-                                categories = uiState.categories,
-                                playingTaskId = playingTaskId,
-                                onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
-                                onMarkDone = { viewModel.markTaskDone(it) },
-                                onUndo = { viewModel.markTaskUndo(it) }
-                            )
-                        }
-
-                        Spacer(Modifier.height(16.dp))
-                    }
-                }
-            }
+            HomeDashboard(
+                state = uiState,
+                playingTaskId = playingTaskId,
+                onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
+                onMarkDone = viewModel::markTaskDone,
+                onUndo = viewModel::markTaskUndo
+            )
 
             // 积分飞入动画
             if (uiState.showPointsAnimation) {
@@ -177,7 +93,6 @@ fun HomeScreen(
                     onFinished = { viewModel.dismissPointsAnimation() }
                 )
             }
-
             // 全部完成庆祝覆盖层
             if (uiState.showCelebration) {
                 CelebrationOverlay(onDismiss = { viewModel.dismissCelebration() })
@@ -199,321 +114,18 @@ fun HomeScreen(
                 )
             }
 
-            if (uiState.isLoading && hasAnyTask(uiState)) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Pink, modifier = Modifier.size(40.dp))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CategoryTaskList(
-    tasks: List<com.lemonkids.kidtask.ui.components.TaskUiItem>,
-    categories: List<Category>,
-    playingTaskId: String?,
-    onSpeak: (com.lemonkids.kidtask.ui.components.TaskUiItem) -> Unit,
-    onMarkDone: (String) -> Unit,
-    onUndo: (String) -> Unit
-) {
-    val completedTasks = tasks.filter { it.status == "DONE" || it.status == "VERIFIED" }
-    val tasksByCategory = tasks
-        .filterNot { it.status == "DONE" || it.status == "VERIFIED" }
-        .groupBy { it.category.ifBlank { "默认" } }
-    // 先按家长端分类管理页的顺序显示；历史任务中已被删除的分类放在最后，避免任务丢失。
-    // 已完成是孩子端专用分类，不写回家长端配置，始终置于最后。
-    val orderedCategories = buildList {
-        categories.map { it.name }.filter { tasksByCategory.containsKey(it) }.forEach(::add)
-        tasksByCategory.keys.filterNot { it in this }.sorted().forEach(::add)
-    }
-    val categoryIdsByName = categories.associate { it.name to it.id }
-
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("今天的任务", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
-            Spacer(Modifier.width(8.dp))
-            Text("还有 ${tasks.count { it.status == "PENDING" }} 个", color = Pink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        }
-        orderedCategories.forEach { categoryName ->
-            val categoryTasks = tasksByCategory.getValue(categoryName)
-            // 新任务用来源分类 UUID 锁定视觉样式；手工或历史任务按名称稳定兜底。
-            val visualKey = categoryTasks.mapNotNull { it.sourceCategoryId }.firstOrNull()
-                ?: categoryIdsByName[categoryName]
-                ?: categoryName
-            val (color, emoji) = stableTaskCategoryAppearance(visualKey)
-            TaskCategoryCard(
-                title = "$emoji  $categoryName",
-                tasks = categoryTasks,
-                sectionColor = color,
-                playingTaskId = playingTaskId,
-                onSpeak = onSpeak,
-                onMarkDone = onMarkDone,
-                onUndo = onUndo
-            )
-        }
-        if (completedTasks.isNotEmpty()) {
-            TaskCategoryCard(
-                title = "✅  已完成",
-                tasks = completedTasks,
-                sectionColor = Mint,
-                playingTaskId = playingTaskId,
-                onSpeak = onSpeak,
-                onMarkDone = onMarkDone,
-                onUndo = onUndo
-            )
-        }
-    }
-}
-
-@Composable
-private fun TaskCategoryCard(
-    title: String,
-    tasks: List<com.lemonkids.kidtask.ui.components.TaskUiItem>,
-    sectionColor: Color,
-    playingTaskId: String?,
-    onSpeak: (com.lemonkids.kidtask.ui.components.TaskUiItem) -> Unit,
-    onMarkDone: (String) -> Unit,
-    onUndo: (String) -> Unit
-) {
-    Surface(shape = RoundedCornerShape(22.dp), color = Color.White, shadowElevation = 3.dp) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(title, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
-            Spacer(Modifier.height(8.dp))
-            tasks.forEachIndexed { taskIndex, task ->
-                TaskCard(
-                    task = task,
-                    isPlaying = playingTaskId == task.id,
-                    sectionColor = sectionColor,
-                    softColor = sectionColor.copy(alpha = 0.12f),
-                    onSpeak = { onSpeak(task) },
-                    onMarkDone = onMarkDone,
-                    onUndo = onUndo
-                )
-                if (taskIndex != tasks.lastIndex) Spacer(Modifier.height(8.dp))
-            }
-        }
-    }
-}
-
-private fun hasAnyTask(state: HomeUiState) =
-    state.todayTasks.isNotEmpty()
-
-// ==================== 顶部 Header ====================
-
-@Composable
-private fun HeaderSection(nickname: String, points: Int, streakDays: Int) {
-    val greeting = when (LocalTime.now().hour) {
-        in 6..11 -> "早上好！"
-        in 12..17 -> "下午好！"
-        else -> "晚上好！"
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(8.dp, RoundedCornerShape(bottomStart = 32.dp, bottomEnd = 32.dp))
-            .clip(RoundedCornerShape(bottomStart = 32.dp, bottomEnd = 32.dp))
-            .background(
-                Brush.linearGradient(
-                    listOf(PinkSoft, Pink)
-                )
-            )
-            .padding(top = 20.dp, bottom = 28.dp, start = 24.dp, end = 24.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    greeting,
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color.White
-                )
-                Text(
-                    "$nickname，今天也要加油鸭～",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.9f)
-                )
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // 连续打卡天数
-                if (streakDays > 0) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color.White.copy(alpha = 0.9f),
-                        shadowElevation = 2.dp
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Filled.LocalFireDepartment,
-                                contentDescription = null,
-                                tint = Coral,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                "$streakDays",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Coral
-                            )
-                        }
-                    }
-                }
-                // 积分
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.9f),
-                    shadowElevation = 2.dp
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Filled.Star,
-                            contentDescription = null,
-                            tint = Sunny,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            "$points",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Pink
-                        )
-                    }
-                }
-            }
-        }
-
-        // 装饰 emoji
-        Text(
-            "🌸",
-            fontSize = 56.sp,
-            modifier = Modifier.align(Alignment.TopEnd).offset(x = 8.dp, y = (-20).dp).alpha(0.2f)
-        )
-    }
-}
-
-// ==================== 任务分组 ====================
-
-@Composable
-private fun TaskSection(
-    emoji: String,
-    title: String,
-    countLabel: String,
-    isExpanded: Boolean,
-    barColor: Color,
-    softColor: Color,
-    chipBg: Color,
-    chipText: Color,
-    onToggle: () -> Unit,
-    content: @Composable () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = Color.White,
-        shadowElevation = 4.dp
-    ) {
-        Column {
-            // 分组标题
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(softColor)
-                    .clickable(onClick = onToggle)
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(emoji, fontSize = 22.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(title, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = chipBg
-                    ) {
-                        Text(
-                            countLabel,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = chipText,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-                Icon(
-                    if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (isExpanded) "收起" else "展开",
-                    modifier = Modifier.size(24.dp),
-                    tint = MutedGray
+            uiState.actionError?.let { error ->
+                AlertDialog(
+                    onDismissRequest = viewModel::dismissActionError,
+                    title = { Text("无法撤销任务") },
+                    text = { Text(error) },
+                    confirmButton = { TextButton(onClick = viewModel::dismissActionError) { Text("知道了") } }
                 )
             }
 
-            // 任务列表
-            AnimatedVisibility(
-                visible = isExpanded,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    content()
-                }
-            }
         }
     }
 }
-
-// ==================== 庆祝卡片 ====================
-
-@Composable
-private fun CelebrationCard() {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        color = Color.White,
-        shadowElevation = 6.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.linearGradient(listOf(Sunny.copy(alpha = 0.5f), PinkSoft.copy(alpha = 0.5f)))
-                )
-                .padding(28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Surface(shape = CircleShape, color = Color.White, shadowElevation = 4.dp, modifier = Modifier.size(80.dp)) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Star, contentDescription = null, tint = Sunny, modifier = Modifier.size(44.dp))
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Text("太棒了！所有任务都完成啦！", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = InkBrown)
-            Text("你今天超级厉害，奖励自己一颗大星星吧～", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = InkBrown.copy(alpha = 0.7f))
-        }
-    }
-}
-
-// ==================== 积分飞入动画 ====================
 
 @Composable
 private fun PointsFlyAnimation(
@@ -572,7 +184,7 @@ private fun PointsFlyAnimation(
         ) {
             Surface(
                 shape = RoundedCornerShape(24.dp),
-                color = Pink
+                color = Lemon
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp),
@@ -584,7 +196,7 @@ private fun PointsFlyAnimation(
                         "+$earnedPoints",
                         fontSize = 32.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
+                        color = SlateInk
                     )
                 }
             }
@@ -630,33 +242,18 @@ private fun CelebrationOverlay(onDismiss: () -> Unit) {
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Text("太棒了！", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = Pink)
+                Text("太棒了！", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk)
                 Spacer(Modifier.height(8.dp))
-                Text("今天所有任务都完成啦～", fontSize = 16.sp, color = MutedGray)
+                Text("今天所有任务都完成啦～", fontSize = 16.sp, color = SlateMuted)
                 Spacer(Modifier.height(20.dp))
                 Button(
                     onClick = onDismiss,
                     shape = RoundedCornerShape(20.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Pink)
+                    colors = ButtonDefaults.buttonColors(containerColor = Lemon)
                 ) {
-                    Text("😊 好的", color = Color.White, fontSize = 18.sp)
+                    Text("😊 好的", color = SlateInk, fontSize = 18.sp)
                 }
             }
-        }
-    }
-}
-
-// ==================== 空状态 ====================
-
-@Composable
-private fun EmptyTaskView() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("🎉", fontSize = 56.sp)
-            Spacer(Modifier.height(12.dp))
-            Text("今天还没有任务～", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Pink)
-            Spacer(Modifier.height(6.dp))
-            Text("等妈妈给你布置任务吧", fontSize = 15.sp, color = MutedGray)
         }
     }
 }

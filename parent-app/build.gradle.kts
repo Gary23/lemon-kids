@@ -82,4 +82,6 @@ dependencies {
 
     implementation(libs.coil.compose)
     implementation(libs.vico.compose.m3)
+
+    testImplementation(libs.junit)
 }
