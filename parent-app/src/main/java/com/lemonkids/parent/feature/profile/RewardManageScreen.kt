@@ -1,5 +1,11 @@
 package com.lemonkids.parent.feature.profile
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -40,12 +47,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.lemonkids.shared.model.Reward
+import coil.compose.AsyncImage
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 private val covers = listOf(
     "gift" to "🎁 礼物",
@@ -80,7 +91,7 @@ fun RewardManageScreen(
                     TextButton(enabled = !state.isBusy, onClick = viewModel::refresh) { Text("刷新") }
                     TextButton(
                         enabled = state.familyId != null && !state.isBusy,
-                        onClick = { viewModel.clearError(); editing = null; editorOpen = true }
+                        onClick = { viewModel.beginEdit(); editing = null; editorOpen = true }
                     ) { Text("＋ 新增") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
@@ -124,8 +135,11 @@ fun RewardManageScreen(
                     items(state.rewards, key = { it.id }) { reward ->
                         RewardRow(
                             reward = reward,
+                            imageUrl = reward.imagePath?.let(state.imageUrls::get),
+                            imageError = reward.imagePath?.let(state.imageErrors::contains) == true,
+                            onRetryImage = { viewModel.retryImage(reward) },
                             busy = state.isBusy,
-                            onEdit = { viewModel.clearError(); editing = reward; editorOpen = true },
+                            onEdit = { viewModel.beginEdit(); editing = reward; editorOpen = true },
                             onToggle = {
                                 if (reward.isActive) confirmStop = reward
                                 else viewModel.setActive(reward, true)
@@ -141,9 +155,17 @@ fun RewardManageScreen(
     if (editorOpen) {
         RewardEditorDialog(
             editing = editing,
-            busy = state.isSaving,
+            busy = state.isSaving || state.isPreparingImage,
             error = state.errorMessage,
-            onDismiss = { if (!state.isSaving) { editorOpen = false; viewModel.clearError() } },
+            selectedImageBytes = state.selectedImageBytes,
+            removeImage = state.removeImage,
+            isPreparingImage = state.isPreparingImage,
+            imageUrl = editing?.imagePath?.let(state.imageUrls::get),
+            imageError = editing?.imagePath?.let(state.imageErrors::contains) == true,
+            onRetryImage = { editing?.let(viewModel::retryImage) },
+            onSelectImage = viewModel::selectImage,
+            onRemoveImage = viewModel::removeImage,
+            onDismiss = { if (!state.isBusy) { editorOpen = false; viewModel.clearError() } },
             onSave = { draft ->
                 viewModel.save(draft, editing) { editorOpen = false; editing = null }
             }
@@ -169,11 +191,14 @@ fun RewardManageScreen(
 }
 
 @Composable
-private fun RewardRow(reward: Reward, busy: Boolean, onEdit: () -> Unit, onToggle: () -> Unit) {
+private fun RewardRow(
+    reward: Reward, imageUrl: String?, imageError: Boolean, onRetryImage: () -> Unit,
+    busy: Boolean, onEdit: () -> Unit, onToggle: () -> Unit
+) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(covers.firstOrNull { it.first == reward.coverKey }?.second?.substringBefore(' ') ?: "🎁")
+                RewardImage(reward, imageUrl, imageError, onRetryImage)
                 Column(Modifier.weight(1f).padding(start = 10.dp)) {
                     Text(reward.title, fontWeight = FontWeight.SemiBold)
                     Text(
@@ -198,10 +223,41 @@ private fun RewardRow(reward: Reward, busy: Boolean, onEdit: () -> Unit, onToggl
 }
 
 @Composable
+private fun RewardImage(reward: Reward, imageUrl: String?, imageError: Boolean, onRetry: () -> Unit) {
+    val cover = covers.firstOrNull { it.first == reward.coverKey }?.second?.substringBefore(' ') ?: "🎁"
+    var loadFailed by remember(imageUrl) { mutableStateOf(false) }
+    if (reward.imagePath == null) {
+        Text(cover)
+    } else if (imageError || loadFailed) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(cover)
+            TextButton(onClick = onRetry) { Text("图片重试") }
+        }
+    } else if (imageUrl == null) {
+        Text(cover)
+    } else {
+        AsyncImage(
+            model = imageUrl, contentDescription = "${reward.title}的奖励图片",
+            contentScale = ContentScale.Crop,
+            onError = { loadFailed = true },
+            modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp))
+        )
+    }
+}
+
+@Composable
 private fun RewardEditorDialog(
     editing: Reward?,
     busy: Boolean,
     error: String?,
+    selectedImageBytes: ByteArray?,
+    removeImage: Boolean,
+    isPreparingImage: Boolean,
+    imageUrl: String?,
+    imageError: Boolean,
+    onRetryImage: () -> Unit,
+    onSelectImage: (Uri) -> Unit,
+    onRemoveImage: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (RewardDraft) -> Unit
 ) {
@@ -211,12 +267,16 @@ private fun RewardEditorDialog(
     var description by remember(editing?.id) { mutableStateOf(editing?.description.orEmpty()) }
     var coverKey by remember(editing?.id) { mutableStateOf(editing?.coverKey ?: "gift") }
     var featured by remember(editing?.id) { mutableStateOf(editing?.isFeatured ?: false) }
+    var imageLoadFailed by remember(imageUrl) { mutableStateOf(false) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let(onSelectImage)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (editing == null) "新增奖励" else "编辑奖励") },
         text = {
-            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = title, onValueChange = { title = it }, label = { Text("奖励名称") },
                     singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth()
@@ -246,6 +306,40 @@ private fun RewardEditorDialog(
                     label = { Text("说明（可选）") }, enabled = !busy, modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
+                Text("奖励图片（可选）", style = MaterialTheme.typography.labelLarge)
+                val preview = remember(selectedImageBytes) {
+                    selectedImageBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                }
+                if (preview != null) {
+                    Image(
+                        bitmap = preview.asImageBitmap(), contentDescription = "待上传的奖励图片",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(96.dp).clip(RoundedCornerShape(8.dp))
+                    )
+                } else if (!removeImage && imageUrl != null && !imageLoadFailed) {
+                    AsyncImage(
+                        model = imageUrl, contentDescription = "当前奖励图片",
+                        contentScale = ContentScale.Crop,
+                        onError = { imageLoadFailed = true },
+                        modifier = Modifier.size(96.dp).clip(RoundedCornerShape(8.dp))
+                    )
+                } else if (!removeImage && editing?.imagePath != null && (imageError || imageLoadFailed)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("当前图片读取失败，显示预设封面")
+                        TextButton(onClick = onRetryImage) { Text("重试") }
+                    }
+                }
+                Row {
+                    TextButton(enabled = !busy && !isPreparingImage, onClick = { imagePicker.launch("image/*") }) {
+                        Text(if (preview != null || (!removeImage && editing?.imagePath != null)) "更换图片" else "选择图片")
+                    }
+                    if (preview != null || (!removeImage && editing?.imagePath != null)) {
+                        TextButton(enabled = !busy && !isPreparingImage, onClick = onRemoveImage) { Text("移除图片") }
+                    }
+                }
+                if (isPreparingImage) Text("正在处理图片…", style = MaterialTheme.typography.bodySmall)
+                Text("支持静态 JPEG、PNG；上传时转为 JPEG，最大 5 MB", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(12.dp))
                 Text("预设封面", style = MaterialTheme.typography.labelLarge)
                 covers.chunked(2).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -265,7 +359,7 @@ private fun RewardEditorDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = !busy, onClick = {
+            TextButton(enabled = !busy && !isPreparingImage, onClick = {
                 onSave(RewardDraft(title, cost, repeatable, description, coverKey, featured))
             }) {
                 if (busy) CircularProgressIndicator(Modifier.height(18.dp)) else Text("保存")

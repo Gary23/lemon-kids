@@ -12,6 +12,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.postgrest.rpc
+import io.github.jan.supabase.storage.Storage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -22,6 +23,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.UUID
+import kotlin.time.Duration.Companion.minutes
 
 @Serializable
 private data class RewardCreate(
@@ -32,6 +35,7 @@ private data class RewardCreate(
     @SerialName("is_active") val isActive: Boolean,
     val description: String?,
     @SerialName("cover_key") val coverKey: String,
+    @SerialName("image_path") val imagePath: String?,
     @SerialName("is_featured") val isFeatured: Boolean
 )
 
@@ -42,6 +46,7 @@ private data class RewardUpdate(
     val repeatable: Boolean,
     val description: String?,
     @SerialName("cover_key") val coverKey: String,
+    @SerialName("image_path") val imagePath: String?,
     @SerialName("is_featured") val isFeatured: Boolean
 )
 
@@ -54,6 +59,7 @@ class SupabaseRewardRepository @Inject constructor(
 ) : RewardRepository {
 
     private val postgrest get() = supabase.pluginManager.getPlugin(Postgrest)
+    private val storage get() = supabase.pluginManager.getPlugin(Storage)
     private val pointsRefreshEvents = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 1)
 
     override fun observeRewards(familyId: String): Flow<List<Reward>> = callbackFlow {
@@ -88,6 +94,7 @@ class SupabaseRewardRepository @Inject constructor(
                 isActive = reward.isActive,
                 description = reward.description?.trim()?.takeIf { it.isNotEmpty() },
                 coverKey = reward.coverKey,
+                imagePath = reward.imagePath?.also { validateImagePath(reward.familyId, it) },
                 isFeatured = reward.isFeatured
             )
         ) { select() }.decodeSingle<Reward>().id
@@ -102,6 +109,7 @@ class SupabaseRewardRepository @Inject constructor(
                 repeatable = reward.repeatable,
                 description = reward.description?.trim()?.takeIf { it.isNotEmpty() },
                 coverKey = reward.coverKey,
+                imagePath = reward.imagePath?.also { validateImagePath(reward.familyId, it) },
                 isFeatured = reward.isFeatured
             )
         ) {
@@ -109,6 +117,34 @@ class SupabaseRewardRepository @Inject constructor(
             select()
         }.decodeSingle<Reward>()
         Unit
+    }
+
+    override suspend fun uploadRewardImage(familyId: String, jpegBytes: ByteArray): Result<String> = runCatching {
+        require(runCatching { UUID.fromString(familyId) }.isSuccess) { "家庭信息无效" }
+        require(jpegBytes.size in 1..MAX_IMAGE_BYTES) { "图片不能超过 5 MB" }
+        require(jpegBytes.size >= 3 && jpegBytes[0] == 0xff.toByte() && jpegBytes[1] == 0xd8.toByte()) {
+            "仅支持 JPEG 图片"
+        }
+        val path = "$familyId/${UUID.randomUUID()}.jpg"
+        storage.from(IMAGE_BUCKET).upload(path = path, data = jpegBytes)
+        path
+    }
+
+    override suspend fun deleteRewardImage(familyId: String, imagePath: String): Result<Unit> = runCatching {
+        validateImagePath(familyId, imagePath)
+        storage.from(IMAGE_BUCKET).delete(listOf(imagePath))
+    }
+
+    override suspend fun createRewardImageUrl(familyId: String, imagePath: String): Result<String> = runCatching {
+        validateImagePath(familyId, imagePath)
+        storage.from(IMAGE_BUCKET).createSignedUrl(imagePath, 10.minutes)
+    }
+
+    private fun validateImagePath(familyId: String, imagePath: String) {
+        require(runCatching { UUID.fromString(familyId) }.isSuccess &&
+            imagePath.matches(Regex("^${Regex.escape(familyId)}/[0-9a-fA-F-]{36}\\.jpg$")) &&
+            runCatching { UUID.fromString(imagePath.substringAfter('/').removeSuffix(".jpg")) }.isSuccess
+        ) { "奖励图片路径与家庭不匹配" }
     }
 
     override suspend fun setRewardActive(rewardId: String, familyId: String, active: Boolean): Result<Unit> = runCatching {
@@ -231,5 +267,10 @@ class SupabaseRewardRepository @Inject constructor(
         launch { pointsRefreshEvents.collect { fetch() } }
         launch { while (true) { delay(300_000); fetch() } }
         awaitClose { }
+    }
+
+    companion object {
+        private const val IMAGE_BUCKET = "reward-images"
+        private const val MAX_IMAGE_BYTES = 5 * 1024 * 1024
     }
 }

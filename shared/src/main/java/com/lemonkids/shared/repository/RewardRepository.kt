@@ -10,6 +10,9 @@ interface RewardRepository {
     suspend fun getAllRewards(familyId: String): Result<List<Reward>>
     suspend fun createReward(reward: Reward): Result<String>
     suspend fun updateReward(reward: Reward): Result<Unit>
+    suspend fun uploadRewardImage(familyId: String, jpegBytes: ByteArray): Result<String>
+    suspend fun deleteRewardImage(familyId: String, imagePath: String): Result<Unit>
+    suspend fun createRewardImageUrl(familyId: String, imagePath: String): Result<String>
     suspend fun setRewardActive(rewardId: String, familyId: String, active: Boolean): Result<Unit>
     suspend fun deleteReward(rewardId: String): Result<Unit>
     suspend fun getRewardSnapshot(familyId: String, childId: String): Result<RewardSnapshot>

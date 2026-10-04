@@ -1,5 +1,9 @@
 package com.lemonkids.parent.feature.profile
 
+import android.content.Context
+import android.net.Uri
+import android.util.Log
+import dagger.hilt.android.qualifiers.ApplicationContext
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.Reward
@@ -35,24 +39,77 @@ data class RewardManageUiState(
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val operatingRewardId: String? = null,
+    val selectedImageBytes: ByteArray? = null,
+    val removeImage: Boolean = false,
+    val isPreparingImage: Boolean = false,
+    val imageUrls: Map<String, String> = emptyMap(),
+    val imageErrors: Set<String> = emptySet(),
     val errorMessage: String? = null,
     val familyId: String? = null
 ) {
-    val isBusy: Boolean get() = isSaving || operatingRewardId != null
+    val isBusy: Boolean get() = isSaving || isPreparingImage || operatingRewardId != null
 }
 
 @HiltViewModel
 class RewardManageViewModel @Inject constructor(
     private val rewardRepository: RewardRepository,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(RewardManageUiState())
     val uiState: StateFlow<RewardManageUiState> = _uiState.asStateFlow()
+    private val cleanupPrefs = context.getSharedPreferences("reward_image_cleanup", Context.MODE_PRIVATE)
 
     init { refresh() }
 
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null)
+    }
+
+    fun beginEdit() {
+        _uiState.value = _uiState.value.copy(
+            selectedImageBytes = null, removeImage = false, isPreparingImage = false, errorMessage = null
+        )
+    }
+
+    fun selectImage(uri: Uri) {
+        if (_uiState.value.isBusy) return
+        _uiState.value = _uiState.value.copy(isPreparingImage = true, errorMessage = null)
+        viewModelScope.launch {
+            runCatching { prepareRewardImage(context, uri) }.fold(
+                onSuccess = { bytes ->
+                    _uiState.value = _uiState.value.copy(
+                        selectedImageBytes = bytes, removeImage = false, isPreparingImage = false
+                    )
+                },
+                onFailure = { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isPreparingImage = false,
+                        errorMessage = "选择图片失败：${error.message ?: "请换一张图片"}"
+                    )
+                }
+            )
+        }
+    }
+
+    fun removeImage() {
+        if (_uiState.value.isBusy) return
+        _uiState.value = _uiState.value.copy(selectedImageBytes = null, removeImage = true, errorMessage = null)
+    }
+
+    fun retryImage(reward: Reward) {
+        val path = reward.imagePath ?: return
+        val familyId = _uiState.value.familyId ?: return
+        _uiState.value = _uiState.value.copy(
+            imageUrls = _uiState.value.imageUrls - path,
+            imageErrors = _uiState.value.imageErrors - path
+        )
+        viewModelScope.launch {
+            rewardRepository.createRewardImageUrl(familyId, path).fold(
+                onSuccess = { url -> _uiState.value = _uiState.value.copy(imageUrls = _uiState.value.imageUrls + (path to url)) },
+                onFailure = { _uiState.value = _uiState.value.copy(imageErrors = _uiState.value.imageErrors + path) }
+            )
+        }
     }
 
     fun refresh() = viewModelScope.launch { load(showLoading = _uiState.value.rewards.isEmpty()) }
@@ -76,8 +133,12 @@ class RewardManageViewModel @Inject constructor(
                     rewards = rewards,
                     familyId = familyId,
                     isLoading = false,
-                    errorMessage = null
+                    errorMessage = null,
+                    imageUrls = emptyMap(),
+                    imageErrors = emptySet()
                 )
+                rewards.filter { it.imagePath != null }.forEach(::retryImage)
+                retryPendingCleanup(familyId, rewards)
             },
             onFailure = { error ->
                 _uiState.value = _uiState.value.copy(
@@ -86,6 +147,27 @@ class RewardManageViewModel @Inject constructor(
                 )
             }
         )
+    }
+
+    private fun rememberCleanup(path: String) {
+        cleanupPrefs.edit().putStringSet(
+            "paths", cleanupPrefs.getStringSet("paths", emptySet()).orEmpty() + path
+        ).apply()
+    }
+
+    private fun retryPendingCleanup(familyId: String, rewards: List<Reward>) {
+        val referenced = rewards.mapNotNull { it.imagePath }.toSet()
+        cleanupPrefs.getStringSet("paths", emptySet()).orEmpty()
+            .filter { it.startsWith("$familyId/") && it !in referenced }
+            .forEach { path ->
+                viewModelScope.launch {
+                    rewardRepository.deleteRewardImage(familyId, path).onSuccess {
+                        cleanupPrefs.edit().putStringSet(
+                            "paths", cleanupPrefs.getStringSet("paths", emptySet()).orEmpty() - path
+                        ).apply()
+                    }.onFailure { Log.w("RewardManage", "待清理奖励图片重试失败：$path", it) }
+                }
+            }
     }
 
     fun save(draft: RewardDraft, editing: Reward?, onSaved: () -> Unit) {
@@ -99,28 +181,51 @@ class RewardManageViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(errorMessage = validationError)
             return
         }
+        val confirmedFamilyId = familyId ?: return
         val reward = Reward(
             id = editing?.id.orEmpty(),
-            familyId = familyId!!,
+            familyId = confirmedFamilyId,
             title = title,
             cost = price!!,
             repeatable = draft.repeatable,
             isActive = editing?.isActive ?: true,
             description = draft.description.trim().takeIf { it.isNotEmpty() },
             coverKey = draft.coverKey,
-            isFeatured = draft.isFeatured
+            isFeatured = draft.isFeatured,
+            imagePath = if (_uiState.value.removeImage) null else editing?.imagePath
         )
+        val selectedBytes = _uiState.value.selectedImageBytes
+        val oldPath = editing?.imagePath
         _uiState.value = _uiState.value.copy(isSaving = true, errorMessage = null)
         viewModelScope.launch {
-            val result = if (editing == null) rewardRepository.createReward(reward).map { Unit }
-                else rewardRepository.updateReward(reward)
+            var newPath: String? = null
+            val result = try {
+                if (selectedBytes != null) {
+                    newPath = rewardRepository.uploadRewardImage(confirmedFamilyId, selectedBytes).getOrThrow()
+                }
+                val updated = reward.copy(imagePath = newPath ?: reward.imagePath)
+                if (editing == null) rewardRepository.createReward(updated).map { Unit }
+                else rewardRepository.updateReward(updated)
+            } catch (error: Exception) { Result.failure(error) }
             result.fold(
                 onSuccess = {
+                    if (oldPath != null && oldPath != (newPath ?: reward.imagePath)) {
+                        rewardRepository.deleteRewardImage(confirmedFamilyId, oldPath).onFailure {
+                            rememberCleanup(oldPath)
+                            Log.w("RewardManage", "旧奖励图片清理失败：$oldPath", it)
+                        }
+                    }
                     load(showLoading = false)
                     _uiState.value = _uiState.value.copy(isSaving = false)
                     onSaved()
                 },
                 onFailure = { error ->
+                    newPath?.let { path ->
+                        rewardRepository.deleteRewardImage(confirmedFamilyId, path).onFailure {
+                            rememberCleanup(path)
+                            Log.w("RewardManage", "未引用的新奖励图片清理失败：$path", it)
+                        }
+                    }
                     _uiState.value = _uiState.value.copy(
                         isSaving = false,
                         errorMessage = saveError(error)

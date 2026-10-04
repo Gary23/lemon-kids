@@ -20,6 +20,7 @@
 5. Supabase 认证会话保存在各应用私有数据中；认字端和任务端还会分别保存已验证的 `task` 绑定码以静默恢复会话。刷新凭证失败或业务请求发现 token 缺失时，由单例 `auth/SessionRecoveryCoordinator` 通知对应应用根层阻断业务并执行刷新或绑定码恢复；恢复成功后必须调用 `markRecovered()` 解除阻断。清除应用数据或主动退出才应要求重新绑定。
 6. 更新任务时，`SupabaseTaskRepository` 必须使用显式 `JsonObject` 载荷；不要以含 `List<Int>` 的 `Map<String, Any?>` 提交，Kotlinx Serialization 无法序列化 `Any`。重复系列同步未来任务时不得覆盖各实例自己的 `due_date`。
 7. 奖励目录由家长维护，`RewardRepository.getAllRewards` 包含停用项，孩子端观察接口只返回启用项。`is_active` 表示家长启停；一次性奖励是否仍可兑换须由兑换记录和服务端事务判断。孩子端通过奖励快照读取真实余额、月收益与本人兑换记录，并通过 `redeem_reward`、`use_reward_redemption`、`cancel_reward_redemption` RPC 执行兑换、使用和退款。家长端目录迁移见 `../supabase/sql/20260930_parent_reward_catalog.sql`；孩子端事务迁移见 `../supabase/sql/20260930_kid_real_rewards.sql`。
+8. `Reward.imagePath` 是可空的家庭私有对象路径，不是公开 URL。`RewardRepository` 创建/更新奖励时写入该路径，图片上传、删除和十分钟签名读取由仓库处理；对象路径须属于奖励家庭。家长端先上传新对象再保存奖励，失败时清理新对象；图片替换或移除成功后清理旧对象。旧奖励保持空路径和预设封面。依赖 `../supabase/sql/20261004_reward_images.sql` 的 `rewards.image_path` 与私有 `reward-images` bucket；权限由数据库及 Storage RLS 最终执行。
 
 ## 配置与安全
 
