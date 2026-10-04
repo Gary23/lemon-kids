@@ -44,15 +44,17 @@ import com.lemonkids.kidtask.ui.theme.Strawberry
 import com.lemonkids.kidtask.ui.theme.StrawberrySoft
 
 @Composable
-fun ChildSummary(points: Int?, pointsUnavailable: Boolean, streakDays: Int, modifier: Modifier = Modifier) {
+fun ChildSummary(userName: String, hasUser: Boolean, points: Int?, pointsUnavailable: Boolean, streakDays: Int, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Surface(shape = CircleShape, color = Lemon, modifier = Modifier.size(42.dp)) {
                 Box(contentAlignment = Alignment.Center) { Text("🍋", fontSize = 23.sp) }
             }
-            Column {
-                Text("小当家", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = SlateInk)
-                Text("今天也要加油呀", fontSize = 12.sp, color = SlateMuted)
+            Column(Modifier.weight(1f)) {
+                Text(childNameLabel(userName, hasUser), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp,
+                    color = SlateInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("今天也要加油呀", fontSize = 12.sp, color = SlateMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -61,6 +63,12 @@ fun ChildSummary(points: Int?, pointsUnavailable: Boolean, streakDays: Int, modi
             SummaryBadge(Icons.Filled.Star, pointsLabel, LemonShadow, LemonBorder, Modifier.fillMaxWidth())
         }
     }
+}
+
+fun childNameLabel(userName: String, hasUser: Boolean): String = when {
+    !hasUser -> "姓名加载中"
+    userName.isBlank() -> "未设置姓名"
+    else -> userName.trim()
 }
 
 @Composable

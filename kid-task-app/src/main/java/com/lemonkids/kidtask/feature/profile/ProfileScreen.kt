@@ -60,6 +60,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.lemonkids.kidtask.ui.components.StatusBadge
+import com.lemonkids.kidtask.ui.components.childNameLabel
 import com.lemonkids.kidtask.ui.theme.Butter
 import com.lemonkids.kidtask.ui.theme.Canvas
 import com.lemonkids.kidtask.ui.theme.FreshMint
@@ -190,7 +191,9 @@ private fun GrowthHeader(
                 }
                 Column(Modifier.weight(0.95f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.clickable(onClick = onNameClick), verticalAlignment = Alignment.CenterVertically) {
-                        Text(profile.userName.ifBlank { "小当家" }, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk)
+                        Text(childNameLabel(profile.userName, profile.hasUser), modifier = Modifier.weight(1f, fill = false),
+                            fontSize = 23.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.width(7.dp))
                         Icon(Icons.Filled.Edit, "修改昵称", tint = SlateMuted, modifier = Modifier.size(18.dp))
                     }

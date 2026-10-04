@@ -119,7 +119,7 @@ fun KidTaskNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
         }
 
         composable(KidTaskRoutes.MAIN) {
-            KidTaskMainScreen()
+            KidTaskMainScreen(authViewModel)
         }
     }
 
@@ -211,9 +211,10 @@ private fun TaskSessionRecoveryDialog(
 }
 
 @Composable
-fun KidTaskMainScreen() {
+fun KidTaskMainScreen(authViewModel: AuthViewModel) {
     val navController = rememberNavController()
     val tabs = listOf(KidTaskTab.Home, KidTaskTab.Calendar, KidTaskTab.Reward, KidTaskTab.Profile)
+    val authState by authViewModel.uiState.collectAsState()
     val homeViewModel: HomeViewModel = hiltViewModel()
     val homeState by homeViewModel.uiState.collectAsState()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -234,6 +235,8 @@ fun KidTaskMainScreen() {
             points = homeState.points.takeIf { homeState.isPointsLoaded },
             pointsUnavailable = homeState.isPointsLoadTimedOut,
             streakDays = homeState.streakDays,
+            userName = authState.currentUser?.name.orEmpty(),
+            hasUser = authState.currentUser != null,
             onSelect = onSelect
         )
         KidTaskContent(navController, homeViewModel, Modifier.weight(1f))
@@ -247,6 +250,8 @@ private fun KidTaskSidebar(
     points: Int?,
     pointsUnavailable: Boolean,
     streakDays: Int,
+    userName: String,
+    hasUser: Boolean,
     onSelect: (KidTaskTab) -> Unit
 ) {
     Surface(
@@ -294,7 +299,7 @@ private fun KidTaskSidebar(
             }
             Column {
                 HorizontalDivider(color = LemonBorder)
-                ChildSummary(points, pointsUnavailable, streakDays, Modifier.padding(top = 16.dp))
+                ChildSummary(userName, hasUser, points, pointsUnavailable, streakDays, Modifier.padding(top = 16.dp))
             }
         }
     }

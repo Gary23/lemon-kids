@@ -29,6 +29,7 @@ import javax.inject.Inject
 
 data class KidProfileUiState(
     val userName: String = "",
+    val hasUser: Boolean = false,
     val totalPoints: Int = 0,
     val avatarUrl: String? = null,
     val isUploading: Boolean = false,
@@ -178,12 +179,14 @@ class ProfileViewModel @Inject constructor(
 
     private fun loadProfile() {
         viewModelScope.launch {
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            _uiState.value = _uiState.value.copy(
-                userName = user.name,
-                totalPoints = user.totalPoints,
-                avatarUrl = user.avatarUrl
-            )
+            authRepository.observeCurrentUser().collect { user ->
+                _uiState.value = _uiState.value.copy(
+                    userName = user?.name.orEmpty(),
+                    hasUser = user != null,
+                    totalPoints = user?.totalPoints ?: 0,
+                    avatarUrl = user?.avatarUrl
+                )
+            }
         }
     }
 
