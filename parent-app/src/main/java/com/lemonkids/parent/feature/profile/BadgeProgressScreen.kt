@@ -163,6 +163,7 @@ internal fun badgeSaveErrorMessage(error: Throwable): String = when (error) {
 fun BadgeProgressScreen(onBack: () -> Unit, viewModel: BadgeProgressViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsState()
     var editing by remember { mutableStateOf<Pair<BadgeSpec, String>?>(null) }
+    var details by remember { mutableStateOf<BadgeSpec?>(null) }
     var englishExpanded by remember { mutableStateOf(false) }
     val englishValues = state.englishValues()
 
@@ -177,7 +178,7 @@ fun BadgeProgressScreen(onBack: () -> Unit, viewModel: BadgeProgressViewModel = 
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     state.children.forEach { child ->
                         FilterChip(selected = state.selectedChildId == child.uid, onClick = {
-                            editing = null; englishExpanded = false; viewModel.selectChild(child.uid)
+                            editing = null; details = null; englishExpanded = false; viewModel.selectChild(child.uid)
                         }, label = { Text(child.name) })
                     }
                 }
@@ -200,6 +201,9 @@ fun BadgeProgressScreen(onBack: () -> Unit, viewModel: BadgeProgressViewModel = 
                                         val level = BadgeCatalog.englishLevel(englishValues)
                                         Text("英语阅读 · ${if (level == 0) "尚未点亮" else "Lv.$level ${BadgeCatalog.englishName(level - 1)}"}", fontWeight = FontWeight.Bold)
                                         Text("已计入 ${BadgeCatalog.englishCountedTotal(englishValues)} / 2049 篇 · 点开逐级录入", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                            TextButton(onClick = { details = spec }) { Text("查看详情") }
+                                        }
                                         if (englishExpanded) BadgeCatalog.englishGoals.forEachIndexed { index, goal ->
                                             val letter = BadgeCatalog.englishLetter(index)
                                             Row(Modifier.fillMaxWidth().clickable { editing = spec to letter }.padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -223,6 +227,9 @@ fun BadgeProgressScreen(onBack: () -> Unit, viewModel: BadgeProgressViewModel = 
                                             else -> "六年目标 ${spec.graduationGoal} ${spec.unit}"
                                         }}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         state.record(spec.key)?.let { Text("更新于 ${formatBadgeTime(it.updatedAt)}", style = MaterialTheme.typography.bodySmall) }
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                            TextButton(onClick = { details = spec }) { Text("查看详情") }
+                                        }
                                     }
                                 }
                             }
@@ -233,6 +240,7 @@ fun BadgeProgressScreen(onBack: () -> Unit, viewModel: BadgeProgressViewModel = 
             }
         }
     }
+    details?.let { spec -> BadgeLevelDetailsDialog(spec, onDismiss = { details = null }) }
     editing?.let { (spec, segment) ->
         val old = state.record(spec.key, segment)?.value ?: 0
         val goal = if (segment.isNotEmpty()) BadgeCatalog.englishGoals[BadgeCatalog.englishIndex(segment)!!] else spec.limit

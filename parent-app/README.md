@@ -14,7 +14,7 @@
 | 任务和日历 | `feature/tasks/TasksScreen.kt`、`TaskEditScreen.kt`、`CalendarView.kt`、`TaskCompletionNotifier.kt` |
 | 远程闹钟 | `feature/alarm/AlarmScreen.kt`、`AlarmViewModel.kt`；为已绑定监控 Pad 建立、编辑、取消闹钟并显示回执状态 |
 | 任务库 | `feature/profile/TaskTemplateManageScreen.kt`；模板数据由共享的 `TaskTemplateRepository` 管理 |
-| 勋章进度 | `feature/profile/BadgeProgressScreen.kt`；按孩子维护专项勋章累计数量 |
+| 勋章进度 | `feature/profile/BadgeProgressScreen.kt`、`BadgeLevelDetails.kt`；按孩子维护专项勋章累计数量并查看等级详情 |
 | 使用监管 | `feature/monitor/MonitorScreen.kt`、`MonitorViewModel.kt` |
 | 家庭、分类、回收站、日志 | `feature/profile/` |
 | 奖励管理 | `feature/profile/RewardManageScreen.kt`、`RewardManageViewModel.kt`；经 `:shared` 奖励仓库维护家庭奖励目录 |
@@ -36,6 +36,7 @@
 - 家长端在应用运行时收到新完成任务会显示系统通知；离线远程推送未接入。
 - 在“我的 > 奖励管理”维护家庭共用的待兑换奖励：创建、编辑、停用和启用，设置正整数价格、一次性或常规类型、说明、预设封面及大心愿。同一家庭最多一个启用的大心愿；停用保留奖励历史。孩子已兑换奖励的使用、取消及退星由孩子端独立处理。
 - 在“我的 > 勋章进度”选择孩子，分别录入 13 条专项勋章的累计完成数量；可调低纠错。认字、默写计字，成语和单词计个，古诗词计首，迪诺英语和思维启萌计课，英语阅读计读物篇数，其余计次。英语阅读 A～Z 逐级录入，每级有固定篇数上限；页面显示中文级名、当前值、阶段和下一门槛。高效英语、思维火箭等级尚未开放。任务担当者、坚持足迹仍由任务事实统计，不提供手动录入。
+- 每张专项勋章卡可点“查看详情”打开只读弹窗，滚动查看全部等级的名称、本级经验值和累计门槛。固定上限项目显示 6 级，学期项目显示 12 级并单列六年目标；英语阅读显示 A～Z 共 26 级的本级篇数和完成本级后的累计篇数。勋章经验值按该勋章的单位计量，与任务总等级 EXP 分开；查看详情不会修改进度。
 - 勋章保存按孩子隔离并核对服务端结果；真正的版本冲突提示最新值、保留当前输入供家长核对。失败时不显示含请求头的底层异常。现行专项进度只由家长录入，与任务完成、任务库和积分无关；孩子端的读取与展示按独立流程交付。
 - 新增或编辑奖励时可从相册选择一张静态 JPEG/PNG 图片，预览后保存，也可替换或移除；图片会缩至最长边不超过 1600 像素并转为不超过 5 MB 的 JPEG。列表及再次编辑时优先显示上传图片，无图或加载失败时使用预设封面；读取或上传失败会提示错误，保存失败不写入失效图片路径。图片只对本家庭已登录成员可读，仅本家庭家长可上传或删除。上线前须先部署 `../supabase/sql/20261004_reward_images.sql` 的字段与私有存储桶迁移。
 
