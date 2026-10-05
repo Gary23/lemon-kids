@@ -17,6 +17,8 @@ data class Task(
     /** 创建来源，仅供家长端追溯、分类改名和去重使用；任务端不依赖它们。 */
     @SerialName("source_category_id") val sourceCategoryId: String? = null,
     @SerialName("source_template_id") val sourceTemplateId: String? = null,
+    /** 创建时的领域快照；旧实例可为空。 */
+    @SerialName("growth_domain") val growthDomain: String? = null,
             @SerialName("due_date") val dueDate: String = "",
     @SerialName("end_date") val endDate: String? = null,
     @SerialName("due_time") val dueTime: String? = null,    @SerialName("reward_points") val rewardPoints: Int = 5,

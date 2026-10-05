@@ -64,4 +64,6 @@ dependencies {
 
     // Coil image loader
     implementation(libs.coil.compose)
+
+    testImplementation(libs.junit)
 }

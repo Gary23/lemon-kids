@@ -384,6 +384,12 @@ ALTER TABLE app_limits ALTER COLUMN daily_limit_minutes SET DEFAULT 999;
 -- generate_binding_code / exchange_binding_code / get_child_binding_codes 三个 RPC 函数
 ```
 
+### 3.1.3 家长手动勋章进度
+
+先部署 `supabase/sql/20261005_parent_badge_progress.sql`。`badge_progress` 以 `(child_id, badge_key, segment)` 为主键保存每个孩子的累计数量、版本、操作人和时间；`badge_progress_audit` 保存每次变更的旧值、新值和操作人。英语阅读用 A～Z `segment`，其他专项使用空字符串。数据库检查标识、分段和固定上限。
+
+家长端通过 `set_badge_progress` 安全定义者 RPC 写绝对值；RPC 验证当前用户为孩子所属家庭的家长，并比较期望版本，在一个事务内写进度和审计。RLS 允许家长读取本家庭、孩子只读本人，禁止客户端直接写表。`SupabaseBadgeProgressRepository` 在写入后重新读取确认服务端值；写入响应异常但实际已提交时可识别成功，真实冲突向界面传递最新值，用户界面只显示安全文案。共享 `BadgeCatalog` 保存 13 条专项规则及英语阅读各级目标；现行专项不读取 `tasks.growth_domain`。旧任务领域字段、历史数据及 RPC 保留兼容。孩子端接入读取属于独立需求。
+
 ### 3.2 Supabase Storage 路径
 
 ```

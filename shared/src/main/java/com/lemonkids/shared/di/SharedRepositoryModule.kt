@@ -1,5 +1,7 @@
 package com.lemonkids.shared.di
 
+import com.lemonkids.shared.repository.BadgeProgressRepository
+import com.lemonkids.shared.repository.impl.SupabaseBadgeProgressRepository
 import com.lemonkids.shared.repository.AppUsageRepository
 import com.lemonkids.shared.repository.AlarmBackgroundMusicRepository
 import com.lemonkids.shared.repository.AuthRepository
@@ -34,6 +36,10 @@ import dagger.hilt.components.SingletonComponent
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class SharedRepositoryModule {
+
+    @Binds
+    abstract fun bindBadgeProgressRepository(impl: SupabaseBadgeProgressRepository): BadgeProgressRepository
+
 
     @Binds
     abstract fun bindAlarmBackgroundMusicRepository(impl: SupabaseAlarmBackgroundMusicRepository): AlarmBackgroundMusicRepository
