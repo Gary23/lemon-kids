@@ -28,12 +28,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextOverflow
+import coil.compose.AsyncImage
 import com.lemonkids.kidtask.ui.theme.FreshMint
 import com.lemonkids.kidtask.ui.theme.Lemon
 import com.lemonkids.kidtask.ui.theme.LemonBorder
@@ -44,11 +47,26 @@ import com.lemonkids.kidtask.ui.theme.Strawberry
 import com.lemonkids.kidtask.ui.theme.StrawberrySoft
 
 @Composable
-fun ChildSummary(userName: String, hasUser: Boolean, points: Int?, pointsUnavailable: Boolean, streakDays: Int, modifier: Modifier = Modifier) {
+fun ChildSummary(userName: String, hasUser: Boolean, points: Int?, pointsUnavailable: Boolean, streakDays: Int,
+                 avatarUrl: String?, levelNumber: Int?, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Surface(shape = CircleShape, color = Lemon, modifier = Modifier.size(42.dp)) {
-                Box(contentAlignment = Alignment.Center) { Text("🍋", fontSize = 23.sp) }
+            Box(Modifier.size(52.dp)) {
+                Surface(shape = CircleShape, color = Lemon, modifier = Modifier.size(42.dp).align(Alignment.TopCenter),
+                    border = BorderStroke(1.dp, LemonBorder)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("👧", fontSize = 24.sp)
+                        if (!avatarUrl.isNullOrBlank()) AsyncImage(avatarUrl, "孩子头像",
+                            Modifier.size(42.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                    }
+                }
+                levelNumber?.let { level ->
+                    Surface(Modifier.align(Alignment.BottomCenter), shape = CircleShape, color = Color.White,
+                        border = BorderStroke(1.dp, LemonBorder), shadowElevation = 2.dp) {
+                        Text("Lv.$level", Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                            fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = LemonShadow, maxLines = 1)
+                    }
+                }
             }
             Column(Modifier.weight(1f)) {
                 Text(childNameLabel(userName, hasUser), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp,

@@ -18,6 +18,8 @@
 | `sql/20261004_reward_images.sql` | 增加可空奖励图片路径、私有 `reward-images` bucket 和家庭隔离 Storage 策略 | 已有奖励目录迁移与 `users`；先运行图片预检，确认无冲突后执行 |
 | `sql/20261004_reward_images_postflight.sql` | 六项结构与权限配置核验 | 图片迁移完成后执行，所有检查项须为 `true` |
 | `sql/20261004_reward_images_role_verify.sql` | 家长、孩子及匿名角色的 Storage 权限判定 | 图片迁移完成后在测试项目执行；需要可用的家庭角色样本 |
+| `sql/20261005_kid_growth_snapshot.sql` | 孩子端只读 `growth_snapshot()`，汇总本人任务、有效到账星星、手动勋章进度和成长足迹 | 先部署家长端 `badge_progress` 及奖励兑换记录表；已在当前关联项目部署并核验 |
+| `sql/20261005_kid_growth_snapshot_verify.sql` | 事务内核对孩子本人快照数值与家长/匿名拒绝访问 | 上述快照函数已部署，目标环境有可用的角色样本 |
 | `sql/20260906_category_task_bundles.sql` | 分类任务包：模板与分类多对多、原子排程、同日同模板去重及分类改名同步 | **破坏性**：清空孩子积分/积分流水、任务、任务模板和分类；依赖任务模板与任务历史迁移 |
 | `sql/20260906_remote_alarms.sql` | 远程闹钟表、Pad 下发回执/审计、最小权限 RLS 与监控设备查询 RPC | 已有 `binding_codes`（含 `device_id`）、监控绑定 RPC、`families`、`users`；不清空业务数据 |
 | `sql/20260914_alarm_background_music_storage.sql` | 私有 `alarm-background-music` bucket、运营曲目目录、下架兼容校验、受控短时下载与 Pad 缓存状态 | 已执行远程闹钟及语音/音乐字段迁移；上线前必须以临时项目核验 RLS，且先上传经授权曲目 |

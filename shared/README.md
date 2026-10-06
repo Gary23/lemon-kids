@@ -21,6 +21,7 @@
 6. 更新任务时，`SupabaseTaskRepository` 必须使用显式 `JsonObject` 载荷；不要以含 `List<Int>` 的 `Map<String, Any?>` 提交，Kotlinx Serialization 无法序列化 `Any`。重复系列同步未来任务时不得覆盖各实例自己的 `due_date`。
 7. 奖励目录由家长维护，`RewardRepository.getAllRewards` 包含停用项，孩子端观察接口只返回启用项。`is_active` 表示家长启停；一次性奖励是否仍可兑换须由兑换记录和服务端事务判断。孩子端通过奖励快照读取真实余额、月收益与本人兑换记录，并通过 `redeem_reward`、`use_reward_redemption`、`cancel_reward_redemption` RPC 执行兑换、使用和退款。家长端目录迁移见 `../supabase/sql/20260930_parent_reward_catalog.sql`；孩子端事务迁移见 `../supabase/sql/20260930_kid_real_rewards.sql`。
 8. `Reward.imagePath` 是可空的家庭私有对象路径，不是公开 URL。`RewardRepository` 创建/更新奖励时写入该路径，图片上传、删除和十分钟签名读取由仓库处理；对象路径须属于奖励家庭。家长端先上传新对象再保存奖励，失败时清理新对象；图片替换或移除成功后清理旧对象。旧奖励保持空路径和预设封面。依赖 `../supabase/sql/20261004_reward_images.sql` 的 `rewards.image_path` 与私有 `reward-images` bucket；权限由数据库及 Storage RLS 最终执行。
+9. 孩子端成长页经 `GrowthRepository.getOwnSnapshot()` 调用本人只读的 `growth_snapshot()`，模型在 `model/GrowthSnapshot.kt`，实现为 `repository/impl/SupabaseGrowthRepository.kt`。快照汇总任务事实、有效到账星星、奖励使用及家长手动勋章进度；任务领域不自动推进手动专项。数据库脚本在 `../supabase/sql/20261005_kid_growth_snapshot.sql`，家长端进度表及受控写入须先部署。孩子端不能写专项或读取其他孩子数据；读取失败不得伪装为零进度。
 
 ## 配置与安全
 
