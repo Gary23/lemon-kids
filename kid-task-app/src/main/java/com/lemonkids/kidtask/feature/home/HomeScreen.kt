@@ -83,7 +83,8 @@ fun HomeScreen(
                 playingTaskId = playingTaskId,
                 onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
                 onMarkDone = viewModel::markTaskDone,
-                onUndo = viewModel::markTaskUndo
+                onUndo = viewModel::markTaskUndo,
+                onPendingOrderChanged = viewModel::savePendingOrder
             )
 
             // 积分飞入动画
@@ -120,6 +121,15 @@ fun HomeScreen(
                     title = { Text("无法撤销任务") },
                     text = { Text(error) },
                     confirmButton = { TextButton(onClick = viewModel::dismissActionError) { Text("知道了") } }
+                )
+            }
+
+            uiState.orderError?.let { error ->
+                AlertDialog(
+                    onDismissRequest = viewModel::dismissOrderError,
+                    title = { Text("排序未保存") },
+                    text = { Text(error) },
+                    confirmButton = { TextButton(onClick = viewModel::dismissOrderError) { Text("知道了") } }
                 )
             }
 

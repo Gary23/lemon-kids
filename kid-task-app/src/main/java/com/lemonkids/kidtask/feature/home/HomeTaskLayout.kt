@@ -9,15 +9,25 @@ data class HomeTaskLayout(
     val progressPercent: Int
 )
 
-fun buildHomeTaskLayout(tasks: List<TaskUiItem>, categoryOrder: List<String>): HomeTaskLayout {
+fun buildHomeTaskLayout(
+    tasks: List<TaskUiItem>,
+    categoryOrder: List<String>,
+    pendingOrderIds: List<String>? = null
+): HomeTaskLayout {
     val completed = tasks.filter { it.status == "DONE" || it.status == "VERIFIED" }
-    val pending = tasks.filterNot { it.status == "DONE" || it.status == "VERIFIED" }
+    val defaultPending = tasks.filterNot { it.status == "DONE" || it.status == "VERIFIED" }
         .withIndex()
         .sortedWith(compareBy({ indexed ->
             val position = categoryOrder.indexOf(indexed.value.category)
             if (position < 0) Int.MAX_VALUE else position
         }, { it.index }))
         .map { it.value }
+    val pending = if (pendingOrderIds == null) defaultPending else {
+        val positions = pendingOrderIds.withIndex().associate { it.value to it.index }
+        defaultPending.withIndex().sortedWith(compareBy(
+            { positions[it.value.id] ?: Int.MAX_VALUE }, { it.index }
+        )).map { it.value }
+    }
     return HomeTaskLayout(
         pending = pending,
         completed = completed,

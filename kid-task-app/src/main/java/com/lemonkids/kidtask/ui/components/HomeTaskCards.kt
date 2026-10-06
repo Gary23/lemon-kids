@@ -53,7 +53,8 @@ internal fun HomeTaskCard(
     isExpired: Boolean,
     onSpeak: () -> Unit,
     onMarkDone: (String) -> Unit,
-    onUndo: (String) -> Unit
+    onUndo: (String) -> Unit,
+    actionsEnabled: Boolean = true
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -90,16 +91,16 @@ internal fun HomeTaskCard(
                 val stackAction = maxWidth < 340.dp
                 if (stackAction) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PendingTaskInfo(task, categoryColor, isExpired, isPlaying, onSpeak, Modifier.fillMaxWidth())
+                        PendingTaskInfo(task, categoryColor, isExpired, isPlaying, onSpeak, Modifier.fillMaxWidth(), actionsEnabled)
                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-                            HomeCompleteButton { onMarkDone(task.id) }
+                            HomeCompleteButton(actionsEnabled) { onMarkDone(task.id) }
                         }
                     }
                 } else {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        PendingTaskInfo(task, categoryColor, isExpired, isPlaying, onSpeak, Modifier.weight(1f))
-                        HomeCompleteButton { onMarkDone(task.id) }
+                        PendingTaskInfo(task, categoryColor, isExpired, isPlaying, onSpeak, Modifier.weight(1f), actionsEnabled)
+                        HomeCompleteButton(actionsEnabled) { onMarkDone(task.id) }
                     }
                 }
             }
@@ -114,14 +115,15 @@ private fun PendingTaskInfo(
     isExpired: Boolean,
     isPlaying: Boolean,
     onSpeak: () -> Unit,
-    modifier: Modifier
+    modifier: Modifier,
+    actionsEnabled: Boolean
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(Modifier.width(8.dp).height(54.dp).clip(CircleShape)
             .background(if (isExpired) Strawberry else Color(0xFF006E2F)))
         Surface(shape = CircleShape, color = HomeSpeechBackground, modifier = Modifier.size(40.dp)) {
-            Box(Modifier.clickable(role = Role.Button, onClick = onSpeak), contentAlignment = Alignment.Center) {
+            Box(Modifier.clickable(enabled = actionsEnabled, role = Role.Button, onClick = onSpeak), contentAlignment = Alignment.Center) {
                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读任务",
                     tint = if (isPlaying) Strawberry else Color(0xFF735C00), modifier = Modifier.size(20.dp))
             }
@@ -158,9 +160,9 @@ private fun PendingTaskInfo(
 }
 
 @Composable
-private fun HomeCompleteButton(onClick: () -> Unit) {
+private fun HomeCompleteButton(actionsEnabled: Boolean, onClick: () -> Unit) {
     Surface(shape = CircleShape, color = Lemon, shadowElevation = 3.dp,
-        modifier = Modifier.clickable(role = Role.Button, onClick = onClick)) {
+        modifier = Modifier.clickable(enabled = actionsEnabled, role = Role.Button, onClick = onClick)) {
         Text("打卡", modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
             color = Color(0xFF231B00), fontSize = 14.sp, fontWeight = FontWeight.Bold,
             maxLines = 1)

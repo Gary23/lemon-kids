@@ -90,6 +90,7 @@ fun TaskCard(
     sectionColor: Color,
     softColor: Color,
     density: TaskCardDensity = TaskCardDensity.Standard,
+    actionsEnabled: Boolean = true,
     onSpeak: () -> Unit,
     onMarkDone: (String) -> Unit,
     onUndo: (String) -> Unit
@@ -98,7 +99,7 @@ fun TaskCard(
     val isExpired = task.status == "EXPIRED" || task.status == "REJECTED"
 
     if (density == TaskCardDensity.Standard) {
-        HomeTaskCard(task, isPlaying, sectionColor, isDone, isExpired, onSpeak, onMarkDone, onUndo)
+        HomeTaskCard(task, isPlaying, sectionColor, isDone, isExpired, onSpeak, onMarkDone, onUndo, actionsEnabled)
         return
     }
 
