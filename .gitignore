@@ -40,4 +40,5 @@ yarn-error.log*
 pnpm-debug.log*
 .vercel/
 .snowflake/
+supabase/.temp/
 .v0-trash/
