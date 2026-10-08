@@ -13,6 +13,7 @@ data class Reward(
     @SerialName("is_active") val isActive: Boolean = true,
     @SerialName("description") val description: String? = null,
     @SerialName("cover_key") val coverKey: String = "gift",
+    @SerialName("image_path") val imagePath: String? = null,
     @SerialName("is_featured") val isFeatured: Boolean = false,
     @SerialName("created_at") val createdAt: String = ""
 )

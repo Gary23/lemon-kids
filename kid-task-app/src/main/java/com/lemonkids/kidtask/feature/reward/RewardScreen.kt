@@ -37,8 +37,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
@@ -47,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -140,7 +145,7 @@ fun RewardScreen(
                     val featured = snapshot.rewards.firstOrNull { it.isFeatured }
                     if (featured != null) {
                         SectionHeading("正在攒星星的心愿", "特别心愿 · 冲刺中")
-                        BigWishCard(featured, balance ?: 0,
+                        BigWishCard(featured, state.imageUrls[featured.id], balance ?: 0,
                             featured.id in snapshot.unavailableOneTimeIds,
                             !state.submitting && state.error == null && (state.pendingRequestId == null || state.pendingRewardId == featured.id),
                             onCalendarClick, { viewModel.confirmRedeem(featured.id) })
@@ -164,7 +169,7 @@ fun RewardScreen(
                     ordinary.chunked(columns).forEach { row ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             row.forEach { reward ->
-                                SmallWishCard(reward, balance ?: 0,
+                                SmallWishCard(reward, state.imageUrls[reward.id], balance ?: 0,
                                     reward.id in snapshot.unavailableOneTimeIds,
                                     !state.submitting && state.error == null && (state.pendingRequestId == null || state.pendingRewardId == reward.id),
                                     { viewModel.confirmRedeem(reward.id) }, Modifier.weight(1f))
@@ -357,7 +362,7 @@ private fun BankBalance(title: String, amount: String, tag: String, savings: Boo
 }
 
 @Composable
-private fun BigWishCard(reward: Reward, balance: Int, unavailable: Boolean, actionEnabled: Boolean,
+private fun BigWishCard(reward: Reward, imageUrl: String?, balance: Int, unavailable: Boolean, actionEnabled: Boolean,
                         onCalendarClick: () -> Unit, onRedeem: () -> Unit) {
     val progress = (balance.toFloat() / reward.cost.coerceAtLeast(1)).coerceIn(0f, 1f)
     val blockReason = reward.redemptionBlockReason(balance, if (unavailable) setOf(reward.id) else emptySet())
@@ -366,12 +371,12 @@ private fun BigWishCard(reward: Reward, balance: Int, unavailable: Boolean, acti
         BoxWithConstraints(Modifier.fillMaxWidth().padding(20.dp)) {
             if (maxWidth < 620.dp) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    RewardCover(reward, Modifier.fillMaxWidth().height(170.dp))
+                    RewardCover(reward, imageUrl, Modifier.fillMaxWidth().height(170.dp))
                     BigWishDetails(reward, balance, progress, blockReason, actionEnabled, onCalendarClick, onRedeem)
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(22.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RewardCover(reward, Modifier.size(width = 224.dp, height = 184.dp))
+                    RewardCover(reward, imageUrl, Modifier.size(width = 224.dp, height = 184.dp))
                     Box(Modifier.weight(1f)) {
                         BigWishDetails(reward, balance, progress, blockReason, actionEnabled, onCalendarClick, onRedeem)
                     }
@@ -382,7 +387,7 @@ private fun BigWishCard(reward: Reward, balance: Int, unavailable: Boolean, acti
 }
 
 @Composable
-private fun RewardCover(reward: Reward, modifier: Modifier) {
+private fun RewardCover(reward: Reward, imageUrl: String?, modifier: Modifier) {
     val image = when (reward.coverKey) {
         "toy", "wish" -> R.drawable.reward_castle
         "outing" -> R.drawable.reward_park
@@ -391,11 +396,7 @@ private fun RewardCover(reward: Reward, modifier: Modifier) {
         else -> null
     }
     Box(modifier.clip(RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
-        if (image != null) Image(painterResource(image), contentDescription = reward.title,
-            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else Box(Modifier.fillMaxSize().background(SkyBlueSoft), contentAlignment = Alignment.Center) {
-            Text("🎁", fontSize = 52.sp)
-        }
+        RewardImage(reward, imageUrl, image, 52)
         Box(Modifier.fillMaxSize().padding(9.dp), contentAlignment = Alignment.TopStart) {
             Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.92f)) {
                 Text("特别心愿 🌟", Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
@@ -441,7 +442,7 @@ private fun BigWishDetails(reward: Reward, balance: Int, progress: Float, blockR
 }
 
 @Composable
-private fun SmallWishCard(reward: Reward, balance: Int, unavailable: Boolean, actionEnabled: Boolean,
+private fun SmallWishCard(reward: Reward, imageUrl: String?, balance: Int, unavailable: Boolean, actionEnabled: Boolean,
                           onRedeem: () -> Unit, modifier: Modifier) {
     val blockReason = reward.redemptionBlockReason(balance, if (unavailable) setOf(reward.id) else emptySet())
     val status = when {
@@ -459,10 +460,7 @@ private fun SmallWishCard(reward: Reward, balance: Int, unavailable: Boolean, ac
                 else -> null
             }
             Box(Modifier.fillMaxWidth().height(128.dp)) {
-                if (image != null) Image(painterResource(image), contentDescription = reward.title,
-                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Crop)
-                else Box(Modifier.fillMaxSize().background(SkyBlueSoft, RoundedCornerShape(16.dp)),
-                    contentAlignment = Alignment.Center) { Text("🎁", fontSize = 42.sp) }
+                RewardImage(reward, imageUrl, image, 42, Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)))
                 Box(Modifier.fillMaxSize().padding(8.dp), contentAlignment = Alignment.TopEnd) {
                     StatusBadge(status, if (blockReason == null) FreshMintSoft else StrawberrySoft,
                         if (blockReason == null) FreshMintShadow else Strawberry)
@@ -487,6 +485,33 @@ private fun SmallWishCard(reward: Reward, balance: Int, unavailable: Boolean, ac
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RewardImage(reward: Reward, imageUrl: String?, fallbackImage: Int?, emojiSize: Int,
+                        modifier: Modifier = Modifier.fillMaxSize()) {
+    var imageLoaded by remember(imageUrl) { mutableStateOf(false) }
+    Box(modifier, contentAlignment = Alignment.Center) {
+        if (fallbackImage != null) {
+            Image(painterResource(fallbackImage), contentDescription = if (imageLoaded) null else reward.title,
+                modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        } else {
+            Box(Modifier.fillMaxSize().background(SkyBlueSoft), contentAlignment = Alignment.Center) {
+                Text("🎁", fontSize = emojiSize.sp)
+            }
+        }
+        if (imageUrl != null) {
+            AsyncImage(
+                model = imageUrl,
+                contentDescription = "${reward.title}的奖励图片",
+                contentScale = ContentScale.Crop,
+                onLoading = { imageLoaded = false },
+                onSuccess = { imageLoaded = true },
+                onError = { imageLoaded = false },
+                modifier = Modifier.fillMaxSize().alpha(if (imageLoaded) 1f else 0f)
+            )
         }
     }
 }

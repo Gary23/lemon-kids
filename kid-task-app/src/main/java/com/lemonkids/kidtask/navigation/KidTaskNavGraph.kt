@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -55,6 +56,8 @@ import com.lemonkids.kidtask.feature.home.HomeScreen
 import com.lemonkids.kidtask.feature.home.HomeViewModel
 import com.lemonkids.kidtask.feature.plan.PlanScreen
 import com.lemonkids.kidtask.feature.profile.ProfileScreen
+import com.lemonkids.kidtask.feature.profile.ProfileViewModel
+import com.lemonkids.kidtask.feature.profile.GrowthRules
 import com.lemonkids.kidtask.feature.reward.RewardScreen
 import com.lemonkids.kidtask.ui.theme.Pink
 import com.lemonkids.kidtask.ui.components.ChildSummary
@@ -119,7 +122,7 @@ fun KidTaskNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
         }
 
         composable(KidTaskRoutes.MAIN) {
-            KidTaskMainScreen()
+            KidTaskMainScreen(authViewModel)
         }
     }
 
@@ -211,11 +214,14 @@ private fun TaskSessionRecoveryDialog(
 }
 
 @Composable
-fun KidTaskMainScreen() {
+fun KidTaskMainScreen(authViewModel: AuthViewModel) {
     val navController = rememberNavController()
     val tabs = listOf(KidTaskTab.Home, KidTaskTab.Calendar, KidTaskTab.Reward, KidTaskTab.Profile)
+    val authState by authViewModel.uiState.collectAsState()
     val homeViewModel: HomeViewModel = hiltViewModel()
     val homeState by homeViewModel.uiState.collectAsState()
+    val profileViewModel: ProfileViewModel = hiltViewModel()
+    val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val selectedTab = if (currentRoute == "plan") KidTaskTab.Profile.route else currentRoute
@@ -234,9 +240,15 @@ fun KidTaskMainScreen() {
             points = homeState.points.takeIf { homeState.isPointsLoaded },
             pointsUnavailable = homeState.isPointsLoadTimedOut,
             streakDays = homeState.streakDays,
+            userName = authState.currentUser?.name.orEmpty(),
+            hasUser = authState.currentUser != null,
+            avatarUrl = authState.currentUser?.avatarUrl,
+            levelNumber = profileState.growth
+                ?.takeIf { it.childId == authState.currentUser?.uid }
+                ?.let { GrowthRules.level(it.totalExp).number },
             onSelect = onSelect
         )
-        KidTaskContent(navController, homeViewModel, Modifier.weight(1f))
+        KidTaskContent(navController, homeViewModel, profileViewModel, Modifier.weight(1f))
     }
 }
 
@@ -247,6 +259,10 @@ private fun KidTaskSidebar(
     points: Int?,
     pointsUnavailable: Boolean,
     streakDays: Int,
+    userName: String,
+    hasUser: Boolean,
+    avatarUrl: String?,
+    levelNumber: Int?,
     onSelect: (KidTaskTab) -> Unit
 ) {
     Surface(
@@ -294,14 +310,16 @@ private fun KidTaskSidebar(
             }
             Column {
                 HorizontalDivider(color = LemonBorder)
-                ChildSummary(points, pointsUnavailable, streakDays, Modifier.padding(top = 16.dp))
+                ChildSummary(userName, hasUser, points, pointsUnavailable, streakDays,
+                    avatarUrl, levelNumber, Modifier.padding(top = 16.dp))
             }
         }
     }
 }
 
 @Composable
-private fun KidTaskContent(navController: NavHostController, homeViewModel: HomeViewModel, modifier: Modifier) {
+private fun KidTaskContent(navController: NavHostController, homeViewModel: HomeViewModel,
+                           profileViewModel: ProfileViewModel, modifier: Modifier) {
     NavHost(navController = navController, startDestination = KidTaskTab.Home.route, modifier = modifier) {
         composable(KidTaskTab.Home.route) { HomeScreen(viewModel = homeViewModel) }
         composable(KidTaskTab.Calendar.route) { CalendarScreen() }
@@ -315,7 +333,8 @@ private fun KidTaskContent(navController: NavHostController, homeViewModel: Home
             ProfileScreen(
                 realPoints = homeState.points.takeIf { homeState.isPointsLoaded },
                 pointsUnavailable = homeState.isPointsLoadTimedOut,
-                onPlanClick = { navController.navigate("plan") }
+                onPlanClick = { navController.navigate("plan") },
+                viewModel = profileViewModel
             )
         }
         composable("plan") { PlanScreen(onBack = { navController.popBackStack() }) }

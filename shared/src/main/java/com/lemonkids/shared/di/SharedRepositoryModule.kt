@@ -1,11 +1,14 @@
 package com.lemonkids.shared.di
 
+import com.lemonkids.shared.repository.BadgeProgressRepository
+import com.lemonkids.shared.repository.impl.SupabaseBadgeProgressRepository
 import com.lemonkids.shared.repository.AppUsageRepository
 import com.lemonkids.shared.repository.AlarmBackgroundMusicRepository
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.CategoryRepository
 import com.lemonkids.shared.repository.DeviceStatusRepository
 import com.lemonkids.shared.repository.FamilyRepository
+import com.lemonkids.shared.repository.GrowthRepository
 import com.lemonkids.shared.repository.KnownCharacterRepository
 import com.lemonkids.shared.repository.ChildLiteracyCharacterRepository
 import com.lemonkids.shared.repository.RecognizedCharacterRepository
@@ -19,6 +22,7 @@ import com.lemonkids.shared.repository.impl.SupabaseAuthRepository
 import com.lemonkids.shared.repository.impl.SupabaseCategoryRepository
 import com.lemonkids.shared.repository.impl.SupabaseDeviceStatusRepository
 import com.lemonkids.shared.repository.impl.SupabaseFamilyRepository
+import com.lemonkids.shared.repository.impl.SupabaseGrowthRepository
 import com.lemonkids.shared.repository.impl.SupabaseKnownCharacterRepository
 import com.lemonkids.shared.repository.impl.SupabaseChildLiteracyCharacterRepository
 import com.lemonkids.shared.repository.impl.SupabaseRecognizedCharacterRepository
@@ -34,6 +38,13 @@ import dagger.hilt.components.SingletonComponent
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class SharedRepositoryModule {
+
+    @Binds
+    abstract fun bindGrowthRepository(impl: SupabaseGrowthRepository): GrowthRepository
+
+    @Binds
+    abstract fun bindBadgeProgressRepository(impl: SupabaseBadgeProgressRepository): BadgeProgressRepository
+
 
     @Binds
     abstract fun bindAlarmBackgroundMusicRepository(impl: SupabaseAlarmBackgroundMusicRepository): AlarmBackgroundMusicRepository

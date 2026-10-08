@@ -40,4 +40,6 @@ interface TaskRepository {
     suspend fun undoCompleteTask(taskId: String, childId: String, rewardPoints: Int): Result<Unit>
     suspend fun verifyTask(taskId: String): Result<Unit>
     suspend fun getTaskById(taskId: String): Result<Task>
+    /** 对已完成任务逐项更正领域，由服务端记录审计。 */
+    suspend fun correctGrowthDomain(taskId: String, growthDomain: String): Result<Unit>
 }

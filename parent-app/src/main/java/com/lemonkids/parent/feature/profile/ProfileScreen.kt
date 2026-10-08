@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +52,7 @@ fun ProfileScreen(
     onTaskManageClick: () -> Unit,
     onCategoryManageClick: () -> Unit,
     onRewardManageClick: () -> Unit,
+    onBadgeProgressClick: () -> Unit,
     onRecycleBinClick: () -> Unit,
     onDeviceStatusLogClick: () -> Unit,
     authViewModel: AuthViewModel = hiltViewModel()
@@ -105,7 +108,7 @@ fun ProfileScreen(
             )
         }
         Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 头像
@@ -220,6 +223,18 @@ fun ProfileScreen(
                     Column {
                         Text("奖励管理", fontWeight = FontWeight.Bold)
                         Text("管理奖励商品", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Card(modifier = Modifier.fillMaxWidth().clickable { onBadgeProgressClick() }) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text("勋章进度", fontWeight = FontWeight.Bold)
+                        Text("按孩子记录学习累计数量", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

@@ -54,6 +54,7 @@ import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.CategoryTaskTemplate
 import com.lemonkids.shared.model.TaskRecurrenceType
 import com.lemonkids.shared.model.TaskTemplate
+import com.lemonkids.shared.model.TaskStatus
 import com.lemonkids.shared.repository.ChildUserInfo
 import java.time.Instant
 import java.time.LocalDate
@@ -81,6 +82,7 @@ fun TaskEditScreen(
     var selectedTemplateId by remember { mutableStateOf("") }
     var recurrenceType by remember { mutableStateOf(TaskRecurrenceType.NONE) }
     var recurrenceWeekdays by remember { mutableStateOf(emptySet<Int>()) }
+    var growthDomain by remember { mutableStateOf<String?>(null) }
 
     var pickingDateField by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(taskId) {
@@ -105,6 +107,7 @@ fun TaskEditScreen(
             selectedChildId = data.childId
             recurrenceType = data.recurrenceType
             recurrenceWeekdays = data.recurrenceWeekdays
+            growthDomain = data.growthDomain
         }
     }
 
@@ -253,6 +256,7 @@ fun TaskEditScreen(
                                     dueTime = null,
                                     childId = selectedChildId,
                                     categoryName = selectedCategoryName,
+                                    growthDomain = growthDomain,
                                     recurrenceType = recurrenceType,
                                     recurrenceWeekdays = recurrenceWeekdays,
                                     onDone = { onBack() }
@@ -312,6 +316,7 @@ fun TaskEditScreen(
         }
 
     }
+
 }
 
 @Composable

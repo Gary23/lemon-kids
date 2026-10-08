@@ -2,6 +2,7 @@ package com.lemonkids.kidtask.feature.home
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -52,10 +54,12 @@ fun HomeDashboard(
     playingTaskId: String?,
     onSpeak: (TaskUiItem) -> Unit,
     onMarkDone: (String) -> Unit,
-    onUndo: (String) -> Unit
+    onUndo: (String) -> Unit,
+    onPendingOrderChanged: (List<String>) -> Unit = {}
 ) {
+    val scrollState = rememberScrollState()
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        modifier = Modifier.fillMaxSize().verticalScroll(scrollState)
             .padding(horizontal = 28.dp, vertical = 22.dp),
         verticalArrangement = Arrangement.spacedBy(22.dp)
     ) {
@@ -64,7 +68,7 @@ fun HomeDashboard(
                 CircularProgressIndicator(color = Lemon)
             }
         } else {
-            val layout = buildHomeTaskLayout(state.todayTasks, state.categories.map { it.name })
+            val layout = buildHomeTaskLayout(state.todayTasks, state.categories.map { it.name }, state.pendingOrderIds)
             ProgressHero(state.todayTasks.size, layout)
 
             if (state.allTasksDoneToday && state.todayTasks.isNotEmpty()) {
@@ -82,10 +86,11 @@ fun HomeDashboard(
                 val categoryIds = state.categories.associate { it.name to it.id }
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    TaskColumn("待完成任务", "还有 ${pending.size} 个", Lemon, pending, categoryIds,
-                        playingTaskId, state.syncingTaskIds, onSpeak, onMarkDone, onUndo, Modifier.weight(1.25f))
-                    TaskColumn("今天已完成", "${completed.size} 项", FreshMint, completed, categoryIds,
-                        playingTaskId, state.syncingTaskIds, onSpeak, onMarkDone, onUndo, Modifier.weight(0.75f))
+                    PendingTaskDragColumn(pending, categoryIds, playingTaskId, state.syncingTaskIds,
+                        scrollState, onSpeak, onMarkDone, onUndo, onPendingOrderChanged,
+                        Modifier.weight(1.25f))
+                    CompletedTaskColumn(completed, categoryIds, playingTaskId, state.syncingTaskIds,
+                        onSpeak, onMarkDone, onUndo, Modifier.weight(0.75f))
                 }
             }
         }
@@ -146,10 +151,7 @@ private fun MysteryBox() {
 }
 
 @Composable
-private fun TaskColumn(
-    title: String,
-    count: String,
-    accent: Color,
+private fun CompletedTaskColumn(
     tasks: List<TaskUiItem>,
     categoryIds: Map<String, String>,
     playingTaskId: String?,
@@ -162,24 +164,31 @@ private fun TaskColumn(
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.width(12.dp).height(28.dp).background(accent, CircleShape))
-            Text(title, modifier = Modifier.weight(1f), color = SlateInk, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
-            StatusBadge(count, if (accent == FreshMint) FreshMintSoft else LemonBorder,
-                if (accent == FreshMint) FreshMint else SlateInk)
+            Box(Modifier.width(12.dp).height(28.dp).background(FreshMint, CircleShape))
+            Text("今天已完成", modifier = Modifier.weight(1f), color = SlateInk, fontSize = 21.sp,
+                fontWeight = FontWeight.ExtraBold)
+            StatusBadge("${tasks.size} 项", FreshMintSoft, FreshMint)
         }
         if (tasks.isEmpty()) {
-            Surface(shape = RoundedCornerShape(26.dp), color = Color.White, border = BorderStroke(1.dp, LemonBorder.copy(alpha = 0.5f))) {
-                Text(if (accent == FreshMint) "完成任务后，星星会出现在这里 ✨" else "待办清单空空的，真棒！",
+            Surface(shape = RoundedCornerShape(26.dp), color = Color.White,
+                border = BorderStroke(1.dp, LemonBorder.copy(alpha = 0.5f))) {
+                Text("完成任务后，星星会出现在这里 ✨",
                     modifier = Modifier.fillMaxWidth().padding(25.dp), color = SlateMuted, fontSize = 14.sp)
             }
         }
         tasks.forEach { task ->
-            val visualKey = task.sourceCategoryId ?: categoryIds[task.category] ?: task.category
-            val (categoryColor, _) = stableTaskCategoryAppearance(visualKey)
-            TaskCard(task, playingTaskId == task.id, categoryColor, categoryColor.copy(alpha = 0.12f),
-                onSpeak = { onSpeak(task) }, onMarkDone = onMarkDone, onUndo = onUndo)
-            if (task.id in syncingTaskIds) {
-                Text("正在同步任务…", color = SlateMuted, fontSize = 12.sp, modifier = Modifier.padding(start = 10.dp))
+            key(task.id) {
+                val visualKey = task.sourceCategoryId ?: categoryIds[task.category] ?: task.category
+                val (categoryColor, _) = stableTaskCategoryAppearance(visualKey)
+                Column {
+                    TaskCard(task, playingTaskId == task.id, categoryColor,
+                        categoryColor.copy(alpha = 0.12f),
+                        onSpeak = { onSpeak(task) }, onMarkDone = onMarkDone, onUndo = onUndo)
+                    if (task.id in syncingTaskIds) {
+                        Text("正在同步任务…", color = SlateMuted, fontSize = 12.sp,
+                            modifier = Modifier.padding(start = 10.dp, top = 14.dp))
+                    }
+                }
             }
         }
     }

@@ -8,4 +8,8 @@ interface TaskTemplateRepository {
     suspend fun createTemplate(template: TaskTemplate): Result<String>
     suspend fun updateTemplate(template: TaskTemplate): Result<Unit>
     suspend fun deleteTemplate(templateId: String): Result<Unit>
+    suspend fun previewGrowthDomainBackfill(templateId: String): Result<GrowthDomainBackfillPreview>
+    suspend fun backfillGrowthDomain(templateId: String, growthDomain: String): Result<Int>
 }
+
+data class GrowthDomainBackfillPreview(val total: Int, val completed: Int)

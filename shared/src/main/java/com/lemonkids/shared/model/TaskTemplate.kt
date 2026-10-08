@@ -12,5 +12,6 @@ data class TaskTemplate(
     @SerialName("description") val description: String = "",
     @SerialName("reward_points") val rewardPoints: Int = 5,
     @SerialName("penalty_points") val penaltyPoints: Int = 2,
+    @SerialName("growth_domain") val growthDomain: String? = null,
     @SerialName("created_at") val createdAt: String = ""
 )

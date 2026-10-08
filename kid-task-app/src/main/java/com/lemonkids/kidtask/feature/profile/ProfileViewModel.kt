@@ -11,6 +11,10 @@ import com.lemonkids.shared.model.AppLimit
 import com.lemonkids.shared.model.AppUsageRecord
 import com.lemonkids.shared.repository.AppUsageRepository
 import com.lemonkids.shared.repository.AuthRepository
+import com.lemonkids.shared.repository.GrowthRepository
+import com.lemonkids.shared.repository.TaskRepository
+import com.lemonkids.shared.model.TaskStatus
+import com.lemonkids.shared.model.GrowthSnapshot
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jan.supabase.SupabaseClient
@@ -21,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.time.LocalDate
@@ -29,15 +34,22 @@ import javax.inject.Inject
 
 data class KidProfileUiState(
     val userName: String = "",
+    val hasUser: Boolean = false,
     val totalPoints: Int = 0,
     val avatarUrl: String? = null,
+    val growth: GrowthSnapshot? = null,
+    val upgradedLevel: Int? = null,
+    val isGrowthLoading: Boolean = true,
+    val growthError: Boolean = false,
     val isUploading: Boolean = false,
     val errorMessage: String? = null,
     val isUsageLoading: Boolean = true,
     val todayUsageMinutes: Long = 0,
     val dailyLimitMinutes: Int = 0,
     val usagePermissionDenied: Boolean = false,
-    val appLimits: List<KidAppLimitItem> = emptyList()
+    val appLimits: List<KidAppLimitItem> = emptyList(),
+    val todayTaskTotal: Int = 0,
+    val todayTaskCompleted: Int = 0
 )
 
 data class KidAppLimitItem(
@@ -51,6 +63,8 @@ data class KidAppLimitItem(
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
     private val authRepository: AuthRepository,
+    private val growthRepository: GrowthRepository,
+    private val taskRepository: TaskRepository,
     private val appUsageRepository: AppUsageRepository,
     private val supabase: SupabaseClient,
     @ApplicationContext private val context: Context
@@ -58,6 +72,9 @@ class ProfileViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(KidProfileUiState())
     val uiState: StateFlow<KidProfileUiState> = _uiState.asStateFlow()
+    private var activeGrowthUserId: String? = null
+    private var growthRequestId = 0L
+    private var todayTaskJob: Job? = null
 
     init {
         loadProfile()
@@ -178,11 +195,78 @@ class ProfileViewModel @Inject constructor(
 
     private fun loadProfile() {
         viewModelScope.launch {
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            _uiState.value = _uiState.value.copy(
-                userName = user.name,
-                totalPoints = user.totalPoints,
-                avatarUrl = user.avatarUrl
+            authRepository.observeCurrentUser().collect { user ->
+                if (activeGrowthUserId != user?.uid) {
+                    activeGrowthUserId = user?.uid
+                    growthRequestId++
+                    todayTaskJob?.cancel()
+                    _uiState.value = _uiState.value.copy(
+                        growth = null, upgradedLevel = null,
+                        isGrowthLoading = user != null, growthError = false,
+                        todayTaskTotal = 0, todayTaskCompleted = 0
+                    )
+                    if (user != null) {
+                        refreshGrowth()
+                        observeTodayTasks(user.uid)
+                    }
+                }
+                _uiState.value = _uiState.value.copy(
+                    userName = user?.name.orEmpty(),
+                    hasUser = user != null,
+                    totalPoints = user?.totalPoints ?: 0,
+                    avatarUrl = user?.avatarUrl
+                )
+            }
+        }
+    }
+
+    fun clearGrowthForSwitch() {
+        activeGrowthUserId = null
+        growthRequestId++
+        todayTaskJob?.cancel()
+        _uiState.value = _uiState.value.copy(
+            growth = null, upgradedLevel = null, isGrowthLoading = false, growthError = false,
+            todayTaskTotal = 0, todayTaskCompleted = 0
+        )
+    }
+
+    private fun observeTodayTasks(childId: String) {
+        val today = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString()
+        todayTaskJob = viewModelScope.launch {
+            taskRepository.observeTodayTasks(childId, today).collect { tasks ->
+                if (activeGrowthUserId != childId) return@collect
+                _uiState.value = _uiState.value.copy(
+                    todayTaskTotal = tasks.size,
+                    todayTaskCompleted = tasks.count { it.status == TaskStatus.DONE || it.status == TaskStatus.VERIFIED }
+                )
+            }
+        }
+    }
+
+    fun refreshGrowth() {
+        val userId = activeGrowthUserId ?: return
+        val requestId = ++growthRequestId
+        _uiState.value = _uiState.value.copy(isGrowthLoading = true, growthError = false)
+        viewModelScope.launch {
+            val result = growthRepository.getOwnSnapshot()
+            if (requestId != growthRequestId || activeGrowthUserId != userId) return@launch
+            result.fold(
+                onSuccess = { snapshot ->
+                    if (snapshot.childId != userId) {
+                        _uiState.value = _uiState.value.copy(isGrowthLoading = false, growthError = true)
+                    } else {
+                        val oldLevel = _uiState.value.growth?.let { GrowthRules.level(it.totalExp).number }
+                        val newLevel = GrowthRules.level(snapshot.totalExp).number
+                        _uiState.value = _uiState.value.copy(
+                            growth = snapshot, upgradedLevel = newLevel.takeIf { oldLevel != null && it > oldLevel },
+                            isGrowthLoading = false, growthError = false
+                        )
+                    }
+                },
+                onFailure = {
+                    Log.e("KidProfileVM", "成长快照读取失败", it)
+                    _uiState.value = _uiState.value.copy(isGrowthLoading = false, growthError = true)
+                }
             )
         }
     }

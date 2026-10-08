@@ -3,6 +3,7 @@ package com.lemonkids.shared.repository.impl
 import android.util.Log
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.model.TaskRecurrenceType
+import com.lemonkids.shared.model.GrowthDomain
 import com.lemonkids.shared.repository.TaskRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.gotrue.Auth
@@ -55,6 +56,7 @@ class SupabaseTaskRepository @Inject constructor(
             "recurrence_weekdays" to JsonArray(recurrenceWeekdays.map(::JsonPrimitive)),
             "recurrence_end_date" to (recurrenceEndDate?.let(::JsonPrimitive) ?: JsonNull)
         )
+        fields["growth_domain"] = growthDomain?.let(::JsonPrimitive) ?: JsonNull
         // 批量同步重复日程时，每条任务必须保留自己的发生日期。
         if (includeDueDate) fields["due_date"] = JsonPrimitive(dueDate)
         return JsonObject(fields)
@@ -149,7 +151,7 @@ class SupabaseTaskRepository @Inject constructor(
     }
 
     override suspend fun createTask(task: Task): Result<String> = runCatching {
-        postgrest.from("tasks").insert(task) { select() }.decodeSingle<Task>().id
+        postgrest.from("tasks").insert(task.copy(growthDomain = task.growthDomain ?: GrowthDomain.OTHER)) { select() }.decodeSingle<Task>().id
     }.onSuccess { taskId ->
         Log.i(TAG, "任务创建成功 taskId=$taskId childId=${task.childId} dueDate=${task.dueDate}")
     }.onFailure { error ->
@@ -265,4 +267,10 @@ class SupabaseTaskRepository @Inject constructor(
             filter { eq("id", taskId) }
         }.decodeSingle<Task>()
     }
+
+    override suspend fun correctGrowthDomain(taskId: String, growthDomain: String): Result<Unit> = runCatching {
+        require(GrowthDomain.isValid(growthDomain))
+        postgrest.rpc("correct_task_growth_domain", mapOf("p_task_id" to taskId, "p_growth_domain" to growthDomain))
+        Unit
+    }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 }

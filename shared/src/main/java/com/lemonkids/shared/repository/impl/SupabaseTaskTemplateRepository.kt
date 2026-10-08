@@ -1,10 +1,13 @@
 package com.lemonkids.shared.repository.impl
 
 import com.lemonkids.shared.model.TaskTemplate
+import com.lemonkids.shared.model.GrowthDomain
+import com.lemonkids.shared.repository.GrowthDomainBackfillPreview
 import com.lemonkids.shared.repository.TaskTemplateRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.Order
+import io.github.jan.supabase.postgrest.rpc
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -23,7 +26,8 @@ private data class TaskTemplateUpdate(
     @SerialName("title") val title: String,
     @SerialName("description") val description: String,
     @SerialName("reward_points") val rewardPoints: Int,
-    @SerialName("penalty_points") val penaltyPoints: Int
+    @SerialName("penalty_points") val penaltyPoints: Int,
+    @SerialName("growth_domain") val growthDomain: String?
 )
 
 @Serializable
@@ -32,7 +36,14 @@ private data class TaskTemplateCreate(
     @SerialName("title") val title: String,
     @SerialName("description") val description: String,
     @SerialName("reward_points") val rewardPoints: Int,
-    @SerialName("penalty_points") val penaltyPoints: Int
+    @SerialName("penalty_points") val penaltyPoints: Int,
+    @SerialName("growth_domain") val growthDomain: String
+)
+
+@Serializable
+private data class BackfillPreviewRow(
+    @SerialName("total_count") val totalCount: Int,
+    @SerialName("completed_count") val completedCount: Int
 )
 
 @Singleton
@@ -68,7 +79,8 @@ class SupabaseTaskTemplateRepository @Inject constructor(
                 title = template.title,
                 description = template.description,
                 rewardPoints = template.rewardPoints,
-                penaltyPoints = template.penaltyPoints
+                penaltyPoints = template.penaltyPoints,
+                growthDomain = template.growthDomain ?: GrowthDomain.OTHER
             )
         ) { select() }.decodeSingle<TaskTemplate>().id
     }.onSuccess { templateRefreshEvents.tryEmit(Unit) }
@@ -81,7 +93,8 @@ class SupabaseTaskTemplateRepository @Inject constructor(
                 title = template.title,
                 description = template.description,
                 rewardPoints = template.rewardPoints,
-                penaltyPoints = template.penaltyPoints
+                penaltyPoints = template.penaltyPoints,
+                growthDomain = template.growthDomain
             )
         ) {
             filter { eq("id", template.id) }
@@ -94,4 +107,18 @@ class SupabaseTaskTemplateRepository @Inject constructor(
         postgrest.from("task_templates").delete { filter { eq("id", templateId) } }
         Unit
     }.onSuccess { templateRefreshEvents.tryEmit(Unit) }
+
+    override suspend fun previewGrowthDomainBackfill(templateId: String): Result<GrowthDomainBackfillPreview> = runCatching {
+        val row = postgrest.rpc("preview_task_growth_domain_backfill", mapOf("p_template_id" to templateId))
+            .decodeSingle<BackfillPreviewRow>()
+        GrowthDomainBackfillPreview(row.totalCount, row.completedCount)
+    }
+
+    override suspend fun backfillGrowthDomain(templateId: String, growthDomain: String): Result<Int> = runCatching {
+        require(GrowthDomain.isValid(growthDomain))
+        postgrest.rpc(
+            "backfill_task_growth_domain",
+            mapOf("p_template_id" to templateId, "p_growth_domain" to growthDomain)
+        ).decodeAs<Int>()
+    }
 }

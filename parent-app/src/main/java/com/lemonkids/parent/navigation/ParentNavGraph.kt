@@ -41,6 +41,7 @@ import com.lemonkids.parent.feature.auth.ParentLoginScreen
 import com.lemonkids.parent.feature.auth.ParentRegisterScreen
 import com.lemonkids.parent.feature.alarm.AlarmScreen
 import com.lemonkids.parent.feature.monitor.MonitorScreen
+import com.lemonkids.parent.feature.profile.BadgeProgressScreen
 import com.lemonkids.parent.feature.profile.CategoryManageScreen
 import com.lemonkids.parent.feature.profile.DeviceStatusLogScreen
 import com.lemonkids.parent.feature.profile.FamilyManageScreen
@@ -184,6 +185,8 @@ private fun ParentMainScreen() {
                     navController.navigate("category_manage")
                 }, onRewardManageClick = {
                     navController.navigate("reward_manage")
+                }, onBadgeProgressClick = {
+                    navController.navigate("badge_progress")
                 }, onRecycleBinClick = {
                     navController.navigate("recycle_bin")
                 }, onDeviceStatusLogClick = {
@@ -201,6 +204,9 @@ private fun ParentMainScreen() {
             }
             composable("task_template_manage") {
                 TaskTemplateManageScreen(onBack = { navController.popBackStack() })
+            }
+            composable("badge_progress") {
+                BadgeProgressScreen(onBack = { navController.popBackStack() })
             }
             composable("recycle_bin") {
                 RecycleBinScreen(onBack = { navController.popBackStack() })

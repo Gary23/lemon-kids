@@ -19,7 +19,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import javax.inject.Inject
 
@@ -50,6 +54,9 @@ data class HomeUiState(
     val confirmDialogTaskId: String? = null,
     val undoDialogTaskId: String? = null,
     val actionError: String? = null,
+    val orderError: String? = null,
+    /** null 表示尚未手动排序，继续使用默认分类顺序。 */
+    val pendingOrderIds: List<String>? = null,
     /** 折叠面板展开状态 */
     val todayExpanded: Boolean = true,
     val overdueExpanded: Boolean = true,
@@ -76,6 +83,11 @@ class HomeViewModel @Inject constructor(
     private var initialLoadTimedOut = false
     /** 等待仓库返回新快照期间保留本地状态，避免旧的轮询结果把卡片改回去。 */
     private val optimisticTaskStatuses = mutableMapOf<String, TaskStatus>()
+    private val orderStore = HomeTaskOrderStore(appContext)
+    private val orderWriteMutex = Mutex()
+    private var orderWriteRevision = 0L
+    private var orderChildId: String? = null
+    private var orderDate: String? = null
 
     init {
         loadData()
@@ -85,7 +97,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val userId = authRepository.currentUserId ?: return@launch
             val user = authRepository.observeCurrentUser().first() ?: return@launch
-            val today = LocalDate.now()
+            loadOrderFor(userId, LocalDate.now().toString())
 
             user.familyId?.takeIf { it.isNotBlank() }?.let { familyId ->
                 launch {
@@ -108,7 +120,9 @@ class HomeViewModel @Inject constructor(
                 // 观察所有任务（非删除），在内存中分类过滤
                 taskRepository.observeChildTasks(userId).collect { tasks ->
                     TaskReminderScheduler.schedule(appContext, tasks)
+                    val today = LocalDate.now()
                     val todayStr = today.toString()
+                    loadOrderFor(userId, todayStr)
                     reconcileOptimisticStatuses(tasks)
                     val displayedTasks = tasks.map { task ->
                         optimisticTaskStatuses[task.id]?.let { task.copy(status = it) } ?: task
@@ -140,6 +154,22 @@ class HomeViewModel @Inject constructor(
 
                     initialTasksLoaded = true
                     val isInitialDataReady = initialCategoriesLoaded || initialLoadTimedOut
+
+                    val pendingIds = todayTasks.filterNot { it.status == "DONE" || it.status == "VERIFIED" }
+                        .map { it.id }.toSet()
+                    _uiState.value.pendingOrderIds?.let { saved ->
+                        val pruned = saved.filter { it in pendingIds }
+                        if (pruned != saved) {
+                            _uiState.value = _uiState.value.copy(pendingOrderIds = pruned)
+                            val revision = ++orderWriteRevision
+                            viewModelScope.launch {
+                                if (!writeOrder(userId, todayStr, pruned, revision) &&
+                                    revision == orderWriteRevision) {
+                                    _uiState.value = _uiState.value.copy(orderError = "排序保存失败，请重试")
+                                }
+                            }
+                        }
+                    }
 
                     val allDone = todayTasks.isNotEmpty() && todayTasks.all {
                         it.status == "DONE" || it.status == "VERIFIED"
@@ -229,6 +259,7 @@ class HomeViewModel @Inject constructor(
             )
             taskRepository.completeTask(taskId, userId).fold(
                 onSuccess = {
+                    removeCompletedFromOrder(taskId)
                     _uiState.value = _uiState.value.copy(
                         syncingTaskIds = _uiState.value.syncingTaskIds - taskId
                     )
@@ -272,6 +303,7 @@ class HomeViewModel @Inject constructor(
             )
             taskRepository.undoCompleteTask(taskId, userId, taskPoints).fold(
                 onSuccess = {
+                    appendUndoneToOrder(taskId)
                     _uiState.value = _uiState.value.copy(
                         syncingTaskIds = _uiState.value.syncingTaskIds - taskId
                     )
@@ -292,6 +324,7 @@ class HomeViewModel @Inject constructor(
 
     fun dismissConfirmDialog() { _uiState.value = _uiState.value.copy(confirmDialogTaskId = null) }
     fun dismissActionError() { _uiState.value = _uiState.value.copy(actionError = null) }
+    fun dismissOrderError() { _uiState.value = _uiState.value.copy(orderError = null) }
     fun dismissUndoDialog() { _uiState.value = _uiState.value.copy(undoDialogTaskId = null) }
     fun dismissCelebration() { _uiState.value = _uiState.value.copy(showCelebration = false) }
     fun dismissPointsAnimation() { _uiState.value = _uiState.value.copy(showPointsAnimation = false) }
@@ -314,6 +347,55 @@ class HomeViewModel @Inject constructor(
     fun toggleTodayExpand() { _uiState.value = _uiState.value.copy(todayExpanded = !_uiState.value.todayExpanded) }
     fun toggleOverdueExpand() { _uiState.value = _uiState.value.copy(overdueExpanded = !_uiState.value.overdueExpanded) }
     fun toggleUpcomingExpand() { _uiState.value = _uiState.value.copy(upcomingExpanded = !_uiState.value.upcomingExpanded) }
+
+    private fun loadOrderFor(childId: String, date: String) {
+        if (orderChildId == childId && orderDate == date) return
+        orderChildId = childId
+        orderDate = date
+        _uiState.value = _uiState.value.copy(pendingOrderIds = orderStore.read(childId, date))
+    }
+
+    private suspend fun writeOrder(childId: String, date: String, ids: List<String>, revision: Long): Boolean =
+        orderWriteMutex.withLock {
+            if (revision != orderWriteRevision) return@withLock true
+            runCatching { withContext(Dispatchers.IO) { orderStore.write(childId, date, ids) } }
+                .getOrDefault(false)
+        }
+
+    fun savePendingOrder(ids: List<String>) {
+        val childId = orderChildId ?: return
+        val date = orderDate ?: return
+        val pendingIds = _uiState.value.todayTasks.filterNot {
+            it.status == "DONE" || it.status == "VERIFIED"
+        }.map { it.id }.toSet()
+        val cleanIds = ids.filter { it in pendingIds }.distinct()
+        val previous = _uiState.value.pendingOrderIds
+        _uiState.value = _uiState.value.copy(pendingOrderIds = cleanIds, orderError = null)
+        val revision = ++orderWriteRevision
+        viewModelScope.launch {
+            if (!writeOrder(childId, date, cleanIds, revision) && orderChildId == childId &&
+                orderDate == date && revision == orderWriteRevision) {
+                _uiState.value = _uiState.value.copy(
+                    pendingOrderIds = previous,
+                    orderError = "排序保存失败，请重试"
+                )
+            }
+        }
+    }
+
+    private fun removeCompletedFromOrder(taskId: String) {
+        val current = _uiState.value.pendingOrderIds ?: return
+        if (taskId !in current) return
+        savePendingOrder(current - taskId)
+    }
+
+    private fun appendUndoneToOrder(taskId: String) {
+        val current = _uiState.value.pendingOrderIds ?: buildHomeTaskLayout(
+            _uiState.value.todayTasks.filterNot { it.id == taskId },
+            _uiState.value.categories.map { it.name }
+        ).pending.map { it.id }
+        savePendingOrder((current - taskId) + taskId)
+    }
 
     private fun reconcileOptimisticStatuses(tasks: List<Task>) {
         val latestStatusById = tasks.associate { it.id to it.status }

@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -143,6 +145,8 @@ class TaskTemplateManageViewModel @Inject constructor(
             }
         )
     }
+
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -228,7 +232,11 @@ fun TaskTemplateManageScreen(
             template = template,
             isSaving = uiState.isSaving,
             onDismiss = { if (!uiState.isSaving) editing = null },
-            onSave = { viewModel.save(it) { editing = null } }
+            onSave = { saved ->
+                viewModel.save(saved) {
+                    editing = null
+                }
+            }
         )
     }
     deleting?.let { template ->
@@ -239,6 +247,7 @@ fun TaskTemplateManageScreen(
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } }
         )
     }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -256,12 +265,14 @@ private fun TaskTemplateEditDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (template.id.isBlank()) "新建任务" else "编辑任务") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(title, { title = it }, label = { Text("任务标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(description, { description = it }, label = { Text("任务描述（可选）") }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(points, { if (it.isEmpty() || it.all(Char::isDigit)) points = it }, label = { Text("⭐ 完成可得积分") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+
             }
         },
         confirmButton = {

@@ -9,6 +9,7 @@ import com.lemonkids.shared.model.CategoryTaskTemplate
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.model.TaskRecurrenceType
 import com.lemonkids.shared.model.TaskTemplate
+import com.lemonkids.shared.model.GrowthDomain
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.CategoryRepository
 import com.lemonkids.shared.repository.ChildUserInfo
@@ -76,6 +77,8 @@ data class TaskEditData(
     val dueTime: String? = null,
     val childId: String = "",
     val categoryName: String = "默认",
+    val growthDomain: String? = null,
+    val status: com.lemonkids.shared.model.TaskStatus = com.lemonkids.shared.model.TaskStatus.PENDING,
     val recurrenceType: TaskRecurrenceType = TaskRecurrenceType.NONE,
     val recurrenceWeekdays: Set<Int> = emptySet(),
     val recurrenceEndDate: String? = null,
@@ -266,6 +269,8 @@ class TasksViewModel @Inject constructor(
                             dueTime = task.dueTime,
                             childId = task.childId,
                             categoryName = task.category,
+                            growthDomain = task.growthDomain,
+                            status = task.status,
                             recurrenceType = task.recurrenceType,
                             recurrenceWeekdays = task.recurrenceWeekdays.toSet(),
                             recurrenceEndDate = task.recurrenceEndDate,
@@ -382,6 +387,7 @@ class TasksViewModel @Inject constructor(
         dueTime: String?,
         childId: String,
         categoryName: String,
+        growthDomain: String?,
         recurrenceType: TaskRecurrenceType,
         recurrenceWeekdays: Set<Int>,
         onDone: () -> Unit
@@ -399,6 +405,7 @@ class TasksViewModel @Inject constructor(
                 childId = childId,
                 createdBy = user.uid,
                 category = categoryName,
+                growthDomain = growthDomain,
                 rewardPoints = rewardPoints,
                 penaltyPoints = penaltyPoints,
                 dueDate = dueDate,
@@ -429,6 +436,17 @@ class TasksViewModel @Inject constructor(
                         errorMessage = e.message ?: "更新失败"
                     )
                 }
+            )
+        }
+    }
+
+    fun correctGrowthDomain(taskId: String, growthDomain: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            if (!GrowthDomain.isValid(growthDomain)) return@launch
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+            taskRepository.correctGrowthDomain(taskId, growthDomain).fold(
+                onSuccess = { loadTaskForEdit(taskId); onDone() },
+                onFailure = { error -> _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = error.message ?: "更正失败") }
             )
         }
     }

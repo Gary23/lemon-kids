@@ -10,6 +10,10 @@ import com.lemonkids.shared.repository.RewardRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -23,6 +27,7 @@ data class RewardUiState(
     val loading: Boolean = true,
     val refreshing: Boolean = false,
     val snapshot: RewardSnapshot? = null,
+    val imageUrls: Map<String, String> = emptyMap(),
     val error: String? = null,
     val feedback: String? = null,
     val confirmation: RewardConfirmation? = null,
@@ -52,8 +57,17 @@ class RewardViewModel @Inject constructor(
             val child = user?.uid ?: authRepository.currentUserId
             val family = user?.familyId
             if (child.isNullOrBlank() || family.isNullOrBlank()) {
-                _uiState.value = _uiState.value.copy(loading = false, refreshing = false, error = "孩子或家庭信息暂不可用，请重新登录后重试")
+                childId = null
+                familyId = null
+                _uiState.value = _uiState.value.copy(loading = false, refreshing = false,
+                    snapshot = null, imageUrls = emptyMap(), confirmation = null,
+                    pendingRequestId = null, pendingRewardId = null,
+                    error = "孩子或家庭信息暂不可用，请重新登录后重试")
                 return@launch
+            }
+            if (childId != null && (childId != child || familyId != family)) {
+                _uiState.value = _uiState.value.copy(snapshot = null, imageUrls = emptyMap(), confirmation = null,
+                    pendingRequestId = null, pendingRewardId = null)
             }
             childId = child
             familyId = family
@@ -63,13 +77,18 @@ class RewardViewModel @Inject constructor(
                         snapshot.redemptions.any { it.id == id }
                     } == true
                     _uiState.value = _uiState.value.copy(
-                        loading = false, refreshing = false, snapshot = snapshot, error = null,
+                        loading = false, snapshot = snapshot, imageUrls = emptyMap(), error = null,
                         pendingRequestId = if (pendingConfirmed) null else _uiState.value.pendingRequestId,
                         pendingRewardId = if (pendingConfirmed) null else _uiState.value.pendingRewardId,
                         confirmation = if (pendingConfirmed) null else _uiState.value.confirmation,
                         feedback = if (pendingConfirmed) "兑换成功，星星已扣除" else _uiState.value.feedback
                     )
                     rewardRepository.requestPointsRefresh()
+                    val imageUrls = resolveRewardImageUrls(family, snapshot, rewardRepository::createRewardImageUrl)
+                    _uiState.value = _uiState.value.copy(
+                        imageUrls = if (_uiState.value.snapshot === snapshot) imageUrls else _uiState.value.imageUrls,
+                        refreshing = false
+                    )
                 },
                 onFailure = { error ->
                     Log.e("RewardViewModel", "奖励页读取奖励快照失败", error)
@@ -141,6 +160,7 @@ class RewardViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 submitting = false,
                 snapshot = snapshot ?: _uiState.value.snapshot,
+                imageUrls = if (snapshot != null) emptyMap() else _uiState.value.imageUrls,
                 confirmation = if (snapshot != null && actionApplied) null else action,
                 pendingRequestId = if (action.action == RewardAction.REDEEM && !redeemed) requestId else null,
                 pendingRewardId = if (action.action == RewardAction.REDEEM && !redeemed) action.id else null,
@@ -153,6 +173,33 @@ class RewardViewModel @Inject constructor(
                     rewardFailureMessage(result.exceptionOrNull()?.message)
                 } else null
             )
+            if (snapshot != null) {
+                val imageUrls = resolveRewardImageUrls(family, snapshot, rewardRepository::createRewardImageUrl)
+                if (_uiState.value.snapshot === snapshot) {
+                    _uiState.value = _uiState.value.copy(imageUrls = imageUrls)
+                }
+            }
         }
     }
+}
+
+internal suspend fun resolveRewardImageUrls(
+    family: String,
+    snapshot: RewardSnapshot,
+    sign: suspend (String, String) -> Result<String>
+): Map<String, String> = coroutineScope {
+    snapshot.rewards.mapNotNull { reward ->
+        val path = reward.imagePath?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        if (reward.familyId != family) return@mapNotNull null
+        async {
+            val url = try {
+                sign(family, path).getOrNull()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            url?.let { reward.id to it }
+        }
+    }.awaitAll().filterNotNull().toMap()
 }
