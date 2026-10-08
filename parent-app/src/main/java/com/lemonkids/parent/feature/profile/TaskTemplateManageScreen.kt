@@ -193,15 +193,6 @@ fun TaskTemplateManageScreen(
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                     }
-                                    if (template.description.isNotBlank()) {
-                                        Text(
-                                            template.description,
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
                                 }
                                 TextButton(
                                     modifier = Modifier.height(36.dp),
@@ -259,7 +250,6 @@ private fun TaskTemplateEditDialog(
     onSave: (TaskTemplate) -> Unit
 ) {
     var title by remember(template.id) { mutableStateOf(template.title) }
-    var description by remember(template.id) { mutableStateOf(template.description) }
     var points by remember(template.id) { mutableStateOf(template.rewardPoints.toString()) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -267,8 +257,6 @@ private fun TaskTemplateEditDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(title, { title = it }, label = { Text("任务标题") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(description, { description = it }, label = { Text("任务描述（可选）") }, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(points, { if (it.isEmpty() || it.all(Char::isDigit)) points = it }, label = { Text("⭐ 完成可得积分") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
@@ -281,7 +269,7 @@ private fun TaskTemplateEditDialog(
                 onClick = {
                     val value = points.toIntOrNull() ?: 0
                     if (title.isNotBlank() && value > 0) {
-                        onSave(template.copy(title = title.trim(), description = description.trim(), rewardPoints = value))
+                        onSave(template.copy(title = title.trim(), rewardPoints = value))
                     }
                 }
             ) {

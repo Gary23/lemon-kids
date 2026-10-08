@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.LocalDate
+import java.time.ZoneId
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,7 +68,7 @@ fun TasksScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     // 列表页是家长端首页，只聚焦今天；历史和未来任务统一在日历中查看。
-    val todayTasks = uiState.tasks.filter { it.dueDate == LocalDate.now().toString() }
+    val todayTasks = uiState.tasks.filter { it.dueDate == LocalDate.now(ZoneId.of("Asia/Shanghai")).toString() }
     var deleteRequest by remember { mutableStateOf<CategoryDeleteRequest?>(null) }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -321,7 +322,7 @@ private fun TaskRow(
     onDelete: () -> Unit
 ) {
     val canCancel = task.status == "PENDING" && runCatching {
-        LocalDate.parse(task.dueDate) >= LocalDate.now()
+        LocalDate.parse(task.dueDate) >= LocalDate.now(ZoneId.of("Asia/Shanghai"))
     }.getOrDefault(false)
     val statusColor = when (task.status) {
         "DONE", "VERIFIED" -> Color(0xFF4CAF50)
@@ -342,7 +343,7 @@ private fun TaskRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = if (isManageMode) 0.dp else 12.dp)
-            .clickable(enabled = isManageMode && canCancel) { onToggleSelect() },
+            .then(if (isManageMode) Modifier.clickable(enabled = canCancel, onClick = onToggleSelect) else Modifier),
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
             else MaterialTheme.colorScheme.surface

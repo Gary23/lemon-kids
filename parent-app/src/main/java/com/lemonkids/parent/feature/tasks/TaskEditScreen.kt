@@ -165,8 +165,21 @@ fun TaskEditScreen(
                     Spacer(Modifier.height(16.dp))
                 } else {
                     OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("任务标题") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("任务描述（可选）") }, modifier = Modifier.fillMaxWidth(), maxLines = 3)
+                    Spacer(Modifier.height(16.dp))
+                    val canEditDescription = uiState.editingTask?.let { task ->
+                        task.status == TaskStatus.PENDING && runCatching {
+                            LocalDate.parse(task.dueDate) >= LocalDate.now(ZoneId.of("Asia/Shanghai"))
+                        }.getOrDefault(false)
+                    } == true
+                    OutlinedTextField(
+                        value = description,
+                        onValueChange = { description = it },
+                        label = { Text("当天任务描述") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3,
+                        readOnly = !canEditDescription,
+                        supportingText = if (canEditDescription) null else ({ Text("历史或已完成任务仅可查看") })
+                    )
                     Spacer(Modifier.height(16.dp))
                 }
 
@@ -248,12 +261,12 @@ fun TaskEditScreen(
                                 viewModel.updateTask(
                                     taskId = taskId!!,
                                     title = title.trim(),
-                                    description = description.trim(),
+                                    description = description,
                                     endDate = endDate,
                                     rewardPoints = points,
-                                    penaltyPoints = 2,
+                                    penaltyPoints = uiState.editingTask?.penaltyPoints ?: 2,
                                     dueDate = dueDate,
-                                    dueTime = null,
+                                    dueTime = uiState.editingTask?.dueTime,
                                     childId = selectedChildId,
                                     categoryName = selectedCategoryName,
                                     growthDomain = growthDomain,
@@ -266,9 +279,9 @@ fun TaskEditScreen(
                     },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = (if (isNew) hasValidSource else title.isNotBlank()) && selectedChildId.isNotBlank() && (isNew || points > 0) &&
-                        (recurrenceType != TaskRecurrenceType.WEEKLY || recurrenceWeekdays.isNotEmpty()) && !uiState.isLoading
+                        (recurrenceType != TaskRecurrenceType.WEEKLY || recurrenceWeekdays.isNotEmpty()) && !uiState.isLoading && !uiState.isSavingEdit
                 ) {
-                    if (uiState.isLoading) {
+                    if (uiState.isLoading || uiState.isSavingEdit) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
                         Text("保存任务")

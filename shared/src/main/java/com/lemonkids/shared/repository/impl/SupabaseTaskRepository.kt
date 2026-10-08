@@ -47,7 +47,6 @@ class SupabaseTaskRepository @Inject constructor(
     private fun Task.toUpdatePayload(includeDueDate: Boolean): JsonObject {
         val fields = mutableMapOf<String, JsonElement>(
             "title" to JsonPrimitive(title),
-            "description" to JsonPrimitive(description),
             "category" to JsonPrimitive(category),
             "reward_points" to JsonPrimitive(rewardPoints),
             "penalty_points" to JsonPrimitive(penaltyPoints),
@@ -201,6 +200,14 @@ class SupabaseTaskRepository @Inject constructor(
         postgrest.from("tasks").update(task.toUpdatePayload(includeDueDate = true)) {
             filter { eq("id", task.id) }
         }
+        Unit
+    }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
+
+    override suspend fun updateTaskDescription(taskId: String, description: String): Result<Unit> = runCatching {
+        postgrest.rpc(
+            function = "update_daily_task_description",
+            parameters = mapOf("p_task_id" to taskId, "p_description" to description.trim())
+        )
         Unit
     }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 

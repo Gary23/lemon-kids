@@ -118,10 +118,11 @@ private fun PendingTaskInfo(
     modifier: Modifier,
     actionsEnabled: Boolean
 ) {
+    val categoryBackgroundColor = categoryColor
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(Modifier.width(8.dp).height(54.dp).clip(CircleShape)
-            .background(if (isExpired) Strawberry else Color(0xFF006E2F)))
+            .background(categoryBackgroundColor))
         Surface(shape = CircleShape, color = HomeSpeechBackground, modifier = Modifier.size(40.dp)) {
             Box(Modifier.clickable(enabled = actionsEnabled, role = Role.Button, onClick = onSpeak), contentAlignment = Alignment.Center) {
                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读任务",
@@ -131,7 +132,7 @@ private fun PendingTaskInfo(
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Surface(shape = CircleShape, color = categoryColor.copy(alpha = 0.2f),
+                Surface(shape = CircleShape, color = categoryBackgroundColor,
                     modifier = Modifier.weight(1f, fill = false)) {
                     Text(task.category.ifBlank { "今日任务" }, Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                         color = HomeInk, fontSize = 11.sp, fontWeight = FontWeight.Bold,

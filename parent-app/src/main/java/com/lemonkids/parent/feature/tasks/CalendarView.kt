@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.lemonkids.shared.model.TaskStatus
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.YearMonth
 
 private enum class Density { NONE, LIGHT, MEDIUM, HEAVY }
@@ -56,7 +57,7 @@ fun CalendarView(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val yearMonth = remember(uiState.selectedDate) { YearMonth.from(uiState.selectedDate) }
-    val today = remember { LocalDate.now() }
+    val today = remember { LocalDate.now(ZoneId.of("Asia/Shanghai")) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // ===== 日历网格（可滚动） =====
@@ -252,7 +253,7 @@ private fun RowScope.DayCell(day: Int, isToday: Boolean, isSelected: Boolean, de
 @Composable
 private fun CalendarTaskRow(task: TaskUiItem, onEdit: () -> Unit, onDelete: () -> Unit) {
     val canCancel = task.status == "PENDING" && runCatching {
-        LocalDate.parse(task.dueDate) >= LocalDate.now()
+        LocalDate.parse(task.dueDate) >= LocalDate.now(ZoneId.of("Asia/Shanghai"))
     }.getOrDefault(false)
     val statusColor = when (task.status) {
         "DONE", "VERIFIED" -> Color(0xFF4CAF50)

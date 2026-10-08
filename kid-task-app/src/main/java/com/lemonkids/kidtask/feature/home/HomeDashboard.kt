@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import com.lemonkids.kidtask.ui.components.StatusBadge
 import com.lemonkids.kidtask.ui.components.TaskCard
 import com.lemonkids.kidtask.ui.components.TaskUiItem
+import com.lemonkids.kidtask.ui.components.assignTaskCategoryAppearances
 import com.lemonkids.kidtask.ui.components.stableTaskCategoryAppearance
 import com.lemonkids.kidtask.ui.theme.FreshMint
 import com.lemonkids.kidtask.ui.theme.FreshMintSoft
@@ -84,12 +85,17 @@ fun HomeDashboard(
                 val completed = layout.completed
                 val pending = layout.pending
                 val categoryIds = state.categories.associate { it.name to it.id }
+                val categoryAppearances = assignTaskCategoryAppearances(state.todayTasks.map { task ->
+                    task.sourceCategoryId ?: categoryIds[task.category] ?: task.category
+                })
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    PendingTaskDragColumn(pending, categoryIds, playingTaskId, state.syncingTaskIds,
+                    PendingTaskDragColumn(pending, categoryIds, categoryAppearances,
+                        playingTaskId, state.syncingTaskIds,
                         scrollState, onSpeak, onMarkDone, onUndo, onPendingOrderChanged,
                         Modifier.weight(1.25f))
-                    CompletedTaskColumn(completed, categoryIds, playingTaskId, state.syncingTaskIds,
+                    CompletedTaskColumn(completed, categoryIds, categoryAppearances,
+                        playingTaskId, state.syncingTaskIds,
                         onSpeak, onMarkDone, onUndo, Modifier.weight(0.75f))
                 }
             }
@@ -154,6 +160,7 @@ private fun MysteryBox() {
 private fun CompletedTaskColumn(
     tasks: List<TaskUiItem>,
     categoryIds: Map<String, String>,
+    categoryAppearances: Map<String, Pair<Color, String>>,
     playingTaskId: String?,
     syncingTaskIds: Set<String>,
     onSpeak: (TaskUiItem) -> Unit,
@@ -179,7 +186,8 @@ private fun CompletedTaskColumn(
         tasks.forEach { task ->
             key(task.id) {
                 val visualKey = task.sourceCategoryId ?: categoryIds[task.category] ?: task.category
-                val (categoryColor, _) = stableTaskCategoryAppearance(visualKey)
+                val (categoryColor, _) = categoryAppearances[visualKey]
+                    ?: stableTaskCategoryAppearance(visualKey)
                 Column {
                     TaskCard(task, playingTaskId == task.id, categoryColor,
                         categoryColor.copy(alpha = 0.12f),
