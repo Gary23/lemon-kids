@@ -26,6 +26,8 @@ interface TaskRepository {
         recurrenceWeekdays: List<Int>
     ): Result<List<Task>>
     suspend fun updateTask(task: Task): Result<Unit>
+    /** 只更新指定日期任务实例的内容；权限与状态由服务端校验。 */
+    suspend fun updateTaskDescription(taskId: String, description: String): Result<Unit>
     /** 更新同一重复系列中尚未完成的未来任务。 */
     suspend fun updateFutureTasksInSeries(seriesId: String, fromDate: String, task: Task): Result<Unit>
     /** 取消今日及未来的待完成任务：标记 deleted_at，历史任务不会被修改。 */

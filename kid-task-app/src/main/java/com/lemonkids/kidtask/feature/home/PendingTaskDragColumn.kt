@@ -81,6 +81,7 @@ private data class DragSession(
 internal fun PendingTaskDragColumn(
     tasks: List<TaskUiItem>,
     categoryIds: Map<String, String>,
+    categoryAppearances: Map<String, Pair<Color, String>>,
     playingTaskId: String?,
     syncingTaskIds: Set<String>,
     scrollState: androidx.compose.foundation.ScrollState,
@@ -166,10 +167,7 @@ internal fun PendingTaskDragColumn(
                 fontWeight = FontWeight.ExtraBold)
             StatusBadge("还有 ${tasks.size} 个", LemonBorder, SlateInk)
         }
-        if (tasks.isNotEmpty()) {
-            Text(if (active == null) "长按任务卡可调整顺序" else "拖到想放的位置，再松手 ✨",
-                color = SlateMuted, fontSize = 12.sp, modifier = Modifier.padding(start = 22.dp))
-        } else {
+        if (tasks.isEmpty()) {
             androidx.compose.material3.Surface(shape = RoundedCornerShape(26.dp), color = Color.White,
                 border = androidx.compose.foundation.BorderStroke(1.dp, LemonBorder.copy(alpha = 0.5f))) {
                 Text("待办清单空空的，真棒！", modifier = Modifier.fillMaxWidth().padding(25.dp),
@@ -219,7 +217,8 @@ internal fun PendingTaskDragColumn(
                     } else wobble.snapTo(0f)
                 }
                 val visualKey = task.sourceCategoryId ?: categoryIds[task.category] ?: task.category
-                val (categoryColor, _) = stableTaskCategoryAppearance(visualKey)
+                val (categoryColor, _) = categoryAppearances[visualKey]
+                    ?: stableTaskCategoryAppearance(visualKey)
                 Box(Modifier.fillMaxWidth().zIndex(if (isDragged) 1f else 0f)
                     .onGloballyPositioned { slot ->
                         coordinates[task.id] = slot

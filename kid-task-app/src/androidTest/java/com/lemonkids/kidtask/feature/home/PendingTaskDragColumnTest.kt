@@ -48,7 +48,7 @@ class PendingTaskDragColumnTest {
         rule.setContent {
             val scrollState = rememberScrollState()
             Column(Modifier.verticalScroll(scrollState)) {
-                PendingTaskDragColumn(order.map(::task), emptyMap(), null, emptySet(), scrollState,
+                PendingTaskDragColumn(order.map(::task), emptyMap(), emptyMap(), null, emptySet(), scrollState,
                     onSpeak = {}, onMarkDone = {}, onUndo = {}, onOrderChanged = {
                         commits += it
                         order = it

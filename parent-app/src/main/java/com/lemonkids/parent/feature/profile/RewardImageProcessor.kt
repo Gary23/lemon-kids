@@ -13,7 +13,9 @@ import kotlinx.coroutines.withContext
 internal suspend fun prepareRewardImage(context: Context, uri: Uri): ByteArray = withContext(Dispatchers.IO) {
     val resolver = context.contentResolver
     val mime = resolver.getType(uri)
-    require(mime == "image/jpeg" || mime == "image/png") { "请选择静态 JPEG 或 PNG 图片" }
+    require(mime == "image/jpeg" || mime == "image/png" || mime == "image/webp") {
+        "请选择静态 JPEG、PNG 或 WebP 图片"
+    }
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     val boundsStream = resolver.openInputStream(uri) ?: error("无法读取图片")
     boundsStream.use { BitmapFactory.decodeStream(it, null, bounds) }

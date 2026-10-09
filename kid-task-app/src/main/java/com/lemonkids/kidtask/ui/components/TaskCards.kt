@@ -40,12 +40,10 @@ import com.lemonkids.kidtask.ui.theme.Coral
 import com.lemonkids.kidtask.ui.theme.CompletedTaskBackground
 import com.lemonkids.kidtask.ui.theme.CompletedTaskBorder
 import com.lemonkids.kidtask.ui.theme.InkBrown
-import com.lemonkids.kidtask.ui.theme.Lavender
 import com.lemonkids.kidtask.ui.theme.Mint
 import com.lemonkids.kidtask.ui.theme.MutedGray
 import com.lemonkids.kidtask.ui.theme.Pink
 import com.lemonkids.kidtask.ui.theme.PinkSoft
-import com.lemonkids.kidtask.ui.theme.Sky
 import com.lemonkids.kidtask.ui.theme.Sunny
 
 /** 任务 UI 数据模型，首页和日历页共用 */
@@ -69,18 +67,36 @@ enum class TaskCardDensity {
     Compact
 }
 
-/** 分类的颜色和图标只由稳定标识决定，调整显示顺序不会改变已有分类的视觉样式。 */
-fun stableTaskCategoryAppearance(categoryKey: String): Pair<Color, String> {
-    // Mint 仅表达“已完成”，不能作为普通分类色使用。
-    val colors = listOf(Pink, Lavender, Coral, Sky, Sunny)
-    val emojis = listOf("🌸", "💜", "🍊", "🫧", "⭐")
-    val index = Math.floorMod(categoryKey.hashCode(), colors.size)
-    return colors[index] to emojis[index]
+private val taskCategoryColors = listOf(
+    Color(0xFFFFF2A8), Color(0xFFFFD4A8), Color(0xFFFFD5D7), Color(0xFFF8B4D5),
+    Color(0xFFDED2FA), Color(0xFFAACCF7), Color(0xFF93DDF7), Color(0xFFA5EEDF),
+    Color(0xFFAAF2B9), Color(0xFFD7F4A1)
+)
+private val taskCategoryEmojis = listOf("🌸", "💜", "🍊", "🫧", "⭐")
+
+private fun taskCategoryAppearanceAt(index: Int): Pair<Color, String> =
+    taskCategoryColors[index] to taskCategoryEmojis[index % taskCategoryEmojis.size]
+
+/** 未提供同屏分类集合时，按稳定标识选择分类色。 */
+fun stableTaskCategoryAppearance(categoryKey: String): Pair<Color, String> =
+    taskCategoryAppearanceAt(Math.floorMod(categoryKey.hashCode(), taskCategoryColors.size))
+
+/** 同屏可见分类先按稳定键排序，再解决哈希冲突；最多十类时不撞色。 */
+fun assignTaskCategoryAppearances(categoryKeys: Collection<String>): Map<String, Pair<Color, String>> {
+    val occupied = BooleanArray(taskCategoryColors.size)
+    return categoryKeys.distinct().sorted().associateWith { key ->
+        val preferred = Math.floorMod(key.hashCode(), taskCategoryColors.size)
+        val slot = (0 until taskCategoryColors.size)
+            .map { (preferred + it) % taskCategoryColors.size }
+            .firstOrNull { !occupied[it] } ?: preferred
+        occupied[slot] = true
+        taskCategoryAppearanceAt(slot)
+    }
 }
 
 /**
  * 任务卡片分发器 — 根据状态自动选择 Pending / Done / Expired 卡片
- * @param sectionColor 分组主色（Pink / Coral / Lavender）
+ * @param sectionColor 分组主色
  * @param softColor 分组淡色背景
  */
 @Composable

@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.YearMonth
 import javax.inject.Inject
 
@@ -32,9 +33,10 @@ data class TasksUiState(
     val editingTask: TaskEditData? = null,
     val childUsers: List<ChildUserInfo> = emptyList(),
     val isLoading: Boolean = false,
+    val isSavingEdit: Boolean = false,
     val errorMessage: String? = null,
     val viewMode: ViewMode = ViewMode.LIST,
-    val selectedDate: LocalDate = LocalDate.now(),
+    val selectedDate: LocalDate = LocalDate.now(ZoneId.of("Asia/Shanghai")),
     /** 日历：日期 → 该日所有任务（已按 end_date 展开） */
     val monthTasks: Map<LocalDate, List<Task>> = emptyMap(),
     /** 日历下方选中的日任务列表 */
@@ -392,16 +394,58 @@ class TasksViewModel @Inject constructor(
         recurrenceWeekdays: Set<Int>,
         onDone: () -> Unit
     ) {
+        if (_uiState.value.isSavingEdit) return
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            val familyId = user.familyId ?: return@launch
+            _uiState.value = _uiState.value.copy(isLoading = true, isSavingEdit = true, errorMessage = null)
+            val user = authRepository.observeCurrentUser().first() ?: run {
+                _uiState.value = _uiState.value.copy(isLoading = false, isSavingEdit = false, errorMessage = "登录状态已失效，请重新登录")
+                return@launch
+            }
+            val familyId = user.familyId ?: run {
+                _uiState.value = _uiState.value.copy(isLoading = false, isSavingEdit = false, errorMessage = "未获取到家庭信息，请重新登录后重试")
+                return@launch
+            }
+            val existing = _uiState.value.editingTask
+            if (existing?.id != taskId) {
+                _uiState.value = _uiState.value.copy(isLoading = false, isSavingEdit = false, errorMessage = "任务尚未加载完成，请重试")
+                return@launch
+            }
+            val trimmedDescription = description.trim()
+            val descriptionChanged = existing.description != trimmedDescription
+            val attributesChanged = existing.title != title || existing.rewardPoints != rewardPoints ||
+                existing.penaltyPoints != penaltyPoints || existing.dueDate != dueDate ||
+                existing.endDate != endDate || existing.dueTime != dueTime ||
+                existing.childId != childId || existing.categoryName != categoryName ||
+                existing.growthDomain != growthDomain || existing.recurrenceType != recurrenceType ||
+                existing.recurrenceWeekdays != recurrenceWeekdays
+            if (descriptionChanged) {
+                val descriptionResult = taskRepository.updateTaskDescription(taskId, trimmedDescription)
+                if (descriptionResult.isFailure) {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isSavingEdit = false,
+                        errorMessage = descriptionResult.exceptionOrNull()?.message ?: "当天任务描述保存失败，请重试"
+                    )
+                    return@launch
+                }
+                _uiState.value = _uiState.value.copy(
+                    tasks = _uiState.value.tasks.map { if (it.id == taskId) it.copy(description = trimmedDescription) else it }
+                )
+                if (_uiState.value.viewMode == ViewMode.CALENDAR) {
+                    loadMonthData(YearMonth.from(_uiState.value.selectedDate))
+                    refreshSelectedDateTasks()
+                }
+            }
+            if (!attributesChanged) {
+                _uiState.value = _uiState.value.copy(isLoading = false, isSavingEdit = false)
+                onDone()
+                return@launch
+            }
 
             val task = Task(
                 id = taskId,
                 familyId = familyId,
                 title = title,
-                description = description,
                 childId = childId,
                 createdBy = user.uid,
                 category = categoryName,
@@ -415,7 +459,6 @@ class TasksViewModel @Inject constructor(
                 recurrenceWeekdays = recurrenceWeekdays.sorted(),
                 recurrenceEndDate = endDate.takeIf { recurrenceType != TaskRecurrenceType.NONE }
             )
-            val existing = _uiState.value.editingTask
             val update = if (existing?.recurrenceSeriesId != null) {
                 taskRepository.updateFutureTasksInSeries(existing.recurrenceSeriesId, dueDate, task)
             } else {
@@ -428,12 +471,16 @@ class TasksViewModel @Inject constructor(
                         refreshSelectedDateTasks()
                         _uiState.value = _uiState.value.copy(isLoading = false)
                     }
+                    _uiState.value = _uiState.value.copy(isSavingEdit = false)
                     onDone()
                 },
                 onFailure = { e ->
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        errorMessage = e.message ?: "更新失败"
+                        isSavingEdit = false,
+                        errorMessage = if (descriptionChanged) {
+                            "当天任务描述已保存，其他任务信息更新失败：${e.message ?: "请重试"}"
+                        } else e.message ?: "更新失败"
                     )
                 }
             )
@@ -545,4 +592,4 @@ class TasksViewModel @Inject constructor(
 }
 
 fun TaskUiItem.isCancellableByParent(): Boolean =
-    status == "PENDING" && runCatching { LocalDate.parse(dueDate) >= LocalDate.now() }.getOrDefault(false)
+    status == "PENDING" && runCatching { LocalDate.parse(dueDate) >= LocalDate.now(ZoneId.of("Asia/Shanghai")) }.getOrDefault(false)

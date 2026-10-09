@@ -20,6 +20,7 @@
 | `sql/20261004_reward_images_role_verify.sql` | 家长、孩子及匿名角色的 Storage 权限判定 | 图片迁移完成后在测试项目执行；需要可用的家庭角色样本 |
 | `sql/20261005_kid_growth_snapshot.sql` | 孩子端只读 `growth_snapshot()`，汇总本人任务、有效到账星星、手动勋章进度和成长足迹 | 先部署家长端 `badge_progress` 及奖励兑换记录表；已在当前关联项目部署并核验 |
 | `sql/20261005_kid_growth_snapshot_verify.sql` | 事务内核对孩子本人快照数值与家长/匿名拒绝访问 | 上述快照函数已部署，目标环境有可用的角色样本 |
+| `sql/20261008_parent_daily_task_description.sql` | 单条任务每日描述更新 RPC；新排程任务描述初始为空且重复创建不覆盖已发布描述 | 先于新版家长端每日描述功能部署；保留旧任务实例和旧模板描述，执行状态须在目标环境核实 |
 | `sql/20260906_category_task_bundles.sql` | 分类任务包：模板与分类多对多、原子排程、同日同模板去重及分类改名同步 | **破坏性**：清空孩子积分/积分流水、任务、任务模板和分类；依赖任务模板与任务历史迁移 |
 | `sql/20260906_remote_alarms.sql` | 远程闹钟表、Pad 下发回执/审计、最小权限 RLS 与监控设备查询 RPC | 已有 `binding_codes`（含 `device_id`）、监控绑定 RPC、`families`、`users`；不清空业务数据 |
 | `sql/20260914_alarm_background_music_storage.sql` | 私有 `alarm-background-music` bucket、运营曲目目录、下架兼容校验、受控短时下载与 Pad 缓存状态 | 已执行远程闹钟及语音/音乐字段迁移；上线前必须以临时项目核验 RLS，且先上传经授权曲目 |
@@ -77,6 +78,7 @@
 - 上线任务历史保留规则前，在目标项目的 SQL Editor 审查并执行 `sql/20260904_task_history_and_cancellation.sql`。执行后，删除只会取消上海时区当天及之后的待完成任务；回收站只可物理清理没有完成或积分历史的已取消任务。
 - 移除任务驳回能力前，在目标项目的 SQL Editor 审查并执行 `sql/20260904_remove_task_rejection.sql`。该脚本会删除 `reject_task` RPC，但不会删除既有的已驳回任务和积分流水。
 - 上线分类任务包前，在目标项目的 SQL Editor 审查并执行 `sql/20260906_category_task_bundles.sql`。该脚本按新版规则清空任务域数据（含孩子积分和积分流水），创建分类-任务模板关联、分类改名与原子排程 RPC；确认目标环境允许清空后才能执行。
+- 上线家长端每日任务描述前，审查并执行 `sql/20261008_parent_daily_task_description.sql`。`update_daily_task_description` 只允许家庭内家长修改当天或未来尚未完成的一条任务，按上海时区判断日期；排程函数给新实例写入空描述，不从模板复制，重复创建不覆盖已发布描述。脚本不会清空既有实例或模板描述。当前仓库未保留目标环境的独立部署回执，部署状态以目标环境为准。
 - 上线柠檬视频授权复用前，在目标项目 SQL Editor 审查并执行 `sql/20260921_family_video_drive_token_cache.sql`。执行其末尾验证查询时不得展示 `access_token`；应确认表已启用 RLS 且策略查询为空。随后再部署依赖该表的 `family-video-drive` 函数版本。该表只允许 service-role 访问，严禁添加客户端策略或把查询结果、token、请求头、下载链接写入日志。
 - 上线远程闹钟前，先确认 `binding_codes` 中 monitor 绑定成功后会保留 `device_id` 且状态为 `active` 或 `used`，再审查并执行 `sql/20260906_remote_alarms.sql`。执行后在 Dashboard 核对 `alarms` 的 Realtime 复制；当前 Android 正式保障路径仍是启动/解锁立即对账与 15 分钟网络同步，不能把 Realtime 当作唯一投递机制。
 - 家庭自定义音乐按顺序审查并执行 `20260914_alarm_background_music_storage.sql`、`20260914_alarm_family_background_music.sql`、`20260915_alarm_family_background_music_storage_rls_fix.sql` 与 `20260915_alarm_family_background_music_storage_read_rls_fix.sql`。家长端上传 MP3/OGG 到私有 `alarm-family-background-music` 的 `custom/{family_id}/{music_id}/v1/background.{ogg|mp3}`；仅本人家庭家长可写，本家庭已绑定 Pad 可读。不得向客户端配置 service-role 或对象删除策略。

@@ -459,7 +459,7 @@ private fun CategoryTaskPickerDialog(
                             )
                             Column {
                                 Text(template.title, fontWeight = FontWeight.Medium)
-                                Text("⭐${template.rewardPoints}${if (template.description.isBlank()) "" else " · ${template.description}"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("⭐${template.rewardPoints}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }

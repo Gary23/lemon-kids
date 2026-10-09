@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="390" viewBox="0 0 1000 390">
+  <rect width="1000" height="390" rx="24" fill="#F8F9FF"/>
+  <g font-family="Arial, sans-serif" fill="#0D1C2E">
+    <text x="30" y="43" font-size="22" font-weight="700">柠檬任务 · 调浅分类配色预览</text>
+    <text x="30" y="67" font-size="13">标签与左侧竖条使用同一不透明颜色</text>
+  </g>
+  <g fill="#FFFFFF" stroke="#DCE9FF">
+    <rect x="24" y="88" width="180" height="130" rx="16"/><rect x="216" y="88" width="180" height="130" rx="16"/><rect x="408" y="88" width="180" height="130" rx="16"/><rect x="600" y="88" width="180" height="130" rx="16"/><rect x="792" y="88" width="180" height="130" rx="16"/>
+    <rect x="24" y="232" width="180" height="130" rx="16"/><rect x="216" y="232" width="180" height="130" rx="16"/><rect x="408" y="232" width="180" height="130" rx="16"/><rect x="600" y="232" width="180" height="130" rx="16"/><rect x="792" y="232" width="180" height="130" rx="16"/>
+  </g>
+  <g>
+    <rect x="38" y="102" width="152" height="66" rx="12" fill="#FFF2A8"/><rect x="230" y="102" width="152" height="66" rx="12" fill="#FFD4A8"/><rect x="422" y="102" width="152" height="66" rx="12" fill="#FFD5D7"/><rect x="614" y="102" width="152" height="66" rx="12" fill="#F8B4D5"/><rect x="806" y="102" width="152" height="66" rx="12" fill="#DED2FA"/>
+    <rect x="38" y="246" width="152" height="66" rx="12" fill="#AACCF7"/><rect x="230" y="246" width="152" height="66" rx="12" fill="#93DDF7"/><rect x="422" y="246" width="152" height="66" rx="12" fill="#A5EEDF"/><rect x="614" y="246" width="152" height="66" rx="12" fill="#AAF2B9"/><rect x="806" y="246" width="152" height="66" rx="12" fill="#D7F4A1"/>
+  </g>
+  <g font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#0D1C2E">
+    <text x="38" y="192">柠檬黄 · #FFF2A8</text><text x="230" y="192">杏橙 · #FFD4A8</text><text x="422" y="192">珊瑚粉 · #FFD5D7</text><text x="614" y="192">莓粉 · #F8B4D5</text><text x="806" y="192">薰衣草紫 · #DED2FA</text>
+    <text x="38" y="336">亮蓝 · #AACCF7</text><text x="230" y="336">天空蓝 · #93DDF7</text><text x="422" y="336">青绿 · #A5EEDF</text><text x="614" y="336">嫩绿 · #AAF2B9</text><text x="806" y="336">青柠绿 · #D7F4A1</text>
+  </g>
+</svg>
