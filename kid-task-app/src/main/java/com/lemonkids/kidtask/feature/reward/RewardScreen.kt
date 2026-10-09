@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -492,25 +493,29 @@ private fun SmallWishCard(reward: Reward, imageUrl: String?, balance: Int, unava
 @Composable
 private fun RewardImage(reward: Reward, imageUrl: String?, fallbackImage: Int?, emojiSize: Int,
                         modifier: Modifier = Modifier.fillMaxSize()) {
-    var imageLoaded by remember(imageUrl) { mutableStateOf(false) }
+    var displayedPainter by remember(reward.id, reward.imagePath, imageUrl == null) {
+        mutableStateOf<Painter?>(null)
+    }
     Box(modifier, contentAlignment = Alignment.Center) {
         if (fallbackImage != null) {
-            Image(painterResource(fallbackImage), contentDescription = if (imageLoaded) null else reward.title,
+            Image(painterResource(fallbackImage), contentDescription = if (displayedPainter != null) null else reward.title,
                 modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         } else {
             Box(Modifier.fillMaxSize().background(SkyBlueSoft), contentAlignment = Alignment.Center) {
                 Text("🎁", fontSize = emojiSize.sp)
             }
         }
+        displayedPainter?.let { painter ->
+            Image(painter, contentDescription = "${reward.title}的奖励图片",
+                modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        }
         if (imageUrl != null) {
             AsyncImage(
                 model = imageUrl,
-                contentDescription = "${reward.title}的奖励图片",
+                contentDescription = null,
                 contentScale = ContentScale.Crop,
-                onLoading = { imageLoaded = false },
-                onSuccess = { imageLoaded = true },
-                onError = { imageLoaded = false },
-                modifier = Modifier.fillMaxSize().alpha(if (imageLoaded) 1f else 0f)
+                onSuccess = { displayedPainter = it.painter },
+                modifier = Modifier.fillMaxSize().alpha(0f)
             )
         }
     }

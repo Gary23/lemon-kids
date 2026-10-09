@@ -1,6 +1,7 @@
 package com.lemonkids.kidtask.feature.reward
 
 import android.util.Log
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.RewardSnapshot
@@ -22,6 +23,29 @@ import kotlinx.coroutines.launch
 enum class RewardAction { REDEEM, USE, CANCEL }
 
 data class RewardConfirmation(val action: RewardAction, val id: String, val title: String, val cost: Int)
+
+internal data class RewardImageEntry(
+    val familyId: String,
+    val path: String,
+    val url: String,
+    val signedAtMillis: Long
+)
+
+private const val IMAGE_URL_LIFETIME_MILLIS = 10 * 60 * 1000L
+private const val IMAGE_URL_RESIGN_MILLIS = 9 * 60 * 1000L
+
+internal fun retainRewardImageEntries(
+    family: String,
+    snapshot: RewardSnapshot,
+    entries: Map<String, RewardImageEntry>,
+    nowMillis: Long
+): Map<String, RewardImageEntry> = snapshot.rewards.mapNotNull { reward ->
+    val entry = entries[reward.id] ?: return@mapNotNull null
+    val age = nowMillis - entry.signedAtMillis
+    if (reward.familyId == family && entry.familyId == family &&
+        reward.imagePath == entry.path && age in 0 until IMAGE_URL_LIFETIME_MILLIS
+    ) reward.id to entry else null
+}.toMap()
 
 data class RewardUiState(
     val loading: Boolean = true,
@@ -46,19 +70,21 @@ class RewardViewModel @Inject constructor(
     val uiState = _uiState.asStateFlow()
     private var childId: String? = null
     private var familyId: String? = null
+    private var imageEntries: Map<String, RewardImageEntry> = emptyMap()
 
     init { refresh() }
 
     fun refresh() {
         if (_uiState.value.refreshing || _uiState.value.submitting) return
+        _uiState.value = _uiState.value.copy(refreshing = true, error = null)
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(refreshing = true, error = null)
             val user = authRepository.observeCurrentUser().first()
             val child = user?.uid ?: authRepository.currentUserId
             val family = user?.familyId
             if (child.isNullOrBlank() || family.isNullOrBlank()) {
                 childId = null
                 familyId = null
+                imageEntries = emptyMap()
                 _uiState.value = _uiState.value.copy(loading = false, refreshing = false,
                     snapshot = null, imageUrls = emptyMap(), confirmation = null,
                     pendingRequestId = null, pendingRewardId = null,
@@ -66,6 +92,7 @@ class RewardViewModel @Inject constructor(
                 return@launch
             }
             if (childId != null && (childId != child || familyId != family)) {
+                imageEntries = emptyMap()
                 _uiState.value = _uiState.value.copy(snapshot = null, imageUrls = emptyMap(), confirmation = null,
                     pendingRequestId = null, pendingRewardId = null)
             }
@@ -73,22 +100,20 @@ class RewardViewModel @Inject constructor(
             familyId = family
             rewardRepository.getRewardSnapshot(family, child).fold(
                 onSuccess = { snapshot ->
+                    imageEntries = retainRewardImageEntries(family, snapshot, imageEntries, SystemClock.elapsedRealtime())
                     val pendingConfirmed = _uiState.value.pendingRequestId?.let { id ->
                         snapshot.redemptions.any { it.id == id }
                     } == true
                     _uiState.value = _uiState.value.copy(
-                        loading = false, snapshot = snapshot, imageUrls = emptyMap(), error = null,
+                        loading = false, snapshot = snapshot, imageUrls = imageEntries.mapValues { it.value.url }, error = null,
                         pendingRequestId = if (pendingConfirmed) null else _uiState.value.pendingRequestId,
                         pendingRewardId = if (pendingConfirmed) null else _uiState.value.pendingRewardId,
                         confirmation = if (pendingConfirmed) null else _uiState.value.confirmation,
                         feedback = if (pendingConfirmed) "兑换成功，星星已扣除" else _uiState.value.feedback
                     )
                     rewardRepository.requestPointsRefresh()
-                    val imageUrls = resolveRewardImageUrls(family, snapshot, rewardRepository::createRewardImageUrl)
-                    _uiState.value = _uiState.value.copy(
-                        imageUrls = if (_uiState.value.snapshot === snapshot) imageUrls else _uiState.value.imageUrls,
-                        refreshing = false
-                    )
+                    updateRewardImageUrls(family, snapshot)
+                    _uiState.value = _uiState.value.copy(refreshing = false)
                 },
                 onFailure = { error ->
                     Log.e("RewardViewModel", "奖励页读取奖励快照失败", error)
@@ -157,10 +182,13 @@ class RewardViewModel @Inject constructor(
                 RewardAction.USE -> snapshot?.redemptions?.firstOrNull { it.id == action.id }?.status == RewardRedemptionStatus.USED
             }
             if (snapshot != null) rewardRepository.requestPointsRefresh()
+            if (snapshot != null) {
+                imageEntries = retainRewardImageEntries(family, snapshot, imageEntries, SystemClock.elapsedRealtime())
+            }
             _uiState.value = _uiState.value.copy(
                 submitting = false,
                 snapshot = snapshot ?: _uiState.value.snapshot,
-                imageUrls = if (snapshot != null) emptyMap() else _uiState.value.imageUrls,
+                imageUrls = if (snapshot != null) imageEntries.mapValues { it.value.url } else _uiState.value.imageUrls,
                 confirmation = if (snapshot != null && actionApplied) null else action,
                 pendingRequestId = if (action.action == RewardAction.REDEEM && !redeemed) requestId else null,
                 pendingRewardId = if (action.action == RewardAction.REDEEM && !redeemed) action.id else null,
@@ -174,12 +202,29 @@ class RewardViewModel @Inject constructor(
                 } else null
             )
             if (snapshot != null) {
-                val imageUrls = resolveRewardImageUrls(family, snapshot, rewardRepository::createRewardImageUrl)
-                if (_uiState.value.snapshot === snapshot) {
-                    _uiState.value = _uiState.value.copy(imageUrls = imageUrls)
-                }
+                updateRewardImageUrls(family, snapshot)
             }
         }
+    }
+
+    private suspend fun updateRewardImageUrls(family: String, snapshot: RewardSnapshot) {
+        val now = SystemClock.elapsedRealtime()
+        val needsSigning = snapshot.rewards.filter { reward ->
+            !reward.imagePath.isNullOrBlank() && reward.familyId == family &&
+                (imageEntries[reward.id]?.let { now - it.signedAtMillis < IMAGE_URL_RESIGN_MILLIS } != true)
+        }
+        if (needsSigning.isEmpty()) return
+        val urls = resolveRewardImageUrls(family, snapshot.copy(rewards = needsSigning),
+            rewardRepository::createRewardImageUrl)
+        if (_uiState.value.snapshot !== snapshot || familyId != family) return
+        val signedAt = SystemClock.elapsedRealtime()
+        val retained = retainRewardImageEntries(family, snapshot, imageEntries, signedAt)
+        imageEntries = retained + needsSigning.mapNotNull { reward ->
+            val path = reward.imagePath ?: return@mapNotNull null
+            val url = urls[reward.id] ?: return@mapNotNull null
+            reward.id to RewardImageEntry(family, path, url, signedAt)
+        }.toMap()
+        _uiState.value = _uiState.value.copy(imageUrls = imageEntries.mapValues { it.value.url })
     }
 }
 
