@@ -5,14 +5,13 @@
 | 分支 | 用途 | 当前状态 |
 | --- | --- | --- |
 | `main` | 稳定主线与基础版本。 | 已推送。 |
-| `product` | 产品集成与发布分支。 | 已合并认字端 v2.0（跨 Pad 朗读进度与当天任务快照）、任务端桌面卡片与任务首页、家长端任务分类包管理及创建修复、任务首页分类稳定与日历紧凑分组优化、认字音频任务 Supabase 容错，以及柠檬视频显式媒体库；发布标签见下表。 |
+| `product` | 产品集成与发布分支。 | 已合并认字端 v2.0（跨 Pad 朗读进度与当天任务快照）、任务端桌面卡片与任务首页、家长端任务分类包管理及创建修复、任务首页分类稳定与日历紧凑分组优化、认字音频任务 Supabase 容错，以及柠檬视频显式媒体库、认字端帮助字重新收录；发布标签见下表。 |
 
 ## 当前开发分支
 
 | 分支 | 用途 | 当前状态 |
 | --- | --- | --- |
 | `feature/lemon-alarm-monitor` | 监控端 App：家长端远程建立、同步、可靠触发与闭环追踪 Pad 端闹钟。 | 开发中。 |
-| `feature/kid-literacy-helped-to-recognized` | 认字端：从帮助过的内容将目标字重新加入已认识。 | 人工测试通过，待合并至 `product`。 |
 
 ## 历史分支
 
@@ -20,6 +19,7 @@
 
 | 分支 | 历史用途 / 状态 |
 | --- | --- |
+| `feature/kid-literacy-helped-to-recognized` | 帮助字重新收录及已认识状态提示，已合并至 `product`。 |
 | `feature/kid-literacy-app` | 认字音频任务 Supabase 容错，已合并至 `product`。 |
 | `feature/kid-task-category-stability` | 任务首页分类首屏稳定、分类配色调整及日历紧凑分组优化，已合并至 `product`。 |
 | `feature/kid-task-desktop-widget` | 任务端桌面卡片、绑定码会话与任务分类管理，已合并至 `product`。 |
