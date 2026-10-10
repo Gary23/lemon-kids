@@ -155,15 +155,21 @@ class RecognizedCharactersViewModel @Inject constructor(
     /** 将收录时间改为当前时刻，使该字重新进入首页三天学习周期。 */
     fun topCharacter(character: RecognizedCharacter) {
         if (character.id.isBlank() || _uiState.value.toppingCharacterId != null) return
+        if (_uiState.value.characters.none { it.id == character.id }) return
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(toppingCharacterId = character.id, topNotice = null)
+            _uiState.value = _uiState.value.copy(
+                toppingCharacterId = character.id,
+                topNotice = null
+            )
             topRecognizedCharacter(character.id)
                 .onSuccess { recognizedAt ->
+                    val currentCharacters = _uiState.value.characters
+                    val currentCharacter = currentCharacters.firstOrNull { it.id == character.id }
                     _uiState.value = _uiState.value.copy(
                         toppingCharacterId = null,
-                        characters = _uiState.value.characters.map {
-                            if (it.id == character.id) it.copy(recognizedAt = recognizedAt) else it
-                        },
+                        characters = if (currentCharacter == null) currentCharacters else
+                            listOf(currentCharacter.copy(recognizedAt = recognizedAt)) +
+                                currentCharacters.filterNot { it.id == character.id },
                         topNotice = "${character.character} 已置顶，今天起重新学习 3 天"
                     )
                 }
