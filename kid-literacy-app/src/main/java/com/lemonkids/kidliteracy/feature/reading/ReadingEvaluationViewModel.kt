@@ -23,6 +23,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -372,9 +373,21 @@ class ReadingEvaluationViewModel @Inject constructor(
     }
 
     /** 只生成可编辑预览，不会向 Supabase 写入任何待认识任务。 */
-    suspend fun previewLiteracyTasks(characters: String): Result<LiteracyTasksPreview> = runCatching {
+    suspend fun previewLiteracyTasks(characters: String): Result<LiteracyTasksPreview> =
+        previewLiteracyTasksRequest("""{"action":"preview_literacy_tasks","characters":"${characters.jsonEscape()}"}""")
+
+    suspend fun previewHelpedCharacter(helpRequestId: String): Result<LiteracyTasksPreview> =
+        previewLiteracyTasksRequest("""{"action":"preview_helped_character","helpRequestId":"${helpRequestId.jsonEscape()}"}""")
+
+    suspend fun checkHelpedCharacter(helpRequestId: String): Result<Boolean> = runCatching {
+        val response = request("""{"action":"check_helped_character","helpRequestId":"${helpRequestId.jsonEscape()}"}""")
+        response.requiredObject("helpedCharacter")["alreadyRecognized"]?.jsonPrimitive?.booleanOrNull
+            ?: error("云函数缺少已认识状态")
+    }
+
+    private suspend fun previewLiteracyTasksRequest(body: String): Result<LiteracyTasksPreview> = runCatching {
         val response = request(
-            """{"action":"preview_literacy_tasks","characters":"${characters.jsonEscape()}"}""",
+            body,
             readTimeoutMillis = LITERACY_GENERATION_READ_TIMEOUT_MILLIS
         )
         val preview = response.requiredObject("preview")
@@ -429,10 +442,27 @@ class ReadingEvaluationViewModel @Inject constructor(
         tasks = tasks
     )
 
+    suspend fun saveHelpedCharacter(
+        helpRequestId: String,
+        character: String,
+        tasks: List<GeneratedLiteracyTask>
+    ): Result<SavedLiteracyTasks> = saveGeneratedLiteracyTasks(
+        action = "save_helped_character",
+        characters = character,
+        tasks = tasks,
+        helpRequestId = helpRequestId
+    ).mapCatching { saved ->
+        check(character in saved.createdCharacters || character in saved.skippedRecognizedCharacters) {
+            "目标字未加入已认识，请重试"
+        }
+        saved
+    }
+
     private suspend fun saveGeneratedLiteracyTasks(
         action: String,
         characters: String,
-        tasks: List<GeneratedLiteracyTask>
+        tasks: List<GeneratedLiteracyTask>,
+        helpRequestId: String? = null
     ): Result<SavedLiteracyTasks> = runCatching {
         val serializedTasks = tasks.joinToString(prefix = "[", postfix = "]") { task ->
             val words = task.words.joinToString(prefix = "[", postfix = "]") { word ->
@@ -441,7 +471,7 @@ class ReadingEvaluationViewModel @Inject constructor(
             """{"character":"${task.character.jsonEscape()}","words":$words,"sentence":${task.sentence.toRequestJson()}}"""
         }
         val response = request(
-            """{"action":"$action","characters":"${characters.jsonEscape()}","items":$serializedTasks}"""
+            """{"action":"$action","characters":"${characters.jsonEscape()}","items":$serializedTasks${helpRequestId?.let { ",\"helpRequestId\":\"${it.jsonEscape()}\"" }.orEmpty()}}"""
         )
         val generated = response.requiredObject("generated")
         val createdCharacters = generated["created"]

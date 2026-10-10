@@ -697,7 +697,14 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                 )
                 Page.PENDING -> PendingCharactersScreen(userId = userId, onBack = { page = Page.PROFILE })
                 Page.LIBRARY -> LibraryScreen(userId = userId, onBack = { page = Page.PROFILE })
-                Page.HELPED -> HelpedCharactersScreen(userId = userId, onBack = { page = Page.PROFILE })
+                Page.HELPED -> HelpedCharactersScreen(
+                    userId = userId,
+                    onBack = { page = Page.PROFILE },
+                    onRecognized = { character ->
+                        homeViewModel.load(userId)
+                        notice = "$character 已加入已认识的字"
+                    }
+                )
                 Page.PARENT_PASSES -> ParentPassesScreen(
                     userId = userId,
                     onBack = { page = Page.PROFILE },
@@ -2833,9 +2840,10 @@ private fun ProfileScreen(
 private fun GenerateLiteracyTasksDialog(
     onDismiss: () -> Unit,
     onPreview: suspend (String) -> Result<LiteracyTasksPreview>,
-    onSave: suspend (LiteracySaveDestination, String, List<GeneratedLiteracyTask>) -> Result<SavedLiteracyTasks>
+    onSave: suspend (LiteracySaveDestination, String, List<GeneratedLiteracyTask>) -> Result<SavedLiteracyTasks>,
+    helpedCharacter: String? = null
 ) {
-    var characters by remember { mutableStateOf("") }
+    var characters by remember { mutableStateOf(helpedCharacter.orEmpty()) }
     var preview by remember { mutableStateOf<LiteracyTasksPreview?>(null) }
     var editableTasks by remember { mutableStateOf<List<EditableLiteracyTask>>(emptyList()) }
     var isWorking by remember { mutableStateOf(false) }
@@ -2844,6 +2852,18 @@ private fun GenerateLiteracyTasksDialog(
     val normalizedCharacters = characters.trim()
     val validInput = normalizedCharacters.isNotEmpty() && normalizedCharacters.all { it.isChineseCharacter() }
     val hasTasksToSave = editableTasks.isNotEmpty()
+    LaunchedEffect(helpedCharacter) {
+        if (helpedCharacter == null) return@LaunchedEffect
+        isWorking = true
+        onPreview(helpedCharacter).onSuccess { loaded ->
+            preview = loaded
+            editableTasks = loaded.tasks.map { task ->
+                EditableLiteracyTask(task.character,
+                    task.words.joinToString("、") { it.text }, task.sentence.text)
+            }
+        }.onFailure { errorMessage = it.message ?: "加载识字内容失败，请稍后重试" }
+        isWorking = false
+    }
     val saveEditedTasks: (LiteracySaveDestination) -> Unit = { destination ->
         coroutineScope.launch {
             val tasks = editableTasks.map {
@@ -2882,9 +2902,9 @@ private fun GenerateLiteracyTasksDialog(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (preview == null) "智能添加识字" else "确认识字内容", style = MaterialTheme.typography.headlineSmall, color = Ink)
+                        Text(if (helpedCharacter != null) "添加到已认识的字" else if (preview == null) "智能添加识字" else "确认识字内容", style = MaterialTheme.typography.headlineSmall, color = Ink)
                         Text(
-                            if (preview == null) "DeepSeek V4 Flash 会按字库生成学习内容" else "字不可修改；词和句子可按需要修改",
+                            if (helpedCharacter != null || preview != null) "字不可修改；词和句子可按需要修改" else "DeepSeek V4 Flash 会按字库生成学习内容",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color(0xFF7D898C)
                         )
@@ -2893,7 +2913,9 @@ private fun GenerateLiteracyTasksDialog(
                         Icon(Icons.Filled.Close, "关闭", tint = Ink)
                     }
                 }
-                if (preview == null) {
+                if (preview == null && helpedCharacter != null) {
+                    if (isWorking) CircularProgressIndicator(color = Leaf)
+                } else if (preview == null) {
                     OutlinedTextField(
                         value = characters,
                         onValueChange = {
@@ -2997,7 +3019,8 @@ private fun GenerateLiteracyTasksDialog(
                                     onDelete = {
                                         editableTasks = editableTasks.filter { it.character != task.character }
                                         errorMessage = null
-                                    }
+                                    },
+                                    canDelete = helpedCharacter == null
                                 )
                             }
                         }
@@ -3006,7 +3029,24 @@ private fun GenerateLiteracyTasksDialog(
                     }
                 }
                 errorMessage?.let { Text(it, color = Coral, fontSize = 13.sp) }
-                if (preview == null) {
+                if (preview == null && helpedCharacter != null) {
+                    if (!isWorking) Button(
+                        onClick = {
+                            coroutineScope.launch {
+                                isWorking = true
+                                onPreview(helpedCharacter).onSuccess { loaded ->
+                                    preview = loaded
+                                    editableTasks = loaded.tasks.map { task ->
+                                        EditableLiteracyTask(task.character,
+                                            task.words.joinToString("、") { it.text }, task.sentence.text)
+                                    }
+                                    errorMessage = null
+                                }.onFailure { errorMessage = it.message ?: "加载失败，请重试" }
+                                isWorking = false
+                            }
+                        }, modifier = Modifier.fillMaxWidth()
+                    ) { Text("重试加载") }
+                } else if (preview == null) {
                     Button(
                         onClick = {
                             coroutineScope.launch {
@@ -3048,7 +3088,7 @@ private fun GenerateLiteracyTasksDialog(
                     }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(
+                        if (helpedCharacter == null) OutlinedButton(
                             onClick = { saveEditedTasks(LiteracySaveDestination.PENDING) },
                             enabled = !isWorking && hasTasksToSave,
                             modifier = Modifier.weight(1f).height(52.dp),
@@ -3059,7 +3099,7 @@ private fun GenerateLiteracyTasksDialog(
                         Button(
                             onClick = { saveEditedTasks(LiteracySaveDestination.RECOGNIZED) },
                             enabled = !isWorking && hasTasksToSave,
-                            modifier = Modifier.weight(1f).height(52.dp),
+                            modifier = if (helpedCharacter != null) Modifier.fillMaxWidth().height(52.dp) else Modifier.weight(1f).height(52.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Leaf),
                             shape = RoundedCornerShape(17.dp)
                         ) {
@@ -3087,7 +3127,8 @@ private fun EditableLiteracyTaskCard(
     isRecognizedCharacter: Boolean,
     onWordsChange: (String) -> Unit,
     onSentenceChange: (String) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    canDelete: Boolean = true
 ) {
     Surface(shape = RoundedCornerShape(18.dp), color = Background, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -3156,7 +3197,7 @@ private fun EditableLiteracyTaskCard(
                 )
             )
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDelete) {
+            if (canDelete) TextButton(onClick = onDelete) {
                     Text("删除这组字词句", color = Coral)
                 }
             }
@@ -3182,6 +3223,8 @@ private fun validateEditedLiteracyTasks(tasks: List<GeneratedLiteracyTask>): Str
 private fun HelpedCharactersScreen(
     userId: String,
     onBack: () -> Unit,
+    onRecognized: (String) -> Unit,
+    readingViewModel: ReadingEvaluationViewModel = hiltViewModel(),
     viewModel: HelpedCharactersViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -3189,6 +3232,11 @@ private fun HelpedCharactersScreen(
     val coroutineScope = rememberCoroutineScope()
     var pendingExportContent by remember { mutableStateOf<String?>(null) }
     var exportMessage by remember { mutableStateOf<String?>(null) }
+    var selectedHelp by remember { mutableStateOf<HelpedContent?>(null) }
+    var checkingHelpId by remember { mutableStateOf<String?>(null) }
+    var checkError by remember { mutableStateOf<String?>(null) }
+    var alreadyRecognizedCharacter by remember { mutableStateOf<String?>(null) }
+    var savedHelpId by remember { mutableStateOf<String?>(null) }
     val createDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
@@ -3250,6 +3298,10 @@ private fun HelpedCharactersScreen(
                     Text(message, color = Coral, fontSize = 13.sp)
                     Spacer(Modifier.height(8.dp))
                 }
+                checkError?.let { message ->
+                    Text(message, color = Coral, fontSize = 13.sp)
+                    Spacer(Modifier.height(8.dp))
+                }
                 LazyColumn(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -3266,6 +3318,33 @@ private fun HelpedCharactersScreen(
                                 ) {
                                     Text(item.highlightedTargetText(), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Ink)
                                     Text(if (item.targetType == "sentence") "请求朗读过的句子" else "请求朗读过的词", fontSize = 12.sp, color = Color(0xFF7D898C))
+                                }
+                                val targetCharacter = item.requestedCharacter?.takeIf { character ->
+                                    character.length == 1 && character[0].isChineseCharacter() &&
+                                        item.highlightedCharacterIndex() != null
+                                }
+                                TextButton(
+                                    onClick = {
+                                        if (checkingHelpId != null) return@TextButton
+                                        checkError = null
+                                        checkingHelpId = item.id
+                                        coroutineScope.launch {
+                                            readingViewModel.checkHelpedCharacter(item.id)
+                                                .onSuccess { recognized ->
+                                                    if (recognized) alreadyRecognizedCharacter = targetCharacter
+                                                    else selectedHelp = item
+                                                }
+                                                .onFailure { error ->
+                                                    checkError = error.message ?: "检查已认识状态失败，请重试"
+                                                }
+                                            checkingHelpId = null
+                                        }
+                                    },
+                                    enabled = targetCharacter != null && checkingHelpId == null && item.id !in state.deletingContentIds
+                                ) {
+                                    if (checkingHelpId == item.id) {
+                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Leaf, strokeWidth = 2.dp)
+                                    } else Text("加入已认识", color = Leaf)
                                 }
                                 TextButton(
                                     onClick = { viewModel.delete(userId, item.id) },
@@ -3285,6 +3364,51 @@ private fun HelpedCharactersScreen(
                 }
             }
         }
+    }
+    alreadyRecognizedCharacter?.let { character ->
+        Dialog(onDismissRequest = { alreadyRecognizedCharacter = null }) {
+            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    Text("无需重复添加", style = MaterialTheme.typography.headlineSmall, color = Ink)
+                    Text("“$character”已在已认识的字中，无需重复添加。", color = Ink)
+                    Button(
+                        onClick = { alreadyRecognizedCharacter = null },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Leaf)
+                    ) { Text("知道了") }
+                }
+            }
+        }
+    }
+    selectedHelp?.let { help ->
+        val character = help.requestedCharacter.orEmpty()
+        GenerateLiteracyTasksDialog(
+            onDismiss = { selectedHelp = null },
+            onPreview = { readingViewModel.previewHelpedCharacter(help.id) },
+            onSave = { _, _, tasks ->
+                val savedResult = if (savedHelpId == help.id) Result.success(SavedLiteracyTasks(
+                    createdCharacters = listOf(character),
+                    knownCharacters = emptyList(),
+                    skippedExistingCharacters = emptyList(),
+                    skippedRecognizedCharacters = emptyList()
+                )) else readingViewModel.saveHelpedCharacter(help.id, character, tasks)
+                savedResult.onSuccess { savedHelpId = help.id }
+                    .onFailure { error ->
+                        if (error.message?.contains("已在已认识的字中，无需重复添加") == true) {
+                            selectedHelp = null
+                            alreadyRecognizedCharacter = character
+                        }
+                    }.mapCatching { saved ->
+                    viewModel.deleteAfterRecognized(userId, help.id).getOrElse { error ->
+                        throw IllegalStateException("已加入已认识，帮助记录删除失败，可重试：${error.message.orEmpty()}", error)
+                    }
+                    savedHelpId = null
+                    onRecognized(character)
+                    saved
+                }
+            },
+            helpedCharacter = character
+        )
     }
 }
 
@@ -3590,11 +3714,16 @@ private fun String.toInstantOrNull(): Instant? {
         ?: runCatching { OffsetDateTime.parse(normalized).toInstant() }.getOrNull()
 }
 
+private fun HelpedContent.highlightedCharacterIndex(): Int? {
+    val character = requestedCharacter?.takeIf { it.length == 1 && it[0].isChineseCharacter() } ?: return null
+    characterIndex?.takeIf { targetText.getOrNull(it)?.toString() == character }?.let { return it }
+    // 旧版词组求助保存的是整组索引；只在单次出现时才能安全定位到当前词。
+    return targetText.indexOf(character).takeIf { it >= 0 && targetText.lastIndexOf(character) == it }
+}
+
 private fun HelpedContent.highlightedTargetText() = buildAnnotatedString {
     append(targetText)
-    val highlightStart = characterIndex?.takeIf { index ->
-        requestedCharacter?.length == 1 && targetText.getOrNull(index)?.toString() == requestedCharacter
-    } ?: return@buildAnnotatedString
+    val highlightStart = highlightedCharacterIndex() ?: return@buildAnnotatedString
     addStyle(
         style = SpanStyle(color = EvaluationErrorRed, fontWeight = FontWeight.ExtraBold),
         start = highlightStart,

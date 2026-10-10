@@ -35,7 +35,7 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-当前部署包为 `evaluate-reading-web-20260920-parent-pass-undo-sync.zip`。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`、`supabase/sql/20260903_literacy_practice_progress_sync.sql`、`supabase/sql/20260907_literacy_daily_task_snapshot.sql`、`supabase/sql/20260912_smart_add_recognized_to_pending.sql`、`supabase/sql/20260920_literacy_parent_pass_records.sql`；智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；已认识字重新添加到待认识时会原子删除旧已认识记录及其音素资产，再写入新的待认识任务，重新添加到已认识时则更新收录时间置顶。朗读进度迁移创建同码多设备共享的当天进度表，任务快照迁移固定同一孩子当天各 Pad 展示的待认识任务及顺序；家长通过记录会保存点击前的星级快照、同步补满进度并允许当天撤销恢复，删除和清空操作会严格按当前登录孩子的范围执行。TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+本次交付包为 `evaluate-reading-web-20261010-helped-recognized-check.zip`，包含帮助记录的已认识状态检查。部署前需执行 `supabase/sql/20261009_helped_character_recognized_content.sql`；补充功能无新增 SQL 迁移。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`、`supabase/sql/20260903_literacy_practice_progress_sync.sql`、`supabase/sql/20260907_literacy_daily_task_snapshot.sql`、`supabase/sql/20260912_smart_add_recognized_to_pending.sql`、`supabase/sql/20260920_literacy_parent_pass_records.sql`；智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；已认识字重新添加到待认识时会原子删除旧已认识记录及其音素资产，再写入新的待认识任务，重新添加到已认识时则更新收录时间置顶。朗读进度迁移创建同码多设备共享的当天进度表，任务快照迁移固定同一孩子当天各 Pad 展示的待认识任务及顺序；家长通过记录会保存点击前的星级快照、同步补满进度并允许当天撤销恢复，删除和清空操作会严格按当前登录孩子的范围执行。TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
 
 待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
 [`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
@@ -187,6 +187,20 @@ Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭�
 
 云函数会重新从数据库确认该字任务、朗读内容和字符位置，再写入
 `child_literacy_character_help_requests`，但并非每次长按都会写入：无论从待认识还是已认识列表进入，也无论长按主字、词或句，只有该被长按的字已存在于 `known_characters`（字库）时才记录；字库外汉字只朗读，不留下记录。记录会同时保存完整词/句、被长按的汉字和它在内容中的位置；同一内容点到不同位置会分别保留，客户端可在“帮助过的内容”中精确高亮当时点击的字。部署前需执行 `supabase/sql/20260806_literacy_help_request_clicked_character.sql`；如需在客户端删除单条记录，还需执行 `supabase/sql/20260810_literacy_help_request_delete.sql`。
+
+“帮助过的内容”将标红字加入已认识时，客户端先用 `check_helped_character` 按当前孩子和帮助记录 ID 检查 `recognized_characters`。已认识则只提示，无收录、置顶或删除；仅在字库中的字仍可继续。未认识时用 `preview_helped_character` 优先读取该字完整历史词句，缺失时由 DeepSeek 生成；编辑后用 `save_helped_character` 收录。保存接口再次检查已认识冲突，成功后客户端仅删除被点击的帮助记录，删除失败可单独重试。同字的其他帮助记录不变。三个动作均需 Bearer Token，且只接受当前孩子的有效帮助记录。
+
+```json
+{"action":"check_helped_character","helpRequestId":"帮助记录 UUID"}
+```
+
+```json
+{"action":"preview_helped_character","helpRequestId":"帮助记录 UUID"}
+```
+
+```json
+{"action":"save_helped_character","helpRequestId":"帮助记录 UUID","items":[{"character":"春","words":[{"text":"春天"}],"sentence":{"text":"春天来了"}}]}
+```
 
 ## 评测模式
 

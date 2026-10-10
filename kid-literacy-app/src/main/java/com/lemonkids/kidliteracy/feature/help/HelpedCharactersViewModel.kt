@@ -92,4 +92,18 @@ class HelpedCharactersViewModel @Inject constructor(
             }
         }
     }
+
+    suspend fun deleteAfterRecognized(userId: String, contentId: String): Result<Unit> = runCatching {
+        require(userId.isNotBlank() && contentId.isNotBlank())
+        postgrest.from("child_literacy_character_help_requests").delete {
+            filter {
+                eq("id", contentId)
+                eq("child_id", userId)
+            }
+        }
+        _uiState.value = _uiState.value.copy(
+            contents = _uiState.value.contents.filterNot { it.id == contentId },
+            deleteErrorMessage = null
+        )
+    }
 }

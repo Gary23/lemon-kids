@@ -12,6 +12,7 @@
 | 分支 | 用途 | 当前状态 |
 | --- | --- | --- |
 | `feature/lemon-alarm-monitor` | 监控端 App：家长端远程建立、同步、可靠触发与闭环追踪 Pad 端闹钟。 | 开发中。 |
+| `feature/kid-literacy-helped-to-recognized` | 认字端：从帮助过的内容将目标字重新加入已认识。 | 人工测试通过，待合并至 `product`。 |
 
 ## 历史分支
 
