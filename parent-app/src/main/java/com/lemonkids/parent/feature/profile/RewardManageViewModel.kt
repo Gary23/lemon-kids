@@ -23,14 +23,12 @@ data class RewardDraft(
     val cost: String,
     val repeatable: Boolean,
     val description: String,
-    val coverKey: String,
     val isFeatured: Boolean
 )
 
 internal fun validateRewardDraft(draft: RewardDraft): String? = when {
     draft.title.isBlank() -> "请输入奖励名称"
     draft.cost.toIntOrNull()?.let { it > 0 } != true -> "积分价格必须是正整数"
-    draft.coverKey !in RewardManageViewModel.COVER_KEYS -> "请选择有效的封面"
     else -> null
 }
 
@@ -190,7 +188,7 @@ class RewardManageViewModel @Inject constructor(
             repeatable = draft.repeatable,
             isActive = editing?.isActive ?: true,
             description = draft.description.trim().takeIf { it.isNotEmpty() },
-            coverKey = draft.coverKey,
+            coverKey = editing?.coverKey ?: "gift",
             isFeatured = draft.isFeatured,
             imagePath = if (_uiState.value.removeImage) null else editing?.imagePath
         )
@@ -255,9 +253,5 @@ class RewardManageViewModel @Inject constructor(
         return if (detail.contains("rewards_one_active_featured_per_family"))
             "本家庭已有启用的大心愿，请先取消原大心愿"
         else "保存奖励失败：$detail"
-    }
-
-    companion object {
-        val COVER_KEYS = setOf("gift", "toy", "book", "outing", "treat", "wish")
     }
 }

@@ -47,7 +47,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,7 +61,6 @@ import com.lemonkids.shared.model.Reward
 import com.lemonkids.shared.model.PointRecord
 import com.lemonkids.shared.model.RewardRedemption
 import com.lemonkids.shared.model.RewardRedemptionStatus
-import com.lemonkids.kidtask.R
 import com.lemonkids.kidtask.ui.components.StatusBadge
 import com.lemonkids.kidtask.ui.theme.FreshMint
 import com.lemonkids.kidtask.ui.theme.FreshMintSoft
@@ -389,15 +387,8 @@ private fun BigWishCard(reward: Reward, imageUrl: String?, balance: Int, unavail
 
 @Composable
 private fun RewardCover(reward: Reward, imageUrl: String?, modifier: Modifier) {
-    val image = when (reward.coverKey) {
-        "toy", "wish" -> R.drawable.reward_castle
-        "outing" -> R.drawable.reward_park
-        "book" -> R.drawable.reward_book
-        "treat" -> R.drawable.reward_icecream
-        else -> null
-    }
     Box(modifier.clip(RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
-        RewardImage(reward, imageUrl, image, 52)
+        RewardImage(reward, imageUrl)
         Box(Modifier.fillMaxSize().padding(9.dp), contentAlignment = Alignment.TopStart) {
             Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.92f)) {
                 Text("特别心愿 🌟", Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
@@ -454,14 +445,8 @@ private fun SmallWishCard(reward: Reward, imageUrl: String?, balance: Int, unava
     }
     Surface(modifier, shape = RoundedCornerShape(24.dp), color = Color.White, shadowElevation = 5.dp) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            val image = when (reward.coverKey) {
-                "outing" -> R.drawable.reward_park
-                "book" -> R.drawable.reward_book
-                "treat" -> R.drawable.reward_icecream
-                else -> null
-            }
             Box(Modifier.fillMaxWidth().height(128.dp)) {
-                RewardImage(reward, imageUrl, image, 42, Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)))
+                RewardImage(reward, imageUrl, Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)))
                 Box(Modifier.fillMaxSize().padding(8.dp), contentAlignment = Alignment.TopEnd) {
                     StatusBadge(status, if (blockReason == null) FreshMintSoft else StrawberrySoft,
                         if (blockReason == null) FreshMintShadow else Strawberry)
@@ -491,20 +476,11 @@ private fun SmallWishCard(reward: Reward, imageUrl: String?, balance: Int, unava
 }
 
 @Composable
-private fun RewardImage(reward: Reward, imageUrl: String?, fallbackImage: Int?, emojiSize: Int,
-                        modifier: Modifier = Modifier.fillMaxSize()) {
+private fun RewardImage(reward: Reward, imageUrl: String?, modifier: Modifier = Modifier.fillMaxSize()) {
     var displayedPainter by remember(reward.id, reward.imagePath, imageUrl == null) {
         mutableStateOf<Painter?>(null)
     }
-    Box(modifier, contentAlignment = Alignment.Center) {
-        if (fallbackImage != null) {
-            Image(painterResource(fallbackImage), contentDescription = if (displayedPainter != null) null else reward.title,
-                modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        } else {
-            Box(Modifier.fillMaxSize().background(SkyBlueSoft), contentAlignment = Alignment.Center) {
-                Text("🎁", fontSize = emojiSize.sp)
-            }
-        }
+    Box(modifier.background(Color(0xFFF2F2F2)), contentAlignment = Alignment.Center) {
         displayedPainter?.let { painter ->
             Image(painter, contentDescription = "${reward.title}的奖励图片",
                 modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)

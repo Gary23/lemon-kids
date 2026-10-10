@@ -5,7 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RewardDraftTest {
-    private val valid = RewardDraft("读一本书", "15", true, "", "book", false)
+    private val valid = RewardDraft("读一本书", "15", true, "", false)
 
     @Test fun acceptsValidDraft() {
         assertNull(validateRewardDraft(valid))
@@ -19,9 +19,5 @@ class RewardDraftTest {
         listOf("0", "-2", "1.5", "abc", "99999999999999999999").forEach { cost ->
             assertEquals("积分价格必须是正整数", validateRewardDraft(valid.copy(cost = cost)))
         }
-    }
-
-    @Test fun rejectsUnknownCover() {
-        assertEquals("请选择有效的封面", validateRewardDraft(valid.copy(coverKey = "other")))
     }
 }

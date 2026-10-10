@@ -48,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -58,14 +60,7 @@ import com.lemonkids.shared.model.Reward
 import coil.compose.AsyncImage
 import androidx.compose.foundation.shape.RoundedCornerShape
 
-private val covers = listOf(
-    "gift" to "🎁 礼物",
-    "toy" to "🧸 玩具",
-    "book" to "📚 图书",
-    "outing" to "🎡 出游",
-    "treat" to "🍰 美食",
-    "wish" to "🌟 心愿"
-)
+private val EmptyRewardImageColor = Color(0xFFF2F2F2)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -224,24 +219,21 @@ private fun RewardRow(
 
 @Composable
 private fun RewardImage(reward: Reward, imageUrl: String?, imageError: Boolean, onRetry: () -> Unit) {
-    val cover = covers.firstOrNull { it.first == reward.coverKey }?.second?.substringBefore(' ') ?: "🎁"
     var loadFailed by remember(imageUrl) { mutableStateOf(false) }
-    if (reward.imagePath == null) {
-        Text(cover)
-    } else if (imageError || loadFailed) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(cover)
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).background(EmptyRewardImageColor)) {
+            if (reward.imagePath != null && !imageError && !loadFailed && imageUrl != null) {
+                AsyncImage(
+                    model = imageUrl, contentDescription = "${reward.title}的奖励图片",
+                    contentScale = ContentScale.Crop,
+                    onError = { loadFailed = true },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+        if (reward.imagePath != null && (imageError || loadFailed)) {
             TextButton(onClick = onRetry) { Text("图片重试") }
         }
-    } else if (imageUrl == null) {
-        Text(cover)
-    } else {
-        AsyncImage(
-            model = imageUrl, contentDescription = "${reward.title}的奖励图片",
-            contentScale = ContentScale.Crop,
-            onError = { loadFailed = true },
-            modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp))
-        )
     }
 }
 
@@ -265,7 +257,6 @@ private fun RewardEditorDialog(
     var cost by remember(editing?.id) { mutableStateOf(editing?.cost?.toString().orEmpty()) }
     var repeatable by remember(editing?.id) { mutableStateOf(editing?.repeatable ?: true) }
     var description by remember(editing?.id) { mutableStateOf(editing?.description.orEmpty()) }
-    var coverKey by remember(editing?.id) { mutableStateOf(editing?.coverKey ?: "gift") }
     var featured by remember(editing?.id) { mutableStateOf(editing?.isFeatured ?: false) }
     var imageLoadFailed by remember(imageUrl) { mutableStateOf(false) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -310,22 +301,23 @@ private fun RewardEditorDialog(
                 val preview = remember(selectedImageBytes) {
                     selectedImageBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
                 }
-                if (preview != null) {
-                    Image(
-                        bitmap = preview.asImageBitmap(), contentDescription = "待上传的奖励图片",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(96.dp).clip(RoundedCornerShape(8.dp))
-                    )
-                } else if (!removeImage && imageUrl != null && !imageLoadFailed) {
-                    AsyncImage(
-                        model = imageUrl, contentDescription = "当前奖励图片",
-                        contentScale = ContentScale.Crop,
-                        onError = { imageLoadFailed = true },
-                        modifier = Modifier.size(96.dp).clip(RoundedCornerShape(8.dp))
-                    )
-                } else if (!removeImage && editing?.imagePath != null && (imageError || imageLoadFailed)) {
+                Box(Modifier.size(96.dp).clip(RoundedCornerShape(8.dp)).background(EmptyRewardImageColor)) {
+                    if (preview != null) {
+                        Image(
+                            bitmap = preview.asImageBitmap(), contentDescription = "待上传的奖励图片",
+                            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                        )
+                    } else if (!removeImage && !imageError && imageUrl != null && !imageLoadFailed) {
+                        AsyncImage(
+                            model = imageUrl, contentDescription = "当前奖励图片",
+                            contentScale = ContentScale.Crop,
+                            onError = { imageLoadFailed = true }, modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+                if (preview == null && !removeImage && editing?.imagePath != null && (imageError || imageLoadFailed)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("当前图片读取失败，显示预设封面")
+                        Text("当前图片读取失败")
                         TextButton(onClick = onRetryImage) { Text("重试") }
                     }
                 }
@@ -340,15 +332,6 @@ private fun RewardEditorDialog(
                 if (isPreparingImage) Text("正在处理图片…", style = MaterialTheme.typography.bodySmall)
                 Text("支持静态 JPEG、PNG；上传时转为 JPEG，最大 5 MB", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(12.dp))
-                Text("预设封面", style = MaterialTheme.typography.labelLarge)
-                covers.chunked(2).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        row.forEach { (key, label) ->
-                            FilterChip(selected = coverKey == key, onClick = { coverKey = key },
-                                enabled = !busy, label = { Text(label) })
-                        }
-                    }
-                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = featured, onCheckedChange = { featured = it }, enabled = !busy)
                     Text("作为大心愿展示")
@@ -360,7 +343,7 @@ private fun RewardEditorDialog(
         },
         confirmButton = {
             TextButton(enabled = !busy && !isPreparingImage, onClick = {
-                onSave(RewardDraft(title, cost, repeatable, description, coverKey, featured))
+                onSave(RewardDraft(title, cost, repeatable, description, featured))
             }) {
                 if (busy) CircularProgressIndicator(Modifier.height(18.dp)) else Text("保存")
             }
