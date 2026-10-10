@@ -14,6 +14,7 @@
  * - complete_literacy_character：本地完成字、词、句练习后，按主字是否点读转入已认识字表或字库。
  * - archive_recognized_character：将一条已认识字存入字库，并移除其复习卡。
  * - preview_literacy_tasks：基于字库和输入汉字生成可编辑的词、句预览。
+ * - check_helped_character：确认帮助记录的目标字是否已在当前孩子的已认识列表。
  * - save_literacy_tasks：校验家长确认后的预览内容、创建待认识任务，并异步投递音频生成。
  * - save_recognized_literacy_tasks：先创建任务，再在同一数据库事务内转入已认识字。
  *
@@ -578,7 +579,79 @@ async function previewGeneratedLiteracyTasks(childId, rawCharacters) {
   return { tasks, knownCharacters: knownCharactersInRequest, skippedExistingCharacters, skippedRecognizedCharacters };
 }
 
-async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, destination = 'pending') {
+async function loadHelpedCharacter(childId, helpRequestId) {
+  requireUuid(helpRequestId, '帮助记录 ID');
+  const rows = await supabase(`child_literacy_character_help_requests?select=id,requested_character,character_index,target_text&child_id=eq.${encodeURIComponent(childId)}&id=eq.${encodeURIComponent(helpRequestId)}&limit=1`);
+  const help = rows?.[0];
+  if (!help) throw new HttpError(404, '未找到这条帮助记录');
+  const character = help.requested_character;
+  const directMatch = Number.isInteger(help.character_index) && help.target_text?.[help.character_index] === character;
+  const uniqueLegacyMatch = typeof help.target_text === 'string' &&
+    help.target_text.indexOf(character) >= 0 && help.target_text.indexOf(character) === help.target_text.lastIndexOf(character);
+  if (typeof character !== 'string' || !/^[\u4e00-\u9fff]$/.test(character) ||
+      (!directMatch && !uniqueLegacyMatch)) {
+    throw new HttpError(400, '这条帮助记录无法定位标红的字');
+  }
+  return character;
+}
+
+function reusableHelpTask(row, character) {
+  const words = Array.isArray(row?.words) ? row.words.filter((item) =>
+    typeof item?.text === 'string' && item.text.includes(character)).slice(0, 3) : [];
+  const sentence = Array.isArray(row?.sentences) ? row.sentences.find((item) =>
+    typeof item?.text === 'string' && item.text.includes(character)) : null;
+  return words.length && sentence ? { character, words, sentence } : null;
+}
+
+async function previewHelpedCharacter(childId, helpRequestId) {
+  const character = await loadHelpedCharacter(childId, helpRequestId);
+  const [recognized, history, knownCharacters] = await Promise.all([
+    supabase(`recognized_characters?select=words,sentences&child_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(character)}&limit=1`),
+    supabase(`child_literacy_characters?select=words,sentences&child_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(character)}&order=created_at.desc&limit=30`),
+    loadKnownCharacterSet(childId)
+  ]);
+  const task = reusableHelpTask(recognized?.[0], character) ||
+    history.map((row) => reusableHelpTask(row, character)).find(Boolean) ||
+    (await generateWithDeepSeek([character], new Set([...knownCharacters, character])))[0];
+  return { tasks: [task], knownCharacters: knownCharacters.has(character) ? [character] : [],
+    skippedExistingCharacters: [], skippedRecognizedCharacters: recognized?.length ? [character] : [] };
+}
+
+async function checkHelpedCharacter(childId, helpRequestId) {
+  const character = await loadHelpedCharacter(childId, helpRequestId);
+  const recognized = await supabase(`recognized_characters?select=id&child_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(character)}&limit=1`);
+  return { character, alreadyRecognized: Boolean(recognized?.length) };
+}
+
+async function saveHelpedCharacter(childId, helpRequestId, rawItems) {
+  const character = await loadHelpedCharacter(childId, helpRequestId);
+  const recognized = await supabase(`recognized_characters?select=id&child_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(character)}&limit=1`);
+  if (recognized?.length) throw new HttpError(409, '该字已在已认识的字中，无需重复添加');
+  const allowed = new Set([...await loadKnownCharacterSet(childId), character]);
+  const tasks = validateGeneratedTasks({ items: rawItems }, [character], allowed, { allowOutOfLibraryWords: true });
+  const pending = await supabase(`child_literacy_characters?select=id&child_id=eq.${encodeURIComponent(childId)}&character=eq.${encodeURIComponent(character)}&learned_at=is.null&limit=1`);
+  if (pending?.length) {
+    const taskId = await supabase('rpc/complete_pending_literacy_content_from_help', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_child_id: childId, p_character: character,
+        p_words: tasks[0].words, p_sentences: [tasks[0].sentence] })
+    });
+    if (!taskId) throw new HttpError(500, '待认识字收录失败');
+    const created = [{ id: taskId, character }];
+    await triggerNewLiteracyTaskAudio(created);
+    await generatePhoneticAssets(4);
+    return { created, knownCharacters: [], skippedExistingCharacters: [], skippedRecognizedCharacters: [] };
+  }
+  const generated = await saveGeneratedLiteracyTasks(childId, character, rawItems, 'recognized', true);
+  if (!generated.created.some((item) => item.character === character)) {
+    throw new HttpError(409, '目标字未能加入已认识，请重试');
+  }
+  await triggerNewLiteracyTaskAudio(generated.created);
+  await generatePhoneticAssets(4);
+  return generated;
+}
+
+async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, destination = 'pending', rejectRecognized = false) {
   if (!['pending', 'recognized'].includes(destination)) {
     throw new HttpError(400, '保存目标不正确');
   }
@@ -596,6 +669,9 @@ async function saveGeneratedLiteracyTasks(childId, rawCharacters, rawItems, dest
   // 已认识字则可转回待认识，或在“添加到已认识”时重新置顶。
   const knownCharactersInRequest = requestedCharacters.filter((character) => knownCharactersAtStart.has(character));
   const skippedRecognizedCharacters = requestedCharacters.filter((character) => recognizedCharacters.has(character));
+  if (rejectRecognized && skippedRecognizedCharacters.length) {
+    throw new HttpError(409, '该字已在已认识的字中，无需重复添加');
+  }
   const skippedExistingCharacters = requestedCharacters.filter(
     (character) => !recognizedCharacters.has(character) && unlearnedCharacters.has(character)
   );
@@ -1662,6 +1738,15 @@ async function handler(event) {
     });
     return response(200, { status: 'previewed', preview });
   }
+  if (body.action === 'preview_helped_character') {
+    return response(200, { status: 'previewed', preview: await previewHelpedCharacter(childId, body.helpRequestId) });
+  }
+  if (body.action === 'check_helped_character') {
+    return response(200, { status: 'checked', helpedCharacter: await checkHelpedCharacter(childId, body.helpRequestId) });
+  }
+  if (body.action === 'save_helped_character') {
+    return response(201, { status: 'recognized_created', generated: await saveHelpedCharacter(childId, body.helpRequestId, body.items) });
+  }
   if (body.action === 'save_literacy_tasks') {
     const generated = await saveGeneratedLiteracyTasks(childId, body.characters, body.items);
     const audioGeneration = await triggerNewLiteracyTaskAudio(generated.created);
@@ -1688,6 +1773,11 @@ exports.main_handler = async (event) => {
 };
 
 exports._private = {
+  loadHelpedCharacter,
+  reusableHelpTask,
+  previewHelpedCharacter,
+  checkHelpedCharacter,
+  saveHelpedCharacter,
   archiveRecognizedCharacter,
   topRecognizedCharacter,
   rollbackRecognizedArchive,

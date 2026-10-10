@@ -26,6 +26,10 @@ Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通
 
 字库已通过 `LibraryViewModel` 接入 Repository；认字首页通过 `LiteracyHomeViewModel` 读取真实任务，待认识字排在已认识字之前，点击单字打开统一学习弹层：待认识字练习字、词、句，已认识字复习只练字、词。评测请求由 `ReadingEvaluationViewModel` 调用腾讯 SCF，APK 不保存腾讯长期密钥：主字本地构造 `TEXT_MODE=0` 参考文本，待认识字的词、句和已认识字的词预取服务端音素参数并仅在当日内存中缓存。`RECORD_AUDIO`、拒绝授权态与取消录音逻辑已接入；逐字评测结果解析以腾讯真机返回结构为准。
 
+## 帮助过的内容
+
+“我的 → 帮助过的内容”可将记录中标红的字加入“已认识的字”：已认识时提示无需重复添加；仅在字库中仍可编辑收录。弹层优先读取当前孩子该字的历史词句，没有完整内容时请求 DeepSeek；成功后该字置顶，只移除被点击的帮助记录。此流程依赖 `evaluate-reading` 的 `check_helped_character`、`preview_helped_character`、`save_helped_character` 接口及 `supabase/sql/20261009_helped_character_recognized_content.sql` 迁移。
+
 ## 登录会话恢复
 
 启动或业务请求发现 Supabase 登录凭证不可用时，`SessionRecoveryCoordinator` 通知 `LemonLiteracyApp` 根层显示不可关闭的恢复弹层，覆盖朗读、智能添加识字等所有业务弹层，避免继续提交受保护请求。孩子可先“重试刷新”；仍失败时，可用本机已保存且已验证的 `task` 绑定码静默换取新会话。恢复成功后自动关闭弹层；没有可用绑定码时保留失败提示，需重新进入应用按绑定流程处理。
