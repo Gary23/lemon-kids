@@ -21,6 +21,7 @@
 | `sql/20261005_kid_growth_snapshot.sql` | 孩子端只读 `growth_snapshot()`，汇总本人任务、有效到账星星、手动勋章进度和成长足迹 | 先部署家长端 `badge_progress` 及奖励兑换记录表；已在当前关联项目部署并核验 |
 | `sql/20261005_kid_growth_snapshot_verify.sql` | 事务内核对孩子本人快照数值与家长/匿名拒绝访问 | 上述快照函数已部署，目标环境有可用的角色样本 |
 | `sql/20261008_parent_daily_task_description.sql` | 单条任务每日描述更新 RPC；新排程任务描述初始为空且重复创建不覆盖已发布描述 | 先于新版家长端每日描述功能部署；保留旧任务实例和旧模板描述，执行状态须在目标环境核实 |
+| `sql/20261010_parent_task_package_selection.sql` | 扩展 `create_tasks_from_selection`，按家长勾选的分类任务模板原子排程；保留旧七参数入口的全选行为 | 已有分类任务包迁移；新版家长端安装前执行。用户已反馈在目标项目执行完成 |
 | `sql/20260906_category_task_bundles.sql` | 分类任务包：模板与分类多对多、原子排程、同日同模板去重及分类改名同步 | **破坏性**：清空孩子积分/积分流水、任务、任务模板和分类；依赖任务模板与任务历史迁移 |
 | `sql/20260906_remote_alarms.sql` | 远程闹钟表、Pad 下发回执/审计、最小权限 RLS 与监控设备查询 RPC | 已有 `binding_codes`（含 `device_id`）、监控绑定 RPC、`families`、`users`；不清空业务数据 |
 | `sql/20260914_alarm_background_music_storage.sql` | 私有 `alarm-background-music` bucket、运营曲目目录、下架兼容校验、受控短时下载与 Pad 缓存状态 | 已执行远程闹钟及语音/音乐字段迁移；上线前必须以临时项目核验 RLS，且先上传经授权曲目 |

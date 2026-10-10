@@ -23,6 +23,7 @@
 8. `Reward.imagePath` 是可空的家庭私有对象路径，不是公开 URL。`RewardRepository` 创建/更新奖励时写入该路径，图片上传、删除和十分钟签名读取由仓库处理；对象路径须属于奖励家庭。家长端先上传新对象再保存奖励，失败时清理新对象；图片替换或移除成功后清理旧对象。旧奖励可保持空路径；`cover_key` 仍作为旧客户端兼容字段，新版家长端不提供选择，新建写入 `gift`，编辑保留原值。依赖 `../supabase/sql/20261004_reward_images.sql` 的 `rewards.image_path` 与私有 `reward-images` bucket；权限由数据库及 Storage RLS 最终执行。
 9. 孩子端成长页经 `GrowthRepository.getOwnSnapshot()` 调用本人只读的 `growth_snapshot()`，模型在 `model/GrowthSnapshot.kt`，实现为 `repository/impl/SupabaseGrowthRepository.kt`。快照汇总任务事实、有效到账星星、奖励使用及家长手动勋章进度；任务领域不自动推进手动专项。数据库脚本在 `../supabase/sql/20261005_kid_growth_snapshot.sql`，家长端进度表及受控写入须先部署。孩子端不能写专项或读取其他孩子数据；读取失败不得伪装为零进度。
 10. `TaskRepository.updateTaskDescription(taskId, description)` 只修改指定 `tasks.id` 的每日任务描述，经 `SupabaseTaskRepository` 调用 `update_daily_task_description` RPC。通用任务属性更新与重复系列同步不得写入 `description`，避免覆盖其他日期实例的内容；成功后须刷新任务观察流，日历选中日缓存由家长端刷新。依赖 `../supabase/sql/20261008_parent_daily_task_description.sql`，服务端校验家长身份、家庭、待完成状态和上海时区日期。
+11. 家长端按分类任务包创建任务时，`TaskRepository.createTasksFromSelection` 向 `create_tasks_from_selection` RPC 传所选模板 ID；服务端校验模板与家庭、分类的归属，并在单次事务中只为所选模板排程。旧七参数 RPC 保持包内全选行为，供旧客户端兼容。新版家长端依赖先部署 `../supabase/sql/20261010_parent_task_package_selection.sql`。
 
 ## 配置与安全
 

@@ -1,5 +1,7 @@
 package com.lemonkids.shared.repository.impl
 
+import android.util.Log
+
 import com.lemonkids.shared.model.TaskTemplate
 import com.lemonkids.shared.model.GrowthDomain
 import com.lemonkids.shared.repository.GrowthDomainBackfillPreview
@@ -62,7 +64,10 @@ class SupabaseTaskTemplateRepository @Inject constructor(
                     order("created_at", Order.ASCENDING)
                 }.decodeList<TaskTemplate>()
                 trySend(templates)
-            } catch (_: Exception) {} }
+            } catch (e: Exception) {
+                Log.e("SupabaseTaskTemplateRepo", "模板查询失败 familyId=$familyId", e)
+                throw e
+            } }
         }
         fetch()
         launch { templateRefreshEvents.collect { fetch() } }

@@ -47,6 +47,7 @@ class SupabaseCategoryRepository @Inject constructor(
                 trySend(list)
             } catch (e: Exception) {
                 Log.e(TAG, "分类查询失败 familyId=$familyId", e)
+                throw e
             } }
         }
         fetch()
@@ -98,6 +99,7 @@ class SupabaseCategoryRepository @Inject constructor(
                 trySend(list)
             } catch (e: Exception) {
                 Log.e(TAG, "分类任务包查询失败 familyId=$familyId", e)
+                throw e
             } }
         }
         fetch()

@@ -20,6 +20,7 @@ interface TaskRepository {
         childId: String,
         categoryId: String?,
         templateId: String?,
+        selectedTemplateIds: List<String>?,
         dueDate: String,
         endDate: String,
         recurrenceType: com.lemonkids.shared.model.TaskRecurrenceType,

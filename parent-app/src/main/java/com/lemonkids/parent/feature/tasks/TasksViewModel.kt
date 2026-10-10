@@ -44,6 +44,8 @@ data class TasksUiState(
     val categories: List<Category> = emptyList(),
     val taskTemplates: List<TaskTemplate> = emptyList(),
     val categoryTaskTemplates: List<CategoryTaskTemplate> = emptyList(),
+    val sourceLoading: Boolean = true,
+    val sourceLoadError: String? = null,
     val expandedCategories: Set<String> = emptySet(),
     val isManageMode: Boolean = false,
     val selectedTaskIds: Set<String> = emptySet()
@@ -107,8 +109,17 @@ class TasksViewModel @Inject constructor(
     private fun loadData() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            val familyId = user.familyId ?: return@launch
+            val user = authRepository.observeCurrentUser().first()
+                ?: authRepository.restoreSession().getOrElse { error ->
+                    _uiState.value = _uiState.value.copy(isLoading = false, sourceLoading = false,
+                        sourceLoadError = error.message ?: "恢复登录状态失败，请重试")
+                    return@launch
+                }
+            val familyId = user?.familyId ?: run {
+                _uiState.value = _uiState.value.copy(isLoading = false, sourceLoading = false,
+                    sourceLoadError = "未获取到家庭信息，请重新登录后重试")
+                return@launch
+            }
 
             authRepository.fetchChildUsers(familyId).onSuccess { children ->
                 _uiState.value = _uiState.value.copy(childUsers = children)
@@ -121,20 +132,61 @@ class TasksViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(isLoading = false)
             }
 
+            observeSources(familyId)
+        }
+    }
+
+    private var sourcesJob: kotlinx.coroutines.Job? = null
+
+    private fun observeSources(familyId: String) {
+        sourcesJob?.cancel()
+        _uiState.value = _uiState.value.copy(sourceLoading = true, sourceLoadError = null)
+        sourcesJob = viewModelScope.launch {
+            var loaded = 0
+            fun sourceLoaded() {
+                loaded++
+                if (loaded >= 3) _uiState.value = _uiState.value.copy(sourceLoading = false, sourceLoadError = null)
+            }
+            fun sourceFailed(error: Throwable) {
+                Log.e(TASKS_VIEW_MODEL_TAG, "创建来源加载失败", error)
+                _uiState.value = _uiState.value.copy(sourceLoading = false,
+                    sourceLoadError = "创建来源加载失败，请检查网络后重试")
+            }
             launch {
-                categoryRepository.observeCategories(familyId).collect { list ->
-                    _uiState.value = _uiState.value.copy(categories = list)
+                var firstValue = true
+                categoryRepository.observeCategories(familyId).catch { sourceFailed(it) }.collect {
+                    _uiState.value = _uiState.value.copy(categories = it)
+                    if (firstValue) { sourceLoaded(); firstValue = false }
                 }
             }
             launch {
-                taskTemplateRepository.observeTemplates(familyId).collect { templates ->
-                    _uiState.value = _uiState.value.copy(taskTemplates = templates)
+                var firstValue = true
+                taskTemplateRepository.observeTemplates(familyId).catch { sourceFailed(it) }.collect {
+                    _uiState.value = _uiState.value.copy(taskTemplates = it)
+                    if (firstValue) { sourceLoaded(); firstValue = false }
                 }
             }
             launch {
-                categoryRepository.observeCategoryTaskTemplates(familyId).collect { assignments ->
-                    _uiState.value = _uiState.value.copy(categoryTaskTemplates = assignments)
+                var firstValue = true
+                categoryRepository.observeCategoryTaskTemplates(familyId).catch { sourceFailed(it) }.collect {
+                    _uiState.value = _uiState.value.copy(categoryTaskTemplates = it)
+                    if (firstValue) { sourceLoaded(); firstValue = false }
                 }
+            }
+        }
+    }
+
+    fun retrySources() {
+        if (_uiState.value.sourceLoading) return
+        viewModelScope.launch {
+            val user = authRepository.observeCurrentUser().first()
+                ?: authRepository.restoreSession().getOrNull()
+            val familyId = user?.familyId
+            if (familyId == null) {
+                _uiState.value = _uiState.value.copy(sourceLoading = false,
+                    sourceLoadError = "登录状态未恢复，请重新登录后重试")
+            } else {
+                observeSources(familyId)
             }
         }
     }
@@ -308,6 +360,7 @@ class TasksViewModel @Inject constructor(
     fun createTask(
         categoryId: String?,
         templateId: String?,
+        selectedTemplateIds: List<String>?,
         endDate: String,
         dueDate: String,
         childId: String,
@@ -347,6 +400,7 @@ class TasksViewModel @Inject constructor(
                 childId = childId,
                 categoryId = categoryId,
                 templateId = templateId,
+                selectedTemplateIds = selectedTemplateIds,
                 dueDate = start.toString(),
                 endDate = end.toString(),
                 recurrenceType = recurrenceType,

@@ -167,6 +167,7 @@ class SupabaseTaskRepository @Inject constructor(
         childId: String,
         categoryId: String?,
         templateId: String?,
+        selectedTemplateIds: List<String>?,
         dueDate: String,
         endDate: String,
         recurrenceType: TaskRecurrenceType,
@@ -184,7 +185,8 @@ class SupabaseTaskRepository @Inject constructor(
                     "p_start_date" to JsonPrimitive(dueDate),
                     "p_end_date" to JsonPrimitive(endDate),
                     "p_recurrence_type" to JsonPrimitive(recurrenceType.name.lowercase()),
-                    "p_recurrence_weekdays" to JsonArray(recurrenceWeekdays.sorted().map(::JsonPrimitive))
+                    "p_recurrence_weekdays" to JsonArray(recurrenceWeekdays.sorted().map(::JsonPrimitive)),
+                    "p_selected_template_ids" to (selectedTemplateIds?.let { JsonArray(it.map(::JsonPrimitive)) } ?: JsonNull)
                 )
             )
         ).decodeList<Task>()

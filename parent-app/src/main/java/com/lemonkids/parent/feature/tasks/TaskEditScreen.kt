@@ -1,6 +1,9 @@
 package com.lemonkids.parent.feature.tasks
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -13,10 +16,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -37,6 +42,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -45,11 +51,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.lemonkids.shared.model.Category
 import com.lemonkids.shared.model.CategoryTaskTemplate
 import com.lemonkids.shared.model.TaskRecurrenceType
@@ -80,6 +90,9 @@ fun TaskEditScreen(
     var selectedChildId by remember { mutableStateOf("") }
     var selectedCategoryId by remember { mutableStateOf("") }
     var selectedTemplateId by remember { mutableStateOf("") }
+    var selectedPackageTemplateIds by remember { mutableStateOf(emptySet<String>()) }
+    var selectionCategoryId by remember { mutableStateOf("") }
+    var knownPackageTemplateIds by remember { mutableStateOf(emptySet<String>()) }
     var recurrenceType by remember { mutableStateOf(TaskRecurrenceType.NONE) }
     var recurrenceWeekdays by remember { mutableStateOf(emptySet<Int>()) }
     var growthDomain by remember { mutableStateOf<String?>(null) }
@@ -117,10 +130,34 @@ fun TaskEditScreen(
         }
     }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, uiState.sourceLoadError) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && uiState.sourceLoadError != null) viewModel.retrySources()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val packageTemplateIds = uiState.categoryTaskTemplates
+        .filter { it.categoryId == selectedCategoryId }
+        .map { it.templateId }
+        .filter { id -> uiState.taskTemplates.any { it.id == id } }
+        .toSet()
+    LaunchedEffect(selectedCategoryId, packageTemplateIds) {
+        if (selectionCategoryId != selectedCategoryId) {
+            selectedPackageTemplateIds = packageTemplateIds
+            selectionCategoryId = selectedCategoryId
+        } else {
+            selectedPackageTemplateIds = (selectedPackageTemplateIds intersect packageTemplateIds) +
+                (packageTemplateIds - knownPackageTemplateIds)
+        }
+        knownPackageTemplateIds = packageTemplateIds
+    }
+
     val points = pointsText.toIntOrNull() ?: 0
-    val selectedCategoryHasTasks = uiState.categoryTaskTemplates.any { it.categoryId == selectedCategoryId }
     val hasValidSource = selectedTemplateId.isNotBlank() ||
-        (selectedCategoryId.isNotBlank() && selectedCategoryHasTasks)
+        (selectedCategoryId.isNotBlank() && (selectedPackageTemplateIds intersect packageTemplateIds).isNotEmpty())
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -153,15 +190,32 @@ fun TaskEditScreen(
                         categoryTaskTemplates = uiState.categoryTaskTemplates,
                         selectedCategoryId = selectedCategoryId,
                         selectedTemplateId = selectedTemplateId,
+                        selectedPackageTemplateIds = selectedPackageTemplateIds,
+                        onPackageTemplateChecked = { id, checked ->
+                            selectedPackageTemplateIds = if (checked) selectedPackageTemplateIds + id else selectedPackageTemplateIds - id
+                        },
                         onCategorySelected = { categoryId ->
                             selectedCategoryId = categoryId
                             selectedTemplateId = ""
+                            selectedPackageTemplateIds = uiState.categoryTaskTemplates
+                                .filter { it.categoryId == categoryId }
+                                .map { it.templateId }
+                                .filter { id -> uiState.taskTemplates.any { it.id == id } }
+                                .toSet()
+                            selectionCategoryId = categoryId
+                            knownPackageTemplateIds = selectedPackageTemplateIds
                         },
                         onTemplateSelected = { templateId ->
                             selectedTemplateId = templateId
                             selectedCategoryId = ""
+                            selectedPackageTemplateIds = emptySet()
                         }
                     )
+                    if (uiState.sourceLoading) Text("正在加载分类和任务…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    uiState.sourceLoadError?.let { error ->
+                        Text(error, color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = viewModel::retrySources) { Text("重试加载") }
+                    }
                     Spacer(Modifier.height(16.dp))
                 } else {
                     OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("任务标题") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -250,6 +304,8 @@ fun TaskEditScreen(
                                 viewModel.createTask(
                                     categoryId = selectedCategoryId.ifBlank { null },
                                     templateId = selectedTemplateId.ifBlank { null },
+                                    selectedTemplateIds = selectedCategoryId.takeIf { it.isNotBlank() }
+                                        ?.let { (selectedPackageTemplateIds intersect packageTemplateIds).sorted() },
                                     endDate = endDate,
                                     dueDate = dueDate,
                                     childId = selectedChildId,
@@ -372,7 +428,7 @@ private fun RecurrenceSelector(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun TaskSourceSelector(
     categories: List<Category>,
@@ -380,6 +436,8 @@ private fun TaskSourceSelector(
     categoryTaskTemplates: List<CategoryTaskTemplate>,
     selectedCategoryId: String,
     selectedTemplateId: String,
+    selectedPackageTemplateIds: Set<String>,
+    onPackageTemplateChecked: (String, Boolean) -> Unit,
     onCategorySelected: (String) -> Unit,
     onTemplateSelected: (String) -> Unit
 ) {
@@ -390,7 +448,7 @@ private fun TaskSourceSelector(
     val categoryTemplateIds = categoryTaskTemplates
         .filter { it.categoryId == selectedCategoryId }
         .map { it.templateId }
-    val categoryTemplates = templates.filter { it.id in categoryTemplateIds }
+    val categoryTemplates = categoryTemplateIds.mapNotNull { id -> templates.find { it.id == id } }.distinctBy { it.id }
 
     Column {
         Text("创建来源", fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -415,11 +473,29 @@ private fun TaskSourceSelector(
         }
         if (selectedCategory != null) {
             Spacer(Modifier.height(4.dp))
-            Text(
-                if (categoryTemplates.isEmpty()) "该分类尚未配置任务" else "将创建：${categoryTemplates.joinToString("、") { it.title }}",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (categoryTemplates.isEmpty()) {
+                Text("该分类尚未配置任务", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Text("选择要创建的任务（已选 ${selectedPackageTemplateIds.count { it in categoryTemplateIds }}/${categoryTemplates.size}）",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    categoryTemplates.forEach { template ->
+                        val checked = template.id in selectedPackageTemplateIds
+                        Row(
+                            modifier = Modifier.toggleable(value = checked, role = Role.Checkbox,
+                                onValueChange = { onPackageTemplateChecked(template.id, it) }),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = checked, onCheckedChange = null)
+                            Text(template.title, fontSize = 14.sp)
+                        }
+                    }
+                }
+                if (selectedPackageTemplateIds.none { it in categoryTemplateIds }) {
+                    Text("请至少选择一个任务", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text("或", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
