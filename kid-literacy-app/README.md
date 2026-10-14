@@ -26,6 +26,14 @@ Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通
 
 字库已通过 `LibraryViewModel` 接入 Repository；认字首页通过 `LiteracyHomeViewModel` 读取真实任务，待认识字排在已认识字之前，点击单字打开统一学习弹层：待认识字练习字、词、句，已认识字复习只练字、词。评测请求由 `ReadingEvaluationViewModel` 调用腾讯 SCF，APK 不保存腾讯长期密钥：主字本地构造 `TEXT_MODE=0` 参考文本，待认识字的词、句和已认识字的词预取服务端音素参数并仅在当日内存中缓存。`RECORD_AUDIO`、拒绝授权态与取消录音逻辑已接入；逐字评测结果解析以腾讯真机返回结构为准。
 
+## 横屏花园界面
+
+应用支持两个横屏方向。首页、我的、待认识、已认识、字库、帮助记录和通过记录使用各自的固定场景背景、独立插画、奶油面板和胶囊按钮；首页与我的提供居中的“认字 / 我的”导航，短内容时靠底部，长内容时位于滚动末尾。“我的”包含六个入口，宽窗口两列三行，窄窗口或大字体时改为单列；累计识字数仅在当前孩子已有本地字库缓存时显示。
+
+页面标题、工具栏和列表随内容纵向滚动；表单弹窗处理安全区与键盘，关闭按钮独立保持可达。字词句练习共用固定槽位，录音、评测、错误及满星切换保持布局；满星即时移除按钮交互与焦点并保留占位。字格和主字采用完整 Ma Shan Zheng 手写字体，词句与 UI 正文使用系统字体；字体许可证位于 `src/main/assets/licenses/OFL-MaShanZheng.txt`。
+
+展示组件位于 `ui/components/`，主题位于 `ui/theme/`，运行时场景与插画位于 `res/drawable-nodpi/garden_*.png`。本轮只调整本应用的展示层，沿用真实数据、共享认证及既有学习规则，不新增数据库迁移或云函数部署前提。交付过程见 [花园 UI 重构](../docs/20261013-kid-literacy-app-garden-ui-redesign/执行.md)；后续视觉优化按独立需求推进。
+
 ## 帮助过的内容
 
 “我的 → 帮助过的内容”可将记录中标红的字加入“已认识的字”：已认识时提示无需重复添加；仅在字库中仍可编辑收录。弹层优先读取当前孩子该字的历史词句，没有完整内容时请求 DeepSeek；成功后该字置顶，只移除被点击的帮助记录。此流程依赖 `evaluate-reading` 的 `check_helped_character`、`preview_helped_character`、`save_helped_character` 接口及 `supabase/sql/20261009_helped_character_recognized_content.sql` 迁移。
@@ -42,12 +50,14 @@ Compose 平板端孩子应用。模块依赖 `:shared`、Hilt 和 Supabase，通
 |---|---|
 | `user_id` | 孩子的 Supabase Auth UUID |
 | `character` | 单个已认识汉字；与 `user_id` 组成唯一键，避免同一孩子重复入库 |
-| `learned_at` | 收录时间，字库按 `learned_at`、`character` 升序稳定分页展示；客户端刷新及缓存加载时会按 `character` 去重 |
+| `learned_at` | 收录时间，查询按 `learned_at`、`character` 升序；客户端更新及缓存加载时会按 `character` 去重 |
 
-页面具备加载中、空数据、错误重试、汉字搜索和无分类分页展示。首次加载 100 个字，点击“加载更多”继续获取下一页。
+进入字库只读取当前孩子的本地缓存；没有缓存时不自动联网。点击“更新字库”才按每批 100 字查询全部数据，去重后覆盖本地缓存，失败保留旧数据并允许重试。搜索仅过滤当前缓存，没有“加载更多”；加载、未缓存、空数据、无搜索结果和更新失败均有真实状态提示。
+
+“导出字库”按完整缓存顺序导出，不受搜索影响，不额外联网。序号从 1 开始且包含首尾，结束必须大于开始；开始越界报错，结束越界截断到最后一个字。汉字以顿号分隔，通过系统文件保存窗口写为 UTF-8 文本。
 
 ## 验证
 
 ```bash
-./gradlew :kid-literacy-app:assembleDebug
+./gradlew :kid-literacy-app:assembleDebug :kid-literacy-app:lintDebug :kid-literacy-app:testDebugUnitTest
 ```

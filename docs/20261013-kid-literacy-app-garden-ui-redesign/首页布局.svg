@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1536" height="960" viewBox="0 0 1536 960" role="img" aria-labelledby="title desc">
+<title id="title">柠檬认字 H01 首页布局设计</title>
+<desc id="desc">横屏花园场景，顶部标题与刷新，待认识及三个复习分组，六个固定字格槽位，底部认字与我的导航。所有内容均为示例。</desc>
+<defs>
+<linearGradient id="cream" x2="0" y2="1"><stop stop-color="#fffef9"/><stop offset="1" stop-color="#fff8e4"/></linearGradient>
+<linearGradient id="blue" x2="0" y2="1"><stop stop-color="#56c4ff"/><stop offset="1" stop-color="#258aff"/></linearGradient>
+<filter id="shadow" x="-10%" y="-20%" width="120%" height="150%"><feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#657b37" flood-opacity=".18"/></filter>
+<style>text{font-family:"PingFang SC","Microsoft YaHei",sans-serif;fill:#061a39} .heading{font-size:57px;font-weight:900;paint-order:stroke;stroke:white;stroke-width:7px;stroke-linejoin:round}.label{font-size:29px;font-weight:800}.meta{font-size:21px;fill:#687d9f}.han{font-size:57px;font-weight:700}.note{font-size:19px;fill:#426373}</style>
+</defs>
+<image href="../../kid-literacy-app/design-concepts/安卓UI开发资源/assets/scenes/a07-a10-recognition-garden.png" xlink:href="../../kid-literacy-app/design-concepts/安卓UI开发资源/assets/scenes/a07-a10-recognition-garden.png" x="0" y="0" width="1536" height="960" preserveAspectRatio="xMidYMid slice"/>
+<rect x="0" y="0" width="1536" height="960" rx="0" fill="#ffffff66" stroke="none" stroke-width="1"/>
+<image href="../../kid-literacy-app/design-concepts/安卓UI开发资源/assets/art/logo-lemon.png" xlink:href="../../kid-literacy-app/design-concepts/安卓UI开发资源/assets/art/logo-lemon.png" x="465" y="15" width="87" height="119" preserveAspectRatio="xMidYMid meet"/>
+<text x="574" y="84" class="heading" style="fill:#198b13">柠檬</text>
+<text x="702" y="84" class="heading">认字</text>
+<text x="560" y="123" class="meta">小朋友，和小麦一起认识今天的新朋友</text>
+<rect x="1020" y="51" width="174" height="62" rx="31" fill="url(#blue)" stroke="#fff" stroke-width="3" filter="url(#shadow)"/>
+<text x="1107" y="91" class="label" style="fill:#fff" text-anchor="middle">↻ 刷新</text>
+<image href="../../kid-literacy-app/design-concepts/安卓UI开发资源/assets/illustration/lemon-mascot-transparent.png" xlink:href="../../kid-literacy-app/design-concepts/安卓UI开发资源/assets/illustration/lemon-mascot-transparent.png" x="1210" y="4" width="174" height="172" preserveAspectRatio="xMidYMid meet"/>
+<text x="128" y="158" class="label">识字任务</text>
+<rect x="120" y="174" width="1296" height="142" rx="28" fill="url(#cream)" stroke="#ffbcb1" stroke-width="5" filter="url(#shadow)"/>
+<rect x="141" y="187" width="1247" height="35" rx="13" fill="#fff0eb" stroke="none" stroke-width="1"/>
+<text x="157" y="214" class="label" style="fill:#c34d35">待认识的字</text>
+<text x="1373" y="212" class="meta" text-anchor="end">今天的新朋友 · 示例任务</text>
+<rect x="158" y="230" width="185" height="73" rx="15" fill="#fffdf4" stroke="#ffbcb1" stroke-width="2"/>
+<text x="250.5" y="288" class="han" text-anchor="middle">春</text>
+<rect x="361" y="230" width="185" height="73" rx="15" fill="#fffdf4" stroke="#ffbcb1" stroke-width="2"/>
+<text x="453.5" y="288" class="han" text-anchor="middle">花</text>
+<rect x="564" y="230" width="185" height="73" rx="15" fill="#fffdf4" stroke="#ffbcb1" stroke-width="2"/>
+<text x="656.5" y="288" class="han" text-anchor="middle">草</text>
+<rect x="767" y="230" width="185" height="73" rx="15" fill="#fffdf433" stroke="#dde6cc" stroke-width="2"/>
+<rect x="970" y="230" width="185" height="73" rx="15" fill="#fffdf433" stroke="#dde6cc" stroke-width="2"/>
+<rect x="1173" y="230" width="185" height="73" rx="15" fill="#fffdf433" stroke="#dde6cc" stroke-width="2"/>
+<rect x="120" y="332" width="1296" height="142" rx="28" fill="url(#cream)" stroke="#c8e89b" stroke-width="5" filter="url(#shadow)"/>
+<rect x="141" y="345" width="1247" height="35" rx="13" fill="#f1fbe8" stroke="none" stroke-width="1"/>
+<text x="157" y="372" class="label" style="fill:#237e25">已认识的字 · 第 1 组</text>
+<text x="1373" y="370" class="meta" text-anchor="end">示例收录日期：2026-10-12</text>
+<rect x="158" y="388" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="250.5" y="446" class="han" text-anchor="middle">山</text>
+<rect x="309" y="393" width="27" height="25" rx="12" fill="#31b541" stroke="none" stroke-width="1"/>
+<text x="322.5" y="413" class="note" style="fill:#fff" text-anchor="middle">✓</text>
+<rect x="361" y="388" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="453.5" y="446" class="han" text-anchor="middle">水</text>
+<rect x="564" y="388" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="656.5" y="446" class="han" text-anchor="middle">田</text>
+<rect x="767" y="388" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="859.5" y="446" class="han" text-anchor="middle">月</text>
+<rect x="970" y="388" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="1062.5" y="446" class="han" text-anchor="middle">云</text>
+<rect x="1173" y="388" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="1265.5" y="446" class="han" text-anchor="middle">雨</text>
+<rect x="120" y="490" width="1296" height="142" rx="28" fill="url(#cream)" stroke="#c8e89b" stroke-width="5" filter="url(#shadow)"/>
+<rect x="141" y="503" width="1247" height="35" rx="13" fill="#f1fbe8" stroke="none" stroke-width="1"/>
+<text x="157" y="530" class="label" style="fill:#237e25">已认识的字 · 第 2 组</text>
+<text x="1373" y="528" class="meta" text-anchor="end">示例收录日期：2026-10-11</text>
+<rect x="158" y="546" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="250.5" y="604" class="han" text-anchor="middle">日</text>
+<rect x="309" y="551" width="27" height="25" rx="12" fill="#31b541" stroke="none" stroke-width="1"/>
+<text x="322.5" y="571" class="note" style="fill:#fff" text-anchor="middle">✓</text>
+<rect x="361" y="546" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="453.5" y="604" class="han" text-anchor="middle">木</text>
+<rect x="564" y="546" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="656.5" y="604" class="han" text-anchor="middle">林</text>
+<rect x="767" y="546" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="859.5" y="604" class="han" text-anchor="middle">火</text>
+<rect x="970" y="546" width="185" height="73" rx="15" fill="#fffdf433" stroke="#dde6cc" stroke-width="2"/>
+<rect x="1173" y="546" width="185" height="73" rx="15" fill="#fffdf433" stroke="#dde6cc" stroke-width="2"/>
+<rect x="120" y="648" width="1296" height="142" rx="28" fill="url(#cream)" stroke="#c8e89b" stroke-width="5" filter="url(#shadow)"/>
+<rect x="141" y="661" width="1247" height="35" rx="13" fill="#f1fbe8" stroke="none" stroke-width="1"/>
+<text x="157" y="688" class="label" style="fill:#237e25">已认识的字 · 第 3 组</text>
+<text x="1373" y="686" class="meta" text-anchor="end">示例收录日期：2026-10-10</text>
+<rect x="158" y="704" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="250.5" y="762" class="han" text-anchor="middle">口</text>
+<rect x="309" y="709" width="27" height="25" rx="12" fill="#31b541" stroke="none" stroke-width="1"/>
+<text x="322.5" y="729" class="note" style="fill:#fff" text-anchor="middle">✓</text>
+<rect x="361" y="704" width="185" height="73" rx="15" fill="#fffdf4" stroke="#c8e89b" stroke-width="2"/>
+<text x="453.5" y="762" class="han" text-anchor="middle">手</text>
+<rect x="564" y="704" width="185" height="73" rx="15" fill="#fffdf433" stroke="#dde6cc" stroke-width="2"/>
+<rect x="767" y="704" width="185" height="73" rx="15" fill="#fffdf433" stroke="#dde6cc" stroke-width="2"/>
+<rect x="970" y="704" width="185" height="73" rx="15" fill="#fffdf433" stroke="#dde6cc" stroke-width="2"/>
+<rect x="1173" y="704" width="185" height="73" rx="15" fill="#fffdf433" stroke="#dde6cc" stroke-width="2"/>
+<rect x="537" y="828" width="462" height="79" rx="39" fill="#fffdf4" stroke="#fff" stroke-width="4" filter="url(#shadow)"/>
+<rect x="548" y="838" width="219" height="59" rx="29" fill="#e3f4ff" stroke="none" stroke-width="1"/>
+<text x="658" y="878" class="label" style="fill:#168cf2" text-anchor="middle">✿ 认字</text>
+<text x="874" y="878" class="label" style="fill:#687d9f" text-anchor="middle">● 我的</text>
+<rect x="1340" y="817" width="63" height="63" rx="31" fill="#fffdf4" stroke="#b5ddfa" stroke-width="2" filter="url(#shadow)"/>
+<text x="1371.5" y="861" class="label" style="fill:#258aff" text-anchor="middle">↑</text>
+<text x="768" y="940" class="note" text-anchor="middle">H01 首页布局示意 · 文字、日期及完成标记均为示例 · 内容增长时纵向滚动，字格槽位不拉伸</text>
+</svg>

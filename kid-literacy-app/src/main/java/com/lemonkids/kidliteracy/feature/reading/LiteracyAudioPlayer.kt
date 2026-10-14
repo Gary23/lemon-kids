@@ -21,6 +21,7 @@ import java.io.File
  * 预生成 MP3 优先通过 Media3 播放；音频 URL 缺失、下载失败或解码失败时，调用方会
  * 收到一次回调并使用系统 TTS 兜底。缓存键带上音频版本，更新音色/文本后不会误播旧文件。
  */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class LiteracyAudioPlayer(context: Context) {
     private val appContext = context.applicationContext
     private val cache = SimpleCache(
