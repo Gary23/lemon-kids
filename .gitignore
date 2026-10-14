@@ -5,6 +5,9 @@
 .codex/
 .qoder/
 
+# 本地 UI 设计资料（按项目存放，不纳入版本控制）
+/ui-design/
+
 # Android / Gradle 构建产物与本机配置
 .gradle/
 .gradle-system/
