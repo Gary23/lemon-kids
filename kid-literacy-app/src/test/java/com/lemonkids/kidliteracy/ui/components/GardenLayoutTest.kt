@@ -30,10 +30,23 @@ class GardenLayoutTest {
         assertEquals(1, gardenPhoneticColumns(900f, 1.5f))
     }
 
-    @Test fun shortPagesKeepNavigationAtBottomAndLongPagesKeepSpacing() {
-        val sizes = intArrayOf(100, 200, 72)
-        assertArrayEquals(intArrayOf(0, 116, 728), gardenPrimaryPositions(800, sizes, 16))
-        assertArrayEquals(intArrayOf(0, 116, 332), gardenPrimaryPositions(400, sizes, 16))
-        assertArrayEquals(intArrayOf(), gardenPrimaryPositions(800, intArrayOf(), 16))
+    @Test fun homeTilesFitSixAcrossReferenceTabletCard() {
+        val layout = homeTileLayout(371f, 1f)
+        assertEquals(6, layout.columns)
+        assertTrue(layout.widthDp in 56f..57f)
+        assertTrue(layout.heightDp in 66f..69f)
+        assertTrue(layout.widthDp * 6 + 6f * 5 <= 371f)
+    }
+
+    @Test fun homeCardsStayTwoColumnsWhileTilesWrapInsideNarrowCards() {
+        listOf(240f, 190f, 110f).forEach { width ->
+            val layout = homeTileLayout(width, 1f)
+            assertTrue(layout.columns in 1..4)
+            assertTrue(layout.widthDp >= 48f)
+            assertTrue(layout.widthDp * layout.columns + 6f * (layout.columns - 1) <= width)
+        }
+        val largeFont = homeTileLayout(240f, 1.5f)
+        assertTrue(largeFont.columns < homeTileLayout(240f, 1f).columns)
+        assertTrue(largeFont.widthDp >= 72f)
     }
 }

@@ -14,14 +14,14 @@ internal fun gardenMenuColumns(widthDp: Float, fontScale: Float): Int =
 internal fun gardenPhoneticColumns(widthDp: Float, fontScale: Float): Int =
     if (widthDp >= 720f && widthDp / fontScale.coerceAtLeast(1f) >= 640f) 2 else 1
 
-/** 内容不足一屏时，只在末尾导航前补空白；长内容维持正常间距。 */
-internal fun gardenPrimaryPositions(totalSize: Int, sizes: IntArray, gap: Int): IntArray {
-    val extra = (totalSize - sizes.sum() - gap * (sizes.size - 1).coerceAtLeast(0)).coerceAtLeast(0)
-    var next = 0
-    return IntArray(sizes.size) { index ->
-        if (index == sizes.lastIndex) next += extra
-        val position = next
-        next += sizes[index] + gap
-        position
-    }
+/** 首页任务卡始终两列；空间不足时只让每张卡内的字格换行。 */
+internal data class HomeTileLayout(val columns: Int, val widthDp: Float, val heightDp: Float, val fontSp: Float)
+
+internal fun homeTileLayout(contentWidthDp: Float, fontScale: Float): HomeTileLayout {
+    val scale = fontScale.coerceAtLeast(1f)
+    val gap = 6f
+    val minimumWidth = 48f * scale
+    val columns = floor((contentWidthDp + gap) / (minimumWidth + gap)).toInt().coerceIn(1, 6)
+    val width = ((contentWidthDp - gap * (columns - 1)) / columns).coerceAtMost(57f * scale)
+    return HomeTileLayout(columns, width, width * 1.19f, minOf(40f, width * .70f / scale))
 }

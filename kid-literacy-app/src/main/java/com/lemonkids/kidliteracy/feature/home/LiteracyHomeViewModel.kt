@@ -30,6 +30,8 @@ data class LiteracyCharacterGroup(
     val groupNumber: Int,
     /** 已认识字分组覆盖的收录日期（中国时区，从近到远），待认识分组为空。 */
     val recognizedDates: List<LocalDate> = emptyList(),
+    /** 待认识分组的当天任务快照日期；旧快照日期无效时为空。 */
+    val taskDate: LocalDate? = null,
     /** 首页只展示汉字；完整认字数据用于进入字、词、句学习页。 */
     val characters: List<String>,
     /** 待认识分组进入学习页时所需的完整认字任务数据。 */
@@ -51,6 +53,16 @@ data class LiteracyCharacterGroup(
 }
 
 enum class LiteracyGroupType { KNOWN, TO_LEARN }
+
+internal fun LiteracyCharacterGroup.homeHeading(): String = if (isKnown) "已认识的字" else "待认识的字"
+
+internal fun LiteracyCharacterGroup.homeDateLabel(): String? = if (isKnown) {
+    recognizedDates.takeIf { it.isNotEmpty() }
+        ?.joinToString(separator = " · ") { "${it.monthValue}月${it.dayOfMonth}日" }
+        ?: "第${groupNumber}组"
+} else {
+    taskDate?.let { "${it.monthValue}月${it.dayOfMonth}日" }
+}
 
 @HiltViewModel
 class LiteracyHomeViewModel @Inject constructor(
@@ -269,12 +281,13 @@ private fun RecognizedCharacter.recognizedDateInChina(): LocalDate? = recognized
         .getOrNull()
 }
 
-private fun DailyLiteracyTaskSnapshot.toLearningGroup(): List<LiteracyCharacterGroup> =
+internal fun DailyLiteracyTaskSnapshot.toLearningGroup(): List<LiteracyCharacterGroup> =
     characters.takeIf { it.isNotEmpty() }?.let { characters ->
         listOf(
             LiteracyCharacterGroup(
                 type = LiteracyGroupType.TO_LEARN,
                 groupNumber = 1,
+                taskDate = runCatching { LocalDate.parse(date) }.getOrNull(),
                 characters = characters.map { it.character },
                 learningCharacters = characters,
                 completedCharacterIds = completedCharacterIds

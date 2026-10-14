@@ -26,12 +26,12 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.lemonkids.kidliteracy.R
@@ -43,9 +43,9 @@ internal fun GardenArt(@DrawableRes resource: Int, modifier: Modifier = Modifier
 }
 
 @Composable
-internal fun GardenPageScaffold(@DrawableRes scene: Int, content: @Composable () -> Unit) {
+internal fun GardenPageScaffold(@DrawableRes scene: Int, sceneAlignment: Alignment = Alignment.Center, content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize()) {
-        Image(painterResource(scene), null, Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+        Image(painterResource(scene), null, Modifier.matchParentSize(), alignment = sceneAlignment, contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
             Box(Modifier.widthIn(max = 1200.dp).fillMaxSize()) { content() }
         }
@@ -57,13 +57,6 @@ internal fun GardenPanel(modifier: Modifier = Modifier, tint: Color = Background
     Surface(modifier, shape = RoundedCornerShape(28.dp), color = tint.copy(alpha = .97f),
         border = BorderStroke(2.dp, Color.White), shadowElevation = 4.dp) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
-    }
-}
-
-internal val GardenPrimaryArrangement = object : Arrangement.Vertical {
-    override val spacing: Dp = 16.dp
-    override fun Density.arrange(totalSize: Int, sizes: IntArray, outPositions: IntArray) {
-        gardenPrimaryPositions(totalSize, sizes, spacing.roundToPx()).copyInto(outPositions)
     }
 }
 
@@ -123,12 +116,13 @@ internal fun GardenActionButton(onClick: () -> Unit, modifier: Modifier = Modifi
 
 @Composable
 internal fun GardenCharacterTile(character: String, modifier: Modifier = Modifier, completed: Boolean = false,
-    onClick: (() -> Unit)? = null) {
+    onClick: (() -> Unit)? = null, fontSize: TextUnit = 60.sp, cornerRadius: Dp = 20.dp,
+    accent: Color = Color(0xFFE9CA80)) {
     Surface(modifier.then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        shape = RoundedCornerShape(20.dp), color = if (completed) LeafLight else Background,
-        border = BorderStroke(2.dp, if (completed) Leaf else Color(0xFFE9CA80)), shadowElevation = 3.dp) {
+        shape = RoundedCornerShape(cornerRadius), color = if (completed) LeafLight else Background,
+        border = BorderStroke(2.dp, if (completed) Leaf else accent), shadowElevation = 3.dp) {
         Box(contentAlignment = Alignment.Center) {
-            Text(character, fontFamily = CharacterFont, fontSize = 60.sp, color = Ink)
+            Text(character, fontSize = fontSize, color = Ink)
             if (completed) Text("✓", color = Leaf, fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
         }

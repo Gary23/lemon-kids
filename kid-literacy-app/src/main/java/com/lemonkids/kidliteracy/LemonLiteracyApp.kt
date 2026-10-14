@@ -11,7 +11,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.ContentScale
 import com.lemonkids.kidliteracy.ui.components.*
-import com.lemonkids.kidliteracy.ui.theme.CharacterFont
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.role
@@ -45,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -52,6 +52,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -104,6 +105,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -142,6 +144,8 @@ import com.lemonkids.kidliteracy.feature.pending.PhoneticAsset
 import com.lemonkids.kidliteracy.feature.home.LiteracyHomeViewModel
 import com.lemonkids.kidliteracy.feature.home.LiteracyCharacterGroup
 import com.lemonkids.kidliteracy.feature.home.DailyLiteracyTaskSnapshotStore
+import com.lemonkids.kidliteracy.feature.home.homeHeading
+import com.lemonkids.kidliteracy.feature.home.homeDateLabel
 import com.lemonkids.kidliteracy.feature.recognized.RecognizedCharactersViewModel
 import com.lemonkids.kidliteracy.feature.help.HelpedContent
 import com.lemonkids.kidliteracy.feature.help.HelpedCharactersViewModel
@@ -205,8 +209,7 @@ private const val A4_PAPER_WIDTH_TO_HEIGHT = 0.70710677f
 
 private data class Lesson(
     val title: String,
-    val date: String,
-    val progress: String,
+    val dateLabel: String?,
     val known: Boolean,
     val characters: List<String>,
     /** 当前列表中当天已完成全部朗读要求的字。 */
@@ -660,7 +663,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
         Page.HELPED -> R.drawable.garden_a05_helped_reading_corner
         Page.PARENT_PASSES -> R.drawable.garden_a06_passes_desktop
     }
-    GardenPageScaffold(scene) {
+    GardenPageScaffold(scene, sceneAlignment = if (page == Page.HOME) Alignment.TopCenter else Alignment.Center) {
         Box(Modifier.fillMaxSize()) {
             when (page) {
                 Page.HOME -> HomeScreen(
@@ -856,21 +859,59 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
 
 @Composable
 private fun LiteracyBottomNav(current: Page, onNavigate: (Page) -> Unit) {
-    Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
-        Surface(Modifier.widthIn(max = 420.dp).fillMaxWidth(), shape = CircleShape, color = Background, shadowElevation = 5.dp) {
-            Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    val unselectedColor = Color(0xFF6D7A89)
+    Box(Modifier.fillMaxWidth().padding(bottom = 6.dp), contentAlignment = Alignment.Center) {
+        Surface(Modifier.widthIn(max = 342.dp).fillMaxWidth(), shape = CircleShape, color = Background, shadowElevation = 5.dp) {
+            Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(Page.HOME to "认字", Page.PROFILE to "我的").forEach { (page, title) ->
                     val selected = current == page
-                    Surface(Modifier.weight(1f).heightIn(min = 56.dp).semantics { this.selected = selected; role = Role.Tab }.clickable { onNavigate(page) },
+                    Surface(Modifier.weight(1f).heightIn(min = 48.dp).semantics { this.selected = selected; role = Role.Tab }.clickable { onNavigate(page) },
                         shape = CircleShape, color = if (selected) SkyLight else Color.Transparent,
                         border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, Color.White) else null) {
-                        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (page == Page.HOME) Icons.Default.Home else Icons.Default.Person, null, tint = if (selected) Sky else Ink)
-                            Spacer(Modifier.width(10.dp))
-                            Text(title, color = if (selected) Sky else Ink, style = MaterialTheme.typography.titleMedium)
+                        Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            Icon(if (page == Page.HOME) Icons.Default.Home else Icons.Default.Person, null, tint = if (selected) Sky else unselectedColor)
+                            Spacer(Modifier.width(8.dp))
+                            Text(title, color = if (selected) Sky else unselectedColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomePageHeader(childName: String, isLoading: Boolean, onRefresh: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = 102.dp)) {
+        val compact = maxWidth < 690.dp || LocalDensity.current.fontScale > 1.3f
+        Row(
+            Modifier.fillMaxWidth().padding(start = if (compact) 0.dp else 80.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GardenArt(R.drawable.garden_logo_lemon, Modifier.size(if (compact) 42.dp else 56.dp))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.widthIn(max = if (compact) 175.dp else 256.dp)) {
+                Text("柠檬认字", color = Ink, fontSize = if (compact) 28.sp else 36.sp,
+                    fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                Text("$childName，和小麦一起认识新朋友", color = Color(0xFF687D9F),
+                    fontSize = if (compact) 14.sp else 16.sp, maxLines = 2)
+            }
+            Spacer(Modifier.width(12.dp))
+            Surface(onClick = onRefresh, enabled = !isLoading,
+                modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 48.dp),
+                shape = CircleShape, color = Color(0xFFDDF3FF).copy(alpha = .84f),
+                border = androidx.compose.foundation.BorderStroke(2.dp, Color.White)) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, tint = Sky)
+                    Spacer(Modifier.width(4.dp))
+                    Text("刷新", fontSize = 18.sp, color = Sky)
+                }
+            }
+            if (!compact) {
+                Spacer(Modifier.width(12.dp))
+                GardenArt(R.drawable.garden_mascot_welcome, Modifier.size(112.dp))
             }
         }
     }
@@ -890,50 +931,51 @@ private fun HomeScreen(
     val showScrollToTop by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
     val coroutineScope = rememberCoroutineScope()
 
-    Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 28.dp, end = 28.dp, top = 22.dp, bottom = 24.dp),
-            verticalArrangement = GardenPrimaryArrangement
-        ) {
-            item {
-                GardenPageHeader("柠檬认字", "$childName，和小麦一起认识今天的新朋友", action = {
-                    Button(onClick = onRefresh, enabled = !isLoading, colors = ButtonDefaults.buttonColors(containerColor = Sky)) {
-                        Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("刷新")
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val contentWidth = (maxWidth - 32.dp).coerceAtMost(815.dp)
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.width(contentWidth).fillMaxHeight().align(Alignment.TopCenter),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item { HomePageHeader(childName, isLoading, onRefresh) }
+                    if (groups.isEmpty()) {
+                        item { LiteracyEmptyState() }
+                    } else {
+                        itemsIndexed(groups.chunked(2), key = { _, row -> "${row.first().type}-${row.first().groupNumber}" }) { rowIndex, row ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                row.forEachIndexed { columnIndex, group ->
+                                    val knownCornerIndex = groups.take(rowIndex * 2 + columnIndex).count { it.isKnown }
+                                    LessonCard(group.toLesson(practiceProgress),
+                                        onCharacterClick = { index -> onCharacter(group, index) },
+                                        knownCornerIndex = knownCornerIndex,
+                                        modifier = Modifier.weight(1f))
+                                }
+                                if (row.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
                     }
-                })
-            }
-            item {
-                Text("识字任务", style = MaterialTheme.typography.titleLarge, color = Ink)
-            }
-            if (groups.isEmpty()) {
-                item { LiteracyEmptyState() }
-            } else {
-                items(groups, key = { "${it.type}-${it.groupNumber}" }) { group ->
-                    LessonCard(
-                        lesson = group.toLesson(practiceProgress),
-                        onCharacterClick = { index -> onCharacter(group, index) }
-                    )
+                }
+                if (showScrollToTop) Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 24.dp, bottom = 12.dp)
+                        .size(52.dp)
+                        .shadow(8.dp, CircleShape)
+                        .clickable { coroutineScope.launch { listState.animateScrollToItem(0) } },
+                    shape = CircleShape,
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, SkyLight)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "返回顶部", tint = Sky)
+                    }
                 }
             }
-            item { LiteracyBottomNav(Page.HOME, onNavigate) }
-        }
-
-        if (showScrollToTop) Surface(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 24.dp, bottom = 28.dp)
-                .size(52.dp)
-                .shadow(8.dp, CircleShape)
-                .clickable { coroutineScope.launch { listState.animateScrollToItem(0) } },
-            shape = CircleShape,
-            color = Color.White,
-            border = androidx.compose.foundation.BorderStroke(1.dp, SkyLight)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "返回顶部", tint = Sky)
-            }
+            LiteracyBottomNav(Page.HOME, onNavigate)
         }
 
         if (isLoading && groups.isEmpty()) RequestLoadingOverlay()
@@ -971,16 +1013,8 @@ private fun LiteracyEmptyState() {
 }
 
 private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) = Lesson(
-    title = if (isKnown) {
-        recognizedDates.takeIf { it.isNotEmpty() }
-            ?.joinToString(separator = "、") { "${it.monthValue}月${it.dayOfMonth}日" }
-            ?.let { "已认识的字 · $it" }
-            ?: "已认识的字 · 第${groupNumber}组"
-    } else {
-        "待认识的字 · 第${groupNumber}组"
-    },
-    date = recognizedDates.joinToString(separator = "、"),
-    progress = "",
+    title = homeHeading(),
+    dateLabel = homeDateLabel(),
     known = isKnown,
     characters = characters,
     completedCharacterIds = if (isKnown) {
@@ -995,23 +1029,71 @@ private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) 
 )
 
 @Composable
-private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
-    GardenPanel(tint = if (lesson.known) LeafLight else CoralLight, modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GardenArt(if (lesson.known) R.drawable.garden_sprout_shaded else R.drawable.garden_floral_corner, Modifier.size(40.dp))
-            Text(lesson.title, style = MaterialTheme.typography.titleMedium, color = Ink)
-        }
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val columns = gardenGridColumns(maxWidth.value, LocalDensity.current.fontScale)
-            val cell = ((maxWidth - 12.dp * (columns - 1)) / columns).coerceAtMost(132.dp)
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                lesson.characters.chunked(columns).forEachIndexed { rowIndex, row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        row.forEachIndexed { colIndex, char ->
-                            val index = rowIndex * columns + colIndex
-                            GardenCharacterTile(char, Modifier.size(cell),
-                                completed = lesson.characterIds.getOrNull(index) in lesson.completedCharacterIds,
-                                onClick = { onCharacterClick(index) })
+private fun LessonCard(
+    lesson: Lesson,
+    onCharacterClick: (Int) -> Unit,
+    knownCornerIndex: Int,
+    modifier: Modifier = Modifier
+) {
+    val accent = if (lesson.known) Leaf else Coral
+    val frameColor = if (lesson.known) Color(0xFFD9F6A8) else Color(0xFFFFBBAA)
+    val cornerArt = if (!lesson.known) R.drawable.garden_card_corner_sprout else when (knownCornerIndex % 3) {
+        0 -> R.drawable.garden_card_corner_white_a
+        1 -> R.drawable.garden_card_corner_white_b
+        else -> R.drawable.garden_card_corner_pink
+    }
+    val cornerWidth = if (!lesson.known) 118.dp else (120 + knownCornerIndex.coerceAtMost(2) * 3).dp
+    val cornerHeight = if (!lesson.known) 50.dp else (51 + knownCornerIndex.coerceAtMost(2)).dp
+    val cardShape = RoundedCornerShape(24.dp)
+    val innerShape = RoundedCornerShape(20.dp)
+    Surface(modifier, shape = cardShape,
+        color = frameColor,
+        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White), shadowElevation = 4.dp) {
+        Box(Modifier.fillMaxWidth().padding(4.dp).clip(innerShape)
+            .background(Brush.verticalGradient(if (lesson.known) {
+                listOf(Color(0xFFF9FFE9), Color(0xFFEAFBD5))
+            } else {
+                listOf(Color(0xFFFFF8EE), Color(0xFFFFE5DA))
+            })).border(1.dp, Color.White.copy(alpha = .9f), innerShape)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
+                Box(Modifier.fillMaxWidth().heightIn(min = 45.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(end = cornerWidth - 12.dp).heightIn(min = 45.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GardenArt(if (lesson.known) R.drawable.garden_sprout_shaded else R.drawable.garden_tulip,
+                            Modifier.width(40.dp).height(45.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(lesson.title, fontSize = 18.sp, lineHeight = 20.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (lesson.known) Color(0xFF126B20) else Color(0xFFDE432A))
+                            lesson.dateLabel?.let { date ->
+                                Text(date, fontSize = 13.sp, lineHeight = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (lesson.known) Color(0xFF126B20) else Color(0xFFDE432A))
+                            }
+                        }
+                    }
+                    // 角饰不参与标题区测量；高度超过 45 dp 时向上延伸，底边始终贴住分隔线。
+                    Box(Modifier.matchParentSize()) {
+                        // 素材底部含透明留白；下移 5 dp，让可见花草边缘落在分隔线上。
+                        GardenArt(cornerArt, Modifier.align(Alignment.BottomEnd).offset(y = 5.dp)
+                            .width(cornerWidth).height(cornerHeight))
+                    }
+                }
+                HorizontalDivider(color = accent.copy(alpha = .18f), thickness = 1.dp)
+                BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 7.dp)) {
+                    val layout = homeTileLayout(maxWidth.value, LocalDensity.current.fontScale)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        lesson.characters.chunked(layout.columns).forEachIndexed { rowIndex, row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                row.forEachIndexed { colIndex, char ->
+                                    val index = rowIndex * layout.columns + colIndex
+                                    GardenCharacterTile(char, Modifier.width(layout.widthDp.dp).height(layout.heightDp.dp),
+                                        completed = lesson.characterIds.getOrNull(index) in lesson.completedCharacterIds,
+                                        onClick = { onCharacterClick(index) }, fontSize = layout.fontSp.sp,
+                                        cornerRadius = 10.dp, accent = accent)
+                                }
+                            }
                         }
                     }
                 }
@@ -2448,7 +2530,7 @@ internal fun DialogCharacterText(
                     else -> 0.sp
                 },
                 fontWeight = FontWeight.Normal,
-                fontFamily = if (targetType == "character") CharacterFont else androidx.compose.ui.text.font.FontFamily.Default
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Default
             ),
             onTextLayout = { layoutResult = it }
         )
@@ -2561,10 +2643,11 @@ private fun ProfileScreen(
 ) {
     val libraryState by libraryViewModel.uiState.collectAsState()
     LaunchedEffect(userId) { libraryViewModel.load(userId) }
-    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
-        val columns = gardenMenuColumns(maxWidth.value, LocalDensity.current.fontScale)
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 24.dp),
-            verticalArrangement = GardenPrimaryArrangement) {
+    Column(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp)) {
+            val columns = gardenMenuColumns(maxWidth.value, LocalDensity.current.fontScale)
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item { GardenPageHeader("我的小麦仓", "每天一点点，收获更多汉字") }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2601,8 +2684,9 @@ private fun ProfileScreen(
                     row.forEach { menu -> GardenMenuCard(menu, Modifier.weight(1f)) }
                 }
             }
-            item { LiteracyBottomNav(Page.PROFILE, onNavigate) }
+            }
         }
+        LiteracyBottomNav(Page.PROFILE, onNavigate)
     }
 }
 
@@ -3083,7 +3167,7 @@ private fun ParentPassesScreen(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text(record.character, fontFamily = CharacterFont, fontSize = 64.sp, fontWeight = FontWeight.ExtraBold, color = Ink)
+                                Text(record.character, fontSize = 64.sp, fontWeight = FontWeight.ExtraBold, color = Ink)
                                 Spacer(Modifier.width(10.dp))
                                 Text(
                                     if (record.contentSource == ReadingContentSource.RECOGNIZED.wireValue) "已认识字复习" else "待认识字学习",
@@ -3682,7 +3766,7 @@ private fun PendingPhoneticAssetCard(
                 characters.forEachIndexed { index, character ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Surface(shape = CircleShape, color = WheatLight, modifier = Modifier.size(56.dp * LocalDensity.current.fontScale.coerceAtLeast(1f))) {
-                            Box(contentAlignment = Alignment.Center) { Text(character, color = Ink, fontFamily = CharacterFont, fontSize = 32.sp) }
+                            Box(contentAlignment = Alignment.Center) { Text(character, color = Ink, fontSize = 32.sp) }
                         }
                         if (drafts[index] == null) {
                             Text("腾讯不支持指定轻声", color = Color(0xFF748184), fontSize = 16.sp, modifier = Modifier.weight(1f))

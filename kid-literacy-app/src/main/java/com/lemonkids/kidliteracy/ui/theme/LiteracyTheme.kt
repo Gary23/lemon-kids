@@ -9,13 +9,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import com.lemonkids.kidliteracy.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-val CharacterFont = FontFamily(Font(R.font.ma_shan_zheng))
 
 val Wheat = Color(0xFFFFDA4C)
 val WheatLight = Color(0xFFFFF4CD)
