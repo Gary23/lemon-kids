@@ -865,7 +865,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
 private fun LiteracyBottomNav(current: Page, onNavigate: (Page) -> Unit) {
     val unselectedColor = Color(0xFF6D7A89)
     Box(Modifier.fillMaxWidth().padding(bottom = 6.dp), contentAlignment = Alignment.Center) {
-        Surface(Modifier.widthIn(max = if (current == Page.PROFILE) 310.dp else 342.dp).fillMaxWidth(),
+        Surface(Modifier.widthIn(max = 342.dp).fillMaxWidth(),
             shape = CircleShape, color = Background, shadowElevation = 5.dp) {
             Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(Page.HOME to "认字", Page.PROFILE to "我的").forEach { (page, title) ->

@@ -123,8 +123,6 @@ internal fun GardenCharacterTile(character: String, modifier: Modifier = Modifie
         border = BorderStroke(2.dp, if (completed) Leaf else accent), shadowElevation = 3.dp) {
         Box(contentAlignment = Alignment.Center) {
             Text(character, fontSize = fontSize, color = Ink)
-            if (completed) Text("✓", color = Leaf, fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
         }
     }
 }

@@ -1,12 +1,21 @@
 package com.lemonkids.kidliteracy.ui.theme
 
+import androidx.compose.foundation.Indication
+import androidx.compose.foundation.IndicationInstance
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.ripple.LocalRippleTheme
+import androidx.compose.material.ripple.RippleAlpha
+import androidx.compose.material.ripple.RippleTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -59,7 +68,31 @@ private val typography = Typography(
     labelLarge = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold)
 )
 
+private object NoPressIndication : Indication {
+    @Composable
+    override fun rememberUpdatedInstance(interactionSource: InteractionSource): IndicationInstance =
+        object : IndicationInstance {
+            override fun ContentDrawScope.drawIndication() {
+                drawContent()
+            }
+        }
+}
+
+private object NoPressRippleTheme : RippleTheme {
+    @Composable
+    override fun defaultColor(): Color = Color.Transparent
+
+    @Composable
+    override fun rippleAlpha(): RippleAlpha = RippleAlpha(0f, 0f, 0f, 0f)
+}
+
 @Composable
 fun LemonLiteracyTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = colors, shapes = shapes, typography = typography, content = content)
+    MaterialTheme(colorScheme = colors, shapes = shapes, typography = typography) {
+        CompositionLocalProvider(
+            LocalIndication provides NoPressIndication,
+            LocalRippleTheme provides NoPressRippleTheme,
+            content = content
+        )
+    }
 }
