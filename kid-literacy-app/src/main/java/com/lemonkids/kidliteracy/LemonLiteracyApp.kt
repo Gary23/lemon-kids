@@ -100,6 +100,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -1521,9 +1522,30 @@ private fun CharacterStudyDialog(
 
     // 正在评测时也必须允许退出。ReadingDialog 被移除时会在 DisposableEffect 中取消并释放 SDK，
     // 避免一次没有回包的评测把整个字词句弹层永久锁住。
-    GardenDialogFrame("${card.word}的朗读练习", "长按汉字可听正确读音", onDismiss, tint = SkyLight) {
-                    item { StudySectionHeader("字", "先认识这个字") }
-                    item(key = card.character.target.practiceProgressKey()) {
+    StudyDialogFrame(card.word, onDismiss, footer = {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            passErrorMessage?.let { Text(it, color = Coral, fontSize = 13.sp) }
+            Button(
+                onClick = {
+                    if (!isPassing && !card.completed) showPassConfirmation = true
+                },
+                enabled = !isPassing && !card.completed,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).background(Leaf, CircleShape),
+                colors = ButtonDefaults.buttonColors(containerColor = Leaf),
+                shape = CircleShape
+            ) {
+                if (isPassing) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(9.dp))
+                    Text("正在记录…")
+                } else {
+                    Text(if (card.completed) "已满星" else "通过", fontSize = 25.sp, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+    }) {
+                    StudySectionHeader("字", "先认识这个字")
+                    key(card.character.target.practiceProgressKey()) {
                         StudyPracticeItem(
                             content = card.character,
                             activeTarget = activeTarget,
@@ -1537,24 +1559,9 @@ private fun CharacterStudyDialog(
                             onCorrectReadings = onCorrectReadings
                         )
                     }
-                    item { StudySectionHeader("词", "一词一行，逐个练习") }
-                    items(card.terms, key = { it.target.practiceProgressKey() }) { content ->
-                        StudyPracticeItem(
-                            content = content,
-                            activeTarget = activeTarget,
-                            otherRecordingActive = isActivePracticeLocked(),
-                            onStart = { start(content) },
-                            onDismiss = { activeTarget = null; activeRecordingState = null },
-                            onReadingStateChanged = { activeRecordingState = it },
-                            onSpeak = onSpeak,
-                            onStopPlayback = onStopPlayback,
-                            onCharacterAudioPointRead = onCharacterAudioPointRead,
-                            onCorrectReadings = onCorrectReadings
-                        )
-                    }
-                    if (card.sentences.isNotEmpty()) {
-                        item { StudySectionHeader("句", "读一读完整的句子") }
-                        items(card.sentences, key = { it.target.practiceProgressKey() }) { content ->
+                    StudySectionHeader("词", "一词一行，逐个练习")
+                    card.terms.forEach { content ->
+                        key(content.target.practiceProgressKey()) {
                             StudyPracticeItem(
                                 content = content,
                                 activeTarget = activeTarget,
@@ -1569,32 +1576,25 @@ private fun CharacterStudyDialog(
                             )
                         }
                     }
-        item(key = "study-pass") {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                HorizontalDivider(modifier = Modifier.padding(top = 10.dp, bottom = 8.dp), color = Line)
-                passErrorMessage?.let {
-                    Text(it, color = Coral, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
-                }
-                Button(
-                    onClick = {
-                        if (isPassing || card.completed) return@Button
-                        showPassConfirmation = true
-                    },
-                    enabled = !isPassing && !card.completed,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-                    shape = CircleShape
-                ) {
-                    if (isPassing) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(9.dp))
-                        Text("正在记录…")
-                    } else {
-                        Text(if (card.completed) "已满星" else "通过")
+                    if (card.sentences.isNotEmpty()) {
+                        StudySectionHeader("句", "读一读完整的句子")
+                        card.sentences.forEach { content ->
+                            key(content.target.practiceProgressKey()) {
+                                StudyPracticeItem(
+                                    content = content,
+                                    activeTarget = activeTarget,
+                                    otherRecordingActive = isActivePracticeLocked(),
+                                    onStart = { start(content) },
+                                    onDismiss = { activeTarget = null; activeRecordingState = null },
+                                    onReadingStateChanged = { activeRecordingState = it },
+                                    onSpeak = onSpeak,
+                                    onStopPlayback = onStopPlayback,
+                                    onCharacterAudioPointRead = onCharacterAudioPointRead,
+                                    onCorrectReadings = onCorrectReadings
+                                )
+                            }
+                        }
                     }
-                }
-            }
-        }
     }
 
     if (showPassConfirmation) {
@@ -1647,10 +1647,15 @@ private fun StudySectionHeader(title: String, subtitle: String) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Surface(shape = RoundedCornerShape(9.dp), color = WheatLight) {
-            Text(title, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), color = Ink, fontWeight = FontWeight.ExtraBold)
+        Surface(shape = RoundedCornerShape(14.dp), color = if (title == "字") CoralLight else LeafLight) {
+            Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                GardenArt(R.drawable.garden_sprout_shaded, Modifier.size(28.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(title, color = if (title == "字") Coral else Leaf,
+                    fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+            }
         }
-        Text(subtitle, color = Color(0xFF7C898D), fontSize = 18.sp)
+        Text(subtitle, color = Color(0xFF637393), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         HorizontalDivider(modifier = Modifier.weight(1f), color = Line)
     }
 }
@@ -1711,11 +1716,12 @@ private fun StudyContentRow(
         else -> Sky
     }
     StudyPracticeRow(completed = content.learned, accent = accent, contentPressed = isContentPressed,
+        readingWidth = when (content.target.targetType) { "character" -> 85.dp; "word" -> 115.dp; else -> null },
         actionLabel = "开始", actionEnabled = !otherRecordingActive, onAction = onStart,
         stars = { StudyStarRail(content.correctReadings, content.requiredReadings) },
-        dots = { PracticeRecordingDots(active = false, color = accent) },
+        dots = {},
         reading = {
-            DialogReadingContent(target = content.target, enabled = true, pointReadCharacterIndex = pointReadCharacterIndex,
+            DialogReadingContent(target = content.target, enabled = true, studyInline = true, pointReadCharacterIndex = pointReadCharacterIndex,
                 onPressChanged = { isContentPressed = it },
                     onLongPress = { character, characterIndex ->
                         val target = content.target
@@ -1751,7 +1757,8 @@ private fun StudyContentRow(
 private fun StudyStarRail(correctReadings: Int, requiredReadings: Int) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((-2).dp)) {
         repeat(requiredReadings) { index ->
-            Text(if (index < correctReadings) "★" else "☆", color = Wheat, fontSize = 24.sp, lineHeight = 24.sp)
+            Text(if (index < correctReadings) "★" else "☆", color = if (index < correctReadings) Color(0xFFFFC83D) else Color(0xFF86A7D5),
+                fontSize = 21.sp, lineHeight = 21.sp)
         }
     }
 }
@@ -1900,7 +1907,9 @@ private fun ReadingDialog(
                         message = "“${readingTarget.displayText}”完成，点击下一词继续"
                     } else {
                         evaluationSummary = summary
-                        message = if (correctReadingsThisAttempt > 0) {
+                        message = if (inline && (correctReadingsThisAttempt > 0 || summary.wrongCharacterIndexes.isNotEmpty())) {
+                            ""
+                        } else if (correctReadingsThisAttempt > 0) {
                             if (displayedCorrectReadingCount >= target.requiredCorrectReadings()) {
                                 "太棒啦，这一项读完了！"
                             } else if (target.targetType == "character") {
@@ -1908,8 +1917,10 @@ private fun ReadingDialog(
                             } else {
                                 "读对啦！再读 ${target.requiredCorrectReadings() - displayedCorrectReadingCount} 次就完成。"
                             }
+                        } else if (summary.wrongCharacterIndexes.isNotEmpty()) {
+                            ""
                         } else {
-                            "这次还没有点亮星星，看看红色的字，再读一次吧。"
+                            "这次评测未识别出有效朗读，请重试"
                         }
                     }
                 }
@@ -2053,6 +2064,7 @@ private fun ReadingDialog(
         else -> SkyLight
     }
     val isWaitingForResult = state == RecordingState.EVALUATING
+    val hasWrongCharacters = evaluationSummary?.wrongCharacterIndexes?.isNotEmpty() == true
     val hasCompletedCurrentTarget = displayedCorrectReadingCount >= target.requiredCorrectReadings()
     // 只在当前弹窗生命期内保留点读高亮；关闭后自然还原，绝不写入学习状态。
     var pointReadCharacterIndex by remember(target) { mutableStateOf<Int?>(null) }
@@ -2115,6 +2127,7 @@ private fun ReadingDialog(
         state == RecordingState.FINISHED && hasCompletedCurrentTarget -> "完成"
         state == RecordingState.FINISHED && isWordGroup && currentWordIndex < wordTargets.lastIndex -> "下一词"
         state == RecordingState.FINISHED && isWordGroup -> "再读一遍"
+        state == RecordingState.FINISHED && hasWrongCharacters -> "重试"
         state == RecordingState.FINISHED -> "开始"
         state == RecordingState.ERROR -> "重试"
         else -> "开始"
@@ -2218,38 +2231,27 @@ private fun InlineReadingPracticeRow(
     val completed = correctReadingCount >= requiredReadingCount
     val panelAccent = when {
         completed -> Leaf
-        state == RecordingState.RECORDING || state == RecordingState.EVALUATING -> Coral
-        wrongCharacterIndexes.isNotEmpty() -> Coral
+        state == RecordingState.PREPARING || state == RecordingState.RECORDING || state == RecordingState.EVALUATING -> Sky
+        wrongCharacterIndexes.isNotEmpty() -> StudyErrorBorder
         else -> Sky
     }
-    StudyPracticeRow(completed = completed, accent = panelAccent, actionAccent = accent,
+    StudyPracticeRow(completed = completed, accent = panelAccent,
         contentPressed = contentPressed, actionLabel = actionLabel, actionEnabled = actionEnabled,
-        message = message, isError = state == RecordingState.ERROR, onAction = onAction,
+        message = message, isError = state == RecordingState.ERROR || wrongCharacterIndexes.isNotEmpty(),
+        showHintBelowDots = state == RecordingState.PREPARING || state == RecordingState.RECORDING || state == RecordingState.EVALUATING,
+        readingWidth = when (target.targetType) { "character" -> 85.dp; "word" -> 115.dp; else -> null },
+        onAction = onAction,
         stars = { StudyStarRail(correctReadingCount, requiredReadingCount) },
-        dots = { PracticeRecordingDots(active = state == RecordingState.RECORDING || state == RecordingState.EVALUATING, color = accent) },
+        dots = { PracticeRecordingDots(active = state == RecordingState.PREPARING || state == RecordingState.RECORDING || state == RecordingState.EVALUATING) },
         reading = {
-            DialogReadingContent(target = target, enabled = true, wrongCharacterIndexes = wrongCharacterIndexes,
+            DialogReadingContent(target = target, enabled = true, studyInline = true, wrongCharacterIndexes = wrongCharacterIndexes,
                 pointReadCharacterIndex = pointReadCharacterIndex, onPressChanged = onPressChanged, onLongPress = onLongPress)
         })
 }
 
 @Composable
-private fun PracticeRecordingDots(active: Boolean, color: Color, visible: Boolean = true) {
-    if (active) {
-        Box(Modifier.width(80.dp).height(18.dp).graphicsLayer { alpha = if (visible) 1f else 0f }) {
-            RecordingAnimation(color)
-        }
-    } else {
-        Row(
-            modifier = Modifier.width(80.dp).height(18.dp).graphicsLayer { alpha = if (visible) 1f else 0f },
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            repeat(5) {
-                Surface(shape = CircleShape, color = color.copy(alpha = .32f), modifier = Modifier.size(12.dp)) {}
-            }
-        }
-    }
+private fun PracticeRecordingDots(active: Boolean) {
+    if (active) RecordingAnimation(Sky, large = true)
 }
 
 @Composable
@@ -2268,12 +2270,13 @@ private fun ReadingDialogContainer(
 }
 
 @Composable
-private fun RecordingAnimation(color: Color) {
+private fun RecordingAnimation(color: Color, large: Boolean = false) {
     val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "recording")
     // 圆点始终占用相同空间，只在自己的图层内缩放，避免把下方按钮来回顶动。
+    val dotSize = if (large) 24.dp else 12.dp
     Row(
-        modifier = Modifier.width(80.dp).height(18.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier.width(if (large) 152.dp else 80.dp).height(if (large) 28.dp else 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (large) 8.dp else 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(5) { index ->
@@ -2292,7 +2295,7 @@ private fun RecordingAnimation(color: Color) {
             Surface(
                 shape = CircleShape,
                 color = color,
-                modifier = Modifier.size(12.dp).graphicsLayer {
+                modifier = Modifier.size(dotSize).graphicsLayer {
                     scaleX = scale
                     scaleY = scale
                 }
@@ -2332,6 +2335,7 @@ private fun PracticeProgressRating(
 private fun DialogReadingContent(
     target: ReadingTarget,
     enabled: Boolean,
+    studyInline: Boolean = false,
     activeWordIndex: Int? = null,
     wordSummaries: List<EvaluationSummary?> = emptyList(),
     wrongCharacterIndexes: Set<Int> = emptySet(),
@@ -2345,6 +2349,7 @@ private fun DialogReadingContent(
             target = target.displayText,
             targetType = target.targetType,
             enabled = enabled,
+            studyInline = studyInline,
             wrongCharacterIndexes = wrongCharacterIndexes,
             pointReadCharacterIndexes = pointReadCharacterIndex?.let(::setOf).orEmpty(),
             onPressChanged = onPressChanged,
@@ -2436,6 +2441,7 @@ internal fun DialogCharacterText(
     target: String,
     targetType: String? = null,
     enabled: Boolean = true,
+    studyInline: Boolean = false,
     wrongCharacterIndexes: Set<Int> = emptySet(),
     pointReadCharacterIndexes: Set<Int> = emptySet(),
     modifier: Modifier = Modifier,
@@ -2445,7 +2451,8 @@ internal fun DialogCharacterText(
     val isSentence = targetType == "sentence"
     val text = buildAnnotatedString {
         target.forEachIndexed { index, character ->
-            val color = if (character.isChineseCharacter() && index in wrongCharacterIndexes) EvaluationErrorRed else Ink
+            val color = if (character.isChineseCharacter() && index in wrongCharacterIndexes)
+                (if (studyInline) StudyErrorText else EvaluationErrorRed) else Ink
             // 点读高亮独立于错读样式：即使该字此前读错，也不改变错误红的语义。
             val background = when {
                 index in pointReadCharacterIndexes -> Sky.copy(alpha = .42f)
@@ -2470,7 +2477,7 @@ internal fun DialogCharacterText(
     // 句子将文本块置于内容区中央，但固定一个略小于内容区的阅读宽度，
     // 让换行后的每一行从同一条左边线开始，读起来更自然。
     Box(
-        modifier = modifier.fillMaxWidth().padding(18.dp),
+        modifier = modifier.fillMaxWidth().padding(if (studyInline) 5.dp else 18.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -2520,16 +2527,19 @@ internal fun DialogCharacterText(
                 textAlign = if (isSentence) TextAlign.Start else TextAlign.Center,
                 // 朗读弹层是孩子跟读时的主视觉：词、句需要明显大于普通正文，
                 // 句子保留较小一级以便较长内容在平板上自然换行。
-                fontSize = when (targetType) {
-                    "word" -> 40.sp
-                    "sentence" -> 34.sp
+                fontSize = when {
+                    studyInline && targetType == "word" -> 32.sp
+                    studyInline && targetType == "sentence" -> 22.sp
+                    studyInline -> 44.sp
+                    targetType == "word" -> 40.sp
+                    targetType == "sentence" -> 34.sp
                     else -> if (target.count { it.isChineseCharacter() } == 1) 68.sp else 34.sp
                 },
                 letterSpacing = when (targetType) {
                     "word", "sentence" -> 1.5.sp
                     else -> 0.sp
                 },
-                fontWeight = FontWeight.Normal,
+                fontWeight = if (studyInline) FontWeight.Bold else FontWeight.Normal,
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Default
             ),
             onTextLayout = { layoutResult = it }

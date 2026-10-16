@@ -39,9 +39,11 @@ class StudyPracticeRowTest {
         var phase by mutableIntStateOf(0)
         lateinit var list: LazyListState
         var actions = 0
+        var minimumGapPx = 0f
         compose.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, scale)) {
+                minimumGapPx = with(LocalDensity.current) { 8.dp.toPx() }
                 LemonLiteracyTheme {
                     list = rememberLazyListState()
                     LazyColumn(state = list, modifier = Modifier.width(width.dp).height(520.dp)) {
@@ -65,8 +67,10 @@ class StudyPracticeRowTest {
         }
         compose.onNodeWithTag("practice-row").performScrollTo()
         compose.waitForIdle()
-        val tags = listOf("practice-row", "practice-content", "practice-stars", "practice-reading", "practice-controls", "practice-action-slot", "practice-message")
+        val tags = listOf("practice-content", "practice-stars", "practice-reading", "practice-controls", "practice-action-slot")
+        compose.onNodeWithTag("practice-message", useUnmergedTree = true).assertDoesNotExist()
         val bounds = tags.associateWith { compose.onNodeWithTag(it, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot }
+        assertTrue("星星框与文字框应留有间距", bounds.getValue("practice-reading").left - bounds.getValue("practice-stars").right >= minimumGapPx)
         val index = list.firstVisibleItemIndex
         val offset = list.firstVisibleItemScrollOffset
         compose.onNodeWithTag("practice-action").performClick()
@@ -77,6 +81,11 @@ class StudyPracticeRowTest {
             tags.forEach { tag ->
                 assertEquals("phase=$next tag=$tag", bounds.getValue(tag), compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot)
             }
+            val stars = compose.onNodeWithTag("practice-stars", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val reading = compose.onNodeWithTag("practice-reading", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue("phase=$next 星星框与文字框应留有间距", reading.left - stars.right >= minimumGapPx)
+            if (next == 5) compose.onNodeWithTag("practice-message", useUnmergedTree = true).assertDoesNotExist()
+            else compose.onNodeWithTag("practice-message", useUnmergedTree = true).assertExists()
             assertEquals("phase=$next list index", index, list.firstVisibleItemIndex)
             assertEquals("phase=$next list offset", offset, list.firstVisibleItemScrollOffset)
             if (next == 1 || next == 3) {
