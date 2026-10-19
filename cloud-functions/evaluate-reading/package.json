@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "pinyin-pro": "^3.27.0",
+    "tencentcloud-sdk-nodejs-cls": "^4.1.319",
     "tencentcloud-sdk-nodejs-scf": "^4.1.168",
     "tencentcloud-sdk-nodejs-sts": "^4.1.15"
   }

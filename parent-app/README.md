@@ -17,6 +17,7 @@
 | 勋章进度 | `feature/profile/BadgeProgressScreen.kt`、`BadgeLevelDetails.kt`；按孩子维护专项勋章累计数量并查看等级详情 |
 | 使用监管 | `feature/monitor/MonitorScreen.kt`、`MonitorViewModel.kt` |
 | 家庭、分类、回收站、日志 | `feature/profile/` |
+| 认字诊断记录与字段说明 | `feature/profile/ReadingDiagnosticScreen.kt`、`ReadingDiagnosticGuide.kt` |
 | 奖励管理 | `feature/profile/RewardManageScreen.kt`、`RewardManageViewModel.kt`；经 `:shared` 奖励仓库维护家庭奖励目录 |
 
 ## 任务约束
@@ -42,6 +43,10 @@
 - 新增或编辑奖励时可从相册选择一张静态 JPEG、PNG 或 WebP 图片，预览后保存，也可替换或移除；图片会缩至最长边不超过 1600 像素并转为不超过 5 MB 的 JPEG，WebP 原文件和动画不会保留。列表及再次编辑时优先显示上传图片，无图或加载失败时显示浅灰色图片区；读取失败可重试，读取或上传失败会提示错误，保存失败不写入失效图片路径。图片只对本家庭已登录成员可读，仅本家庭家长可上传或删除。上线前须先部署 `../supabase/sql/20261004_reward_images.sql` 的字段与私有存储桶迁移。
 
 ## 路由与跨端约束
+
+- “我的 > 认字诊断记录”按当前家庭的孩子查看近 24 小时最多 50 条未通过朗读记录。进入及重新可见时加载，可手动刷新；页面可见时每 15 秒刷新，显示设备本地时间的上次刷新时间。切换孩子会清空旧孩子记录。CLS 投递可能延迟；空列表只表示本次未查到匹配记录，查询失败与未配置服务分别提示。
+- 记录列出字、词、句目标、标红字和中文判定原因，详情保留腾讯逐项评分与可复制的评测原文。旧记录或原文不可用时说明原因。“字段说明”页解释腾讯官方已定义的字段、枚举及特殊值并提供官方链接，同时区分柠檬认字生成的原因代码。`PronAccuracy=-1` 表示腾讯判为完全不匹配，不能据此认定孩子未开口；腾讯 `Word` 也不是实际语音转写。
+- 查询经 `evaluate-reading` 云函数验证家长身份和家庭关系，只返回所选孩子的受限诊断内容；客户端不持有 CLS 密钥。依赖认字端上报 `READING_EVAL_FAILED`、现有 SCF 日志投递至可检索的 CLS 主题、`LITERACY_CLS_TOPIC_ID` 和现有 CAM 身份的 `cls:SearchLog` 权限。详见 [`evaluate-reading` 部署说明](../cloud-functions/evaluate-reading/README.md)。
 
 - 未登录依次使用 `login`、`register`、`create_family` 路由；已登录进入 `main`。
 - 主 Tab 为 `tasks`、`alarm`、`monitor`、`profile`。闹钟是独立页签，不能放入监控页；编辑、家庭管理、分类、回收站和设备日志都是子路由。

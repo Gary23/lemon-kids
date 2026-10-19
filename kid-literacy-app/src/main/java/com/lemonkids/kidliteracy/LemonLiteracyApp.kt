@@ -1889,6 +1889,18 @@ private fun ReadingDialog(
                     controller?.release()
                     controller = null
                     val summary = parseTencentEvaluationSummary(msg, evaluationText, readingTarget.targetType)
+                    if (summary.wrongCharacterIndexes.isNotEmpty()) {
+                        val diagnostic = extractTencentDiagnostic(msg, evaluationText)
+                        val rawEvaluation = prepareTencentEvaluationDiagnostic(msg)
+                        scope.launch {
+                            evaluationViewModel.recordFailedDiagnostic(
+                                readingTarget, java.util.UUID.randomUUID().toString(),
+                                summary.wrongCharacterIndexes, evaluationReference.textMode,
+                                evaluationText.length, diagnostic.first, diagnostic.second,
+                                rawEvaluation.first, rawEvaluation.second
+                            )
+                        }
+                    }
                     wordSummaries[wordIndex] = summary
                     state = RecordingState.FINISHED
                     val correctReadingsThisAttempt = if (readingTarget.targetType == "character") {
@@ -2578,6 +2590,57 @@ private fun parseTencentEvaluationSummary(
         wrongCharacterIndexes = wrongCharacterIndexes,
         targetType = targetType
     )
+}
+
+/** 保留腾讯已知评分字段；Word 是腾讯返回字段，不是实际语音转写。 */
+private fun extractTencentDiagnostic(response: String, expectedText: String): Pair<JsonArray, List<String>> {
+    val words = runCatching { Json.parseToJsonElement(response).firstTencentWords().orEmpty() }.getOrDefault(emptyList())
+    val fields = listOf("Word", "PronAccuracy", "MatchTag", "PronFluency", "PronCompletion", "TotalScore")
+    val safeWords = words.take(80).map { word ->
+        JsonObject(fields.mapNotNull { field ->
+            word.stringValue(field, field.replaceFirstChar { it.lowercase() })
+                ?.take(120)?.let { field to JsonPrimitive(it) }
+        }.toMap())
+    }
+    val reasons = buildSet {
+        if (words.isEmpty()) add("missing_words")
+        words.forEach { word ->
+            if (word.stringValue("PronAccuracy", "pronAccuracy")?.toDoubleOrNull()
+                    ?.toPercentScore()?.let { it < 60.0 } == true) add("low_pron_accuracy")
+            if (word.stringValue("PronAccuracy", "pronAccuracy")?.toDoubleOrNull() == null &&
+                word.stringValue("MatchTag", "matchTag")?.toIntOrNull()?.let { it != 0 } == true)
+                add("match_tag_fallback")
+        }
+        if (words.sumOf { it.stringValue("Word", "word").orEmpty().count(Char::isChineseCharacter) } <
+            expectedText.count(Char::isChineseCharacter) && words.isNotEmpty()) add("unreturned_expected_characters")
+        if (words.any { word ->
+                val returned = word.stringValue("Word", "word").orEmpty().filter(Char::isChineseCharacter)
+                returned.isNotEmpty() && !expectedText.contains(returned)
+            }) add("mapping_uncertain")
+    }
+    return JsonArray(safeWords) to reasons.toList()
+}
+
+/** 保留腾讯回调的评测结构；凭证和音频等非评测内容不得写入诊断日志。 */
+private fun prepareTencentEvaluationDiagnostic(response: String): Pair<JsonObject?, String> {
+    val root = runCatching { Json.parseToJsonElement(response) as? JsonObject }.getOrNull()
+        ?: return null to "invalid_json"
+    var redacted = false
+    val forbidden = Regex("(?i)(secret|token|credential|authorization|password|audio|voice|base64|payload|private.?key|access.?key)")
+    fun clean(value: JsonElement, depth: Int): JsonElement {
+        if (depth > 24) return JsonPrimitive("[depth limit]").also { redacted = true }
+        return when (value) {
+            is JsonObject -> JsonObject(value.mapNotNull { (key, child) ->
+                if (forbidden.containsMatchIn(key)) { redacted = true; null }
+                else key to clean(child, depth + 1)
+            }.toMap())
+            is JsonArray -> JsonArray(value.map { clean(it, depth + 1) })
+            else -> value
+        }
+    }
+    val safe = clean(root, 0) as JsonObject
+    if (safe.toString().toByteArray(Charsets.UTF_8).size > 64 * 1024) return null to "too_large"
+    return safe to if (redacted) "redacted" else "complete"
 }
 
 /**

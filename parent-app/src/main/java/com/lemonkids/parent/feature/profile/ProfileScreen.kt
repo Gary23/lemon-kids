@@ -55,6 +55,7 @@ fun ProfileScreen(
     onBadgeProgressClick: () -> Unit,
     onRecycleBinClick: () -> Unit,
     onDeviceStatusLogClick: () -> Unit,
+    onReadingDiagnosticClick: () -> Unit,
     authViewModel: AuthViewModel = hiltViewModel()
 ) {
     val uiState by authViewModel.uiState.collectAsState()
@@ -271,6 +272,17 @@ fun ProfileScreen(
                     Column {
                         Text("设备日志", fontWeight = FontWeight.Bold)
                         Text("查看孩子端状态上报", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth().clickable { onReadingDiagnosticClick() }) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text("认字诊断记录", fontWeight = FontWeight.Bold)
+                        Text("查看孩子朗读评测未通过记录", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

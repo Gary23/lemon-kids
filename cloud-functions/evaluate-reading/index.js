@@ -7,6 +7,8 @@
  * - issue_credentials：验证 Supabase JWT 后签发短期腾讯临时凭证。凭证在认字页内
  *   复用，参考文本仍由客户端从已授权读取的教学内容中按当前字、词、句单独传给腾讯。
  * - issue_session：旧版客户端兼容接口；同时校验指定教学内容并签发短期凭证。
+ * - record_failed_reading_diagnostic：鉴权并核对教学目标后，输出失败评测诊断日志。
+ * - list_failed_reading_diagnostics：核对家长家庭关系后，从 CLS 查询最近诊断日志。
  * - record_help_request：按被长按的字是否属于对应字库，记录孩子请求朗读的动作。
  * - get_literacy_practice_progress / record_literacy_practice_progress：读写当天字、词、句朗读进度，供同码多设备同步。
  * - record_parent_pass / undo_parent_pass：记录家长手动通过前的星级并同步补满；撤销时按快照精确恢复。
@@ -26,6 +28,7 @@ const scf = require('tencentcloud-sdk-nodejs-scf');
 const ScfClient = scf.scf.v20180416.Client;
 const { pinyin } = require('pinyin-pro');
 const crypto = require('crypto');
+const ClsClient = require('tencentcloud-sdk-nodejs-cls').cls.v20201016.Client;
 
 const SUPABASE_URL = requiredEnv('SUPABASE_URL').replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
@@ -926,6 +929,129 @@ async function loadTarget(childId, literacyCharacterId, targetType, sentenceText
   };
 }
 
+function diagnosticChildHash(childId) {
+  return crypto.createHash('sha256').update(`reading-diagnostic:${childId}`).digest('hex');
+}
+
+function diagnosticLogObjects(value) {
+  if (typeof value === 'string') {
+    const start = value.indexOf('{');
+    if (start < 0) return [];
+    try { return diagnosticLogObjects(JSON.parse(value.slice(start))); } catch (_) { return []; }
+  }
+  if (!value || typeof value !== 'object') return [];
+  if (Array.isArray(value)) return value.flatMap(diagnosticLogObjects);
+  // CLS 的结构化字段可能同时存在 event 与 SCF_Message。以后者的原始业务事件为准，
+  // 但只有完整匹配固定事件名和孩子哈希的对象才会进入返回值。
+  return ['SCF_Message', 'message', 'content', '__CONTENT__', 'LogJson', 'RawLog']
+    .flatMap(key => diagnosticLogObjects(value[key])).concat(value);
+}
+
+const DIAGNOSTIC_RAW_MAX_BYTES = 64 * 1024;
+const DIAGNOSTIC_SECRET_KEY = /secret|token|credential|authorization|password|audio|voice|base64|payload|private.?key|access.?key/i;
+
+function safeTencentEvaluation(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { status: 'invalid_json' };
+  let redacted = false;
+  function clean(node, depth) {
+    if (depth > 24) { redacted = true; return '[depth limit]'; }
+    if (Array.isArray(node)) return node.map(item => clean(item, depth + 1));
+    if (node && typeof node === 'object') {
+      return Object.fromEntries(Object.entries(node).flatMap(([key, item]) => {
+        if (DIAGNOSTIC_SECRET_KEY.test(key)) { redacted = true; return []; }
+        return [[key, clean(item, depth + 1)]];
+      }));
+    }
+    return node;
+  }
+  const raw = clean(value, 0);
+  if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > DIAGNOSTIC_RAW_MAX_BYTES) return { status: 'too_large' };
+  return { status: redacted ? 'redacted' : 'complete', raw };
+}
+
+function validateDiagnostic(body, target) {
+  if (Buffer.byteLength(JSON.stringify(body), 'utf8') > 80 * 1024) throw new HttpError(413, '诊断数据过大');
+  if (typeof body.attemptId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.attemptId)) throw new HttpError(400, 'attemptId 无效');
+  if (!Number.isInteger(body.itemOrder) || body.itemOrder < 0 || body.itemOrder > 50) throw new HttpError(400, 'itemOrder 无效');
+  if (target.targetType !== 'character' && target.examples[0]?.sortOrder !== body.itemOrder) throw new HttpError(400, '教学内容顺序不符');
+  if (target.targetType === 'character' && body.itemOrder !== 0) throw new HttpError(400, '主字顺序无效');
+  const length = target.targetType === 'character' ? target.targetText.length * 10 : target.targetText.length;
+  if (!Number.isInteger(body.evaluationTextLength) || body.evaluationTextLength < target.targetText.length || body.evaluationTextLength > length) throw new HttpError(400, '参考文本长度无效');
+  if (![0, 1].includes(body.textMode)) throw new HttpError(400, 'textMode 无效');
+  if (!Array.isArray(body.wrongCharacterIndexes) || body.wrongCharacterIndexes.length < 1 || body.wrongCharacterIndexes.length > 80 ||
+      body.wrongCharacterIndexes.some(i => !Number.isInteger(i) || i < 0 || i >= body.evaluationTextLength)) throw new HttpError(400, '标红位置无效');
+  const reasons = ['low_pron_accuracy', 'match_tag_fallback', 'missing_words', 'unreturned_expected_characters', 'mapping_uncertain'];
+  if (!Array.isArray(body.failureReason) || body.failureReason.length < 1 || body.failureReason.some(r => !reasons.includes(r))) throw new HttpError(400, '判定原因无效');
+  const fields = ['Word', 'PronAccuracy', 'MatchTag', 'PronFluency', 'PronCompletion', 'TotalScore'];
+  if (!Array.isArray(body.words) || body.words.length > 80 || body.words.some(w => !w || typeof w !== 'object' || Array.isArray(w) ||
+      Object.keys(w).some(k => !fields.includes(k) || typeof w[k] !== 'string' || w[k].length > 120))) throw new HttpError(400, '腾讯逐项数据无效');
+  const raw = body.rawEvaluation === undefined ? null : safeTencentEvaluation(body.rawEvaluation);
+  const clientStatus = body.rawEvaluationStatus;
+  const absentStatus = ['invalid_json', 'too_large'].includes(clientStatus) ? clientStatus : 'unavailable';
+  return { wrongCharacterIndexes: [...new Set(body.wrongCharacterIndexes)].sort((a, b) => a - b),
+    failureReason: [...new Set(body.failureReason)], words: body.words,
+    rawEvaluation: raw?.raw,
+    rawEvaluationStatus: !raw ? absentStatus : raw.status === 'complete' && clientStatus === 'redacted'
+      ? 'redacted' : raw.status };
+}
+
+async function listFailedDiagnostics(parentId, body) {
+  if (typeof body.childId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.childId)) throw new HttpError(400, 'childId 无效');
+  const rows = await supabase(`users?uid=in.(${encodeURIComponent(`${parentId},${body.childId}`)})&select=uid,role,family_id`);
+  const parent = rows.find(row => row.uid === parentId);
+  const child = rows.find(row => row.uid === body.childId);
+  if (parent?.role !== 'parent' || !parent.family_id || child?.role !== 'child' || child.family_id !== parent.family_id) throw new HttpError(403, '没有查看该孩子记录的权限');
+  const topicId = process.env.LITERACY_CLS_TOPIC_ID;
+  if (!topicId) throw new HttpError(503, '诊断日志查询服务尚未配置');
+  const hash = diagnosticChildHash(body.childId);
+  const client = new ClsClient({ credential: { secretId: STS_SECRET_ID, secretKey: STS_SECRET_KEY }, region: TENCENT_REGION });
+  const now = Date.now();
+  let result;
+  try {
+    result = await client.SearchLog({ TopicId: topicId, From: now - 86400000, To: now,
+      // childHash 位于 SCF_Message 的 JSON 字符串内；部分 CLS 索引不会把整段哈希
+      // 作为可检索词。先按事件检索，再在服务端严格核对孩子哈希。
+      QueryString: 'READING_EVAL_FAILED', Limit: 1000, Sort: 'desc' });
+  } catch (error) {
+    // SDK 异常可能包含请求参数和凭证；仅记录可用于腾讯云定位的安全字段。
+    const safeField = value => typeof value === 'string' && /^[\w.-]{1,120}$/.test(value) ? value : undefined;
+    console.error(JSON.stringify({ event: 'READING_DIAGNOSTIC_CLS_SEARCH_FAILED',
+      code: safeField(error?.code) || 'unknown', requestId: safeField(error?.requestId) || undefined }));
+    throw new HttpError(503, '诊断日志查询服务暂不可用');
+  }
+  const counts = { returned: 0, parsed: 0, eventMatched: 0, childMatched: 0 };
+  const shapes = { scfMessage: 0, content: 0, rootEvent: 0, other: 0 };
+  const records = (result.Results || []).flatMap(row => {
+    counts.returned++;
+    try {
+      const raw = row.LogJson || row.RawLog || '';
+      const log = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      counts.parsed++;
+      if (log && typeof log === 'object' && !Array.isArray(log)) {
+        if ('SCF_Message' in log) shapes.scfMessage++;
+        else if ('content' in log || '__CONTENT__' in log || 'message' in log) shapes.content++;
+        else if ('event' in log) shapes.rootEvent++;
+        else shapes.other++;
+      } else shapes.other++;
+      const data = diagnosticLogObjects(log).find(item => item.event === 'READING_EVAL_FAILED');
+      if (!data) return [];
+      counts.eventMatched++;
+      if (data.childHash !== hash) return [];
+      counts.childMatched++;
+      const evaluation = data.rawEvaluation === undefined ? null : safeTencentEvaluation(data.rawEvaluation);
+      return [{ time: data.time, attemptId: data.attemptId, targetType: data.targetType,
+        targetText: data.targetText, itemOrder: data.itemOrder, contentSource: data.contentSource,
+        wrongCharacterIndexes: data.wrongCharacterIndexes, failureReason: data.failureReason,
+        textMode: data.textMode, words: data.words,
+        rawEvaluation: evaluation?.raw,
+        rawEvaluationStatus: evaluation ? (evaluation.status === 'complete' && data.rawEvaluationStatus === 'redacted'
+          ? 'redacted' : evaluation.status) : (data.rawEvaluationStatus || 'not_saved') }];
+    } catch (_) { return []; }
+  });
+  if (records.length === 0) console.info(JSON.stringify({ event: 'READING_DIAGNOSTIC_CLS_EMPTY', ...counts, shapes }));
+  return records.slice(0, 50);
+}
+
 async function prepareEvaluation(childId, body) {
   const target = await loadTarget(
     childId,
@@ -1611,6 +1737,22 @@ async function handler(event) {
     return response(200, { generated });
   }
   const childId = await authenticatedChild(event);
+  if (body.action === 'list_failed_reading_diagnostics') {
+    return response(200, { records: await listFailedDiagnostics(childId, body) });
+  }
+  if (body.action === 'record_failed_reading_diagnostic') {
+    const target = await loadTarget(childId, body.literacyCharacterId, body.targetType, body.sentenceText, body.wordText, body.contentSource);
+    const diagnostic = validateDiagnostic(body, target);
+    console.info(JSON.stringify({ event: 'READING_EVAL_FAILED', time: new Date().toISOString(),
+      childHash: diagnosticChildHash(childId), attemptId: body.attemptId, targetType: target.targetType,
+      targetText: target.targetText, contentSource: target.contentSource, itemOrder: body.itemOrder,
+      wrongCharacterIndexes: diagnostic.wrongCharacterIndexes, failureReason: diagnostic.failureReason,
+      decisionVersion: 'pron-accuracy-60-v1', textMode: body.textMode,
+      evaluationTextLength: body.evaluationTextLength, words: diagnostic.words,
+      rawEvaluationStatus: diagnostic.rawEvaluationStatus,
+      ...(diagnostic.rawEvaluation ? { rawEvaluation: diagnostic.rawEvaluation } : {}) }));
+    return response(201, { status: 'recorded' });
+  }
   if (body.action === 'issue_credentials') {
     const sts = await issueStsCredentials();
     return response(200, {
@@ -1792,5 +1934,7 @@ exports._private = {
   normalizeParentPassStarSnapshot,
   requireUuid,
   parentPassProgressEntries,
-  isSameChinaDay
+  isSameChinaDay,
+  validateDiagnostic,
+  diagnosticChildHash
 };
