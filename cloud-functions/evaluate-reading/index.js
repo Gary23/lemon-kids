@@ -237,12 +237,24 @@ function stripMarkdownCodeFence(text) {
 }
 
 function parseDeepSeekJson(content) {
-  if (typeof content !== 'string' || !content.trim()) throw new Error('DeepSeek 未返回生成内容');
+  if (typeof content !== 'string' || !content.trim()) throw generationFormatError('DeepSeek 未返回生成内容');
   try {
     return JSON.parse(stripMarkdownCodeFence(content));
   } catch (_) {
-    throw new Error('DeepSeek 返回的不是 JSON');
+    throw generationFormatError('DeepSeek 返回的不是 JSON');
   }
+}
+
+function generationFormatError(message) {
+  const error = new Error(message);
+  error.generationFailureCategory = 'format';
+  return error;
+}
+
+function exampleValueType(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
 }
 
 function deepSeekContentOrError(responseBody) {
@@ -273,15 +285,18 @@ function retryConstraintPrompt(previousError, previousContent) {
     [...previousError.matchAll(/“([\u4E00-\u9FFF])”的(?:词语|句子)/g)].map((match) => match[1])
   )];
   const hasForbiddenCharacters = forbiddenCharacters.length > 0;
+  const hasFormatError = previousError.includes('格式不正确') || previousError.includes('必须包含 text');
   return [
     '【服务端硬性修复指令】上一次 JSON 已被逐字校验拒绝，不能原样重复。',
-    hasForbiddenCharacters
+    hasFormatError
+      ? `拒绝原因：${previousError}。句子必须使用 {"text":"完整句子"} 对象，不能省略 text 字段。`
+      : hasForbiddenCharacters
       ? `本轮输出中严禁出现这些字：${forbiddenCharacters.join('、')}。${rejectedCharacters.length ? `请重写目标字“${rejectedCharacters.join('、')}”的违规内容。` : ''}不要复用上一次的违规词句。`
       : `拒绝原因：${previousError}`,
     '重新生成时仍须提供有学习意义的词句。不要把单独的目标字同时当作词语和句子；绝不能为了通顺加入字库外汉字。',
     '必须输出一个新的完整 JSON 对象；输出前逐字检查：words 不应含字库外汉字，sentence 最多可含 2 个字库外汉字。',
     // 对于字库外字，不把原句再次贴进上下文。模型会强烈倾向复制它，反而更难修复。
-    hasForbiddenCharacters ? '' : `上次被拒绝的 JSON：\n${previousContent || '（无可用 JSON，请完整重写）'}`
+    hasForbiddenCharacters || hasFormatError ? '' : `上次被拒绝的 JSON：\n${previousContent || '（无可用 JSON，请完整重写）'}`
   ].filter(Boolean).join('\n');
 }
 
@@ -297,18 +312,25 @@ function outOfLibraryChineseCharacters(text, allowedCharacters) {
   );
 }
 
-function textForExample(rawExample, label) {
+function textForExample(rawExample, label, { allowString = false } = {}) {
+  if (allowString && typeof rawExample === 'string') {
+    const text = rawExample.trim();
+    if (!text) throw generationFormatError(`${label}格式不正确（sentence=string，text=empty）`);
+    return { text };
+  }
   if (!rawExample || typeof rawExample !== 'object' || Array.isArray(rawExample)) {
-    throw new Error(`${label}必须包含 text`);
+    throw generationFormatError(`${label}格式不正确（字段类型=${exampleValueType(rawExample)}，text=missing）：必须包含 text`);
   }
   const text = typeof rawExample.text === 'string' ? rawExample.text.trim() : '';
-  if (!text) throw new Error(`${label}不能为空`);
+  if (!text) {
+    throw generationFormatError(`${label}格式不正确（字段类型=object，text=${typeof rawExample.text === 'string' ? 'empty' : exampleValueType(rawExample.text)}）`);
+  }
   return { text };
 }
 
 function validateGeneratedTasks(payload, requestedCharacters, allowedCharacters, options = {}) {
-  const { allowOutOfLibraryWords = false } = options;
-  if (!payload || !Array.isArray(payload.items)) throw new Error('返回中缺少 items 数组');
+  const { allowOutOfLibraryWords = false, allowStringSentence = false } = options;
+  if (!payload || !Array.isArray(payload.items)) throw generationFormatError('返回中缺少 items 数组（字段类型=' + exampleValueType(payload?.items) + '）');
   if (payload.items.length !== requestedCharacters.length) {
     throw new Error(`返回的任务数量不正确：需要 ${requestedCharacters.length} 条，实际 ${payload.items.length} 条`);
   }
@@ -323,7 +345,7 @@ function validateGeneratedTasks(payload, requestedCharacters, allowedCharacters,
     // 包含对应目标字，避免把不相关的内容写入该字的学习任务。
     // 仅保留可显示的字符串；空词不写入任务。
     const words = Array.isArray(item.words) ? item.words : [];
-    const sentence = textForExample(item.sentence, `“${character}”的句子`);
+    const sentence = textForExample(item.sentence, `“${character}”的句子`, { allowString: allowStringSentence });
     const normalizedWords = words
       .map((word) => textForExample(word, `“${character}”的词语`));
     for (const word of normalizedWords) {
@@ -371,25 +393,27 @@ function literacyTaskQualitySummary(tasks) {
  */
 function collectValidGeneratedTasks(payload, requestedCharacters, allowedCharacters) {
   if (!payload || !Array.isArray(payload.items)) {
-    throw new Error('返回中缺少 items 数组');
+    throw generationFormatError('返回中缺少 items 数组（字段类型=' + exampleValueType(payload?.items) + '）');
   }
   const validTasks = new Map();
   const errors = [];
+  let failureCategory = '';
   for (const item of payload.items) {
     const character = typeof item?.character === 'string' ? item.character : '';
     if (!requestedCharacters.includes(character) || validTasks.has(character)) continue;
     try {
-      const [task] = validateGeneratedTasks({ items: [item] }, [character], allowedCharacters);
+      const [task] = validateGeneratedTasks({ items: [item] }, [character], allowedCharacters, { allowStringSentence: true });
       validTasks.set(character, task);
     } catch (error) {
       errors.push(error.message || `“${character || '未知'}”生成内容不合规`);
+      if (!failureCategory) failureCategory = error.generationFailureCategory || 'content';
     }
   }
   const missingCharacters = requestedCharacters.filter((character) => !validTasks.has(character));
   if (missingCharacters.length && !errors.length) {
     errors.push(`未返回目标字“${missingCharacters.join('、')}”的内容`);
   }
-  return { validTasks, missingCharacters, error: errors[0] || '' };
+  return { validTasks, missingCharacters, error: errors[0] || '', failureCategory: failureCategory || (missingCharacters.length ? 'format' : '') };
 }
 
 /**
@@ -407,7 +431,7 @@ function collectWordFallbackTasks(payload, requestedCharacters, allowedCharacter
         { items: [item] },
         [character],
         allowedCharacters,
-        { allowOutOfLibraryWords: true }
+        { allowOutOfLibraryWords: true, allowStringSentence: true }
       );
       if (task.words.some((word) => outOfLibraryChineseCharacters(word.text, allowedCharacters).length)) {
         fallbackTasks.set(character, task);
@@ -489,13 +513,16 @@ async function generateWithDeepSeek(requestedCharacters, allowedCharacters) {
 
   // 首次仍批量生成，先尽量减少 API 调用；合规项立即保留。
   let firstFailure = '';
+  let firstFailureCategory = '';
   let firstContent = '';
+  const unresolvedFailureCategories = new Map();
   const wordFallbackTasks = new Map();
   try {
     const { content, collected, wordFallbackTasks: initialFallbackTasks } = await requestTasks(requestedCharacters, 1);
     for (const [character, task] of collected.validTasks) completedTasks.set(character, task);
     for (const [character, task] of initialFallbackTasks) wordFallbackTasks.set(character, task);
     firstFailure = collected.error;
+    firstFailureCategory = collected.failureCategory;
     firstContent = content.slice(0, 12_000);
     if (!collected.missingCharacters.length) {
       return requestedCharacters.map((character) => completedTasks.get(character));
@@ -504,12 +531,14 @@ async function generateWithDeepSeek(requestedCharacters, allowedCharacters) {
   } catch (error) {
     if (error instanceof HttpError) throw error;
     firstFailure = error.message || '生成内容不符合约束';
+    firstFailureCategory = error.generationFailureCategory || 'content';
     console.warn(`DeepSeek 第 1 次结果未通过校验：${firstFailure}`);
   }
 
   // 不合规字逐个重试，避免一个字反复失败时让已合规字或其他待生成字陪同重试。
   retryCharacters: for (const character of requestedCharacters.filter((item) => !completedTasks.has(item))) {
     let previousError = firstFailure || `未返回目标字“${character}”的内容`;
+    let previousFailureCategory = firstFailureCategory || 'format';
     let previousContent = firstContent;
     let generated = false;
     for (let retry = 1; retry <= DEEPSEEK_PER_CHARACTER_RETRY_COUNT; retry += 1) {
@@ -529,15 +558,18 @@ async function generateWithDeepSeek(requestedCharacters, allowedCharacters) {
           break;
         }
         previousError = collected.error || `未返回目标字“${character}”的内容`;
+        previousFailureCategory = collected.failureCategory || 'format';
         previousContent = content.slice(0, 12_000);
       } catch (error) {
         if (error instanceof HttpError) throw error;
         previousError = error.message || '生成内容不符合约束';
+        previousFailureCategory = error.generationFailureCategory || 'content';
         previousContent = '';
       }
       console.warn(`DeepSeek “${character}”第 ${attempt} 次结果未通过校验：${previousError}`);
     }
     if (!generated) {
+      unresolvedFailureCategories.set(character, previousFailureCategory);
       const wordFallbackTask = wordFallbackTasks.get(character);
       if (wordFallbackTask) {
         completedTasks.set(character, wordFallbackTask);
@@ -547,12 +579,18 @@ async function generateWithDeepSeek(requestedCharacters, allowedCharacters) {
           .join('、');
         console.warn(`DeepSeek “${character}”已完成 ${DEEPSEEK_PER_CHARACTER_RETRY_COUNT + 1} 次生成尝试；词语“${outOfLibraryWords}”仍含字库外汉字，按规则采用最后一版结果`);
       } else {
-        console.warn(`DeepSeek “${character}”已完成 ${DEEPSEEK_PER_CHARACTER_RETRY_COUNT + 1} 次生成尝试，仍未得到句子至多含两个字库外汉字的可用内容`);
+        console.warn(`DeepSeek “${character}”已完成 ${DEEPSEEK_PER_CHARACTER_RETRY_COUNT + 1} 次生成尝试，最后失败类别=${previousFailureCategory}`);
       }
     }
   }
   if (completedTasks.size === requestedCharacters.length) {
     return requestedCharacters.map((character) => completedTasks.get(character));
+  }
+  for (const character of requestedCharacters.filter((item) => !completedTasks.has(item))) {
+    if (!unresolvedFailureCategories.has(character)) unresolvedFailureCategories.set(character, firstFailureCategory || 'format');
+  }
+  if ([...unresolvedFailureCategories.values()].includes('format')) {
+    throw new HttpError(422, '生成内容格式不正确，请稍后重试');
   }
   throw new HttpError(422, '未能生成符合字库范围的词句，请稍后重试或先扩充字库');
 }
@@ -1915,6 +1953,8 @@ exports.main_handler = async (event) => {
 };
 
 exports._private = {
+  previewGeneratedLiteracyTasks,
+  validateGeneratedTasks,
   loadHelpedCharacter,
   reusableHelpTask,
   previewHelpedCharacter,

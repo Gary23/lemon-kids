@@ -2901,14 +2901,10 @@ private fun GenerateLiteracyTasksDialog(
                     label = { Text("要添加的汉字") }, placeholder = { Text("例如：春夏秋冬") },
                     supportingText = { Text("支持空格、顿号或逗号分隔；去重后一次最多 12 个字") },
                     isError = characters.isNotBlank() && inputResult.error != null, shape = RoundedCornerShape(20.dp))
-                Text("每个字生成词语和句子。词语优先使用字库里的字加本次输入字；句子允许少量字库外生字，不限制字数。", color = Ink)
             }
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                preview?.knownCharacters?.takeIf { it.isNotEmpty() }?.let {
-                    GardenMetricStrip("以下汉字已在字库中，仍已生成内容，可按需要删除：${it.joinToString("、")}")
-                }
                 preview?.skippedExistingCharacters?.takeIf { it.isNotEmpty() }?.let {
                     GardenMetricStrip("已存在待认识任务，不会覆盖：${it.joinToString("、")}")
                 }
