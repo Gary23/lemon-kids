@@ -1018,7 +1018,8 @@ function validateDiagnostic(body, target) {
   if (![0, 1].includes(body.textMode)) throw new HttpError(400, 'textMode 无效');
   if (!Array.isArray(body.wrongCharacterIndexes) || body.wrongCharacterIndexes.length < 1 || body.wrongCharacterIndexes.length > 80 ||
       body.wrongCharacterIndexes.some(i => !Number.isInteger(i) || i < 0 || i >= body.evaluationTextLength)) throw new HttpError(400, '标红位置无效');
-  const reasons = ['low_pron_accuracy', 'match_tag_fallback', 'missing_words', 'unreturned_expected_characters', 'mapping_uncertain'];
+  const reasons = ['low_pron_accuracy', 'match_tag_fallback', 'nonzero_match_tag', 'missing_match_tag',
+    'missing_words', 'unreturned_expected_characters', 'mapping_uncertain'];
   if (!Array.isArray(body.failureReason) || body.failureReason.length < 1 || body.failureReason.some(r => !reasons.includes(r))) throw new HttpError(400, '判定原因无效');
   const fields = ['Word', 'PronAccuracy', 'MatchTag', 'PronFluency', 'PronCompletion', 'TotalScore'];
   if (!Array.isArray(body.words) || body.words.length > 80 || body.words.some(w => !w || typeof w !== 'object' || Array.isArray(w) ||
@@ -1785,7 +1786,7 @@ async function handler(event) {
       childHash: diagnosticChildHash(childId), attemptId: body.attemptId, targetType: target.targetType,
       targetText: target.targetText, contentSource: target.contentSource, itemOrder: body.itemOrder,
       wrongCharacterIndexes: diagnostic.wrongCharacterIndexes, failureReason: diagnostic.failureReason,
-      decisionVersion: 'pron-accuracy-60-v1', textMode: body.textMode,
+      decisionVersion: 'match-tag-0-pron-accuracy-60-50-30-v2', textMode: body.textMode,
       evaluationTextLength: body.evaluationTextLength, words: diagnostic.words,
       rawEvaluationStatus: diagnostic.rawEvaluationStatus,
       ...(diagnostic.rawEvaluation ? { rawEvaluation: diagnostic.rawEvaluation } : {}) }));

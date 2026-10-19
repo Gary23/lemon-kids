@@ -20,6 +20,12 @@ test('只接受与教学内容相符的失败评测摘要', () => {
   assert.throws(() => _private.validateDiagnostic({ ...body, words: Array(81).fill({ Word: '花' }) }, target));
 });
 
+test('接受新的匹配失败原因并兼容旧日志原因', () => {
+  for (const reason of ['nonzero_match_tag', 'missing_match_tag', 'match_tag_fallback']) {
+    assert.deepEqual(_private.validateDiagnostic({ ...body, failureReason: [reason] }, target).failureReason, [reason]);
+  }
+});
+
 test('腾讯评测 JSON 保留层级和数值，并剔除敏感及音频字段', () => {
   const rawEvaluation = { Result: { TotalScore: 56.5, Words: [{ Word: '花', PronAccuracy: 42 }] },
     Token: 'private-token', nested: { AudioData: 'private-audio', RefText: '花朵' } };

@@ -1894,7 +1894,7 @@ private fun ReadingDialog(
                     controller = null
                     val summary = parseTencentEvaluationSummary(msg, evaluationText, readingTarget.targetType)
                     if (summary.wrongCharacterIndexes.isNotEmpty()) {
-                        val diagnostic = extractTencentDiagnostic(msg, evaluationText)
+                        val diagnostic = extractTencentDiagnostic(msg, evaluationText, readingTarget.targetType)
                         val rawEvaluation = prepareTencentEvaluationDiagnostic(msg)
                         scope.launch {
                             evaluationViewModel.recordFailedDiagnostic(
@@ -2571,8 +2571,8 @@ internal fun DialogCharacterText(
 private fun Char.isChineseCharacter(): Boolean = this in '\u4E00'..'\u9FFF'
 
 /**
- * SDK 回调的内容只保留在当前弹层。当前 TEXT_MODE=0 的实际回调中，错读时 MatchTag
- * 仍可能为 0，不能作为正误依据；优先按逐字 PronAccuracy 判定，缺少分数时才回退 MatchTag。
+ * SDK 回调的内容只保留在当前弹层。MatchTag=0 仅表示与参考文本匹配，
+ * 仍须检查逐项 PronAccuracy；非 0 或缺失均不通过。
  */
 private fun parseTencentEvaluationSummary(
     response: String,
@@ -2588,7 +2588,7 @@ private fun parseTencentEvaluationSummary(
         // 回调本身没有有效逐词结果时不给出“读对”的假反馈。
         expectedCharacterIndexes.toSet()
     } else {
-        words.toWrongCharacterIndexes(expectedText, expectedCharacterIndexes)
+        words.toWrongCharacterIndexes(expectedText, expectedCharacterIndexes, targetType)
     }
     return EvaluationSummary(
         wrongCharacterIndexes = wrongCharacterIndexes,
@@ -2597,7 +2597,7 @@ private fun parseTencentEvaluationSummary(
 }
 
 /** 保留腾讯已知评分字段；Word 是腾讯返回字段，不是实际语音转写。 */
-private fun extractTencentDiagnostic(response: String, expectedText: String): Pair<JsonArray, List<String>> {
+internal fun extractTencentDiagnostic(response: String, expectedText: String, targetType: String): Pair<JsonArray, List<String>> {
     val words = runCatching { Json.parseToJsonElement(response).firstTencentWords().orEmpty() }.getOrDefault(emptyList())
     val fields = listOf("Word", "PronAccuracy", "MatchTag", "PronFluency", "PronCompletion", "TotalScore")
     val safeWords = words.take(80).map { word ->
@@ -2608,12 +2608,14 @@ private fun extractTencentDiagnostic(response: String, expectedText: String): Pa
     }
     val reasons = buildSet {
         if (words.isEmpty()) add("missing_words")
-        words.forEach { word ->
+        words.filter { it.stringValue("Word", "word").orEmpty().any(Char::isChineseCharacter) }.forEach { word ->
             if (word.stringValue("PronAccuracy", "pronAccuracy")?.toDoubleOrNull()
-                    ?.toPercentScore()?.let { it < 60.0 } == true) add("low_pron_accuracy")
-            if (word.stringValue("PronAccuracy", "pronAccuracy")?.toDoubleOrNull() == null &&
-                word.stringValue("MatchTag", "matchTag")?.toIntOrNull()?.let { it != 0 } == true)
-                add("match_tag_fallback")
+                    ?.toPercentScore()?.let { it < readingPronunciationThreshold(targetType) } == true) add("low_pron_accuracy")
+            when (word.stringValue("MatchTag", "matchTag")?.toIntOrNull()) {
+                0 -> Unit
+                null -> add("missing_match_tag")
+                else -> add("nonzero_match_tag")
+            }
         }
         if (words.sumOf { it.stringValue("Word", "word").orEmpty().count(Char::isChineseCharacter) } <
             expectedText.count(Char::isChineseCharacter) && words.isNotEmpty()) add("unreturned_expected_characters")
@@ -2651,9 +2653,10 @@ private fun prepareTencentEvaluationDiagnostic(response: String): Pair<JsonObjec
  * 腾讯会按字或词返回 Words。优先按返回文字在教学文本中的位置映射；识别字与参考字
  * 不一致时，回退为顺序映射，才能把“把甲读成乙”正确标红到教学文本中的甲。
  */
-private fun List<JsonObject>.toWrongCharacterIndexes(
+internal fun List<JsonObject>.toWrongCharacterIndexes(
     expectedText: String,
-    expectedCharacterIndexes: List<Int>
+    expectedCharacterIndexes: List<Int>,
+    targetType: String
 ): Set<Int> {
     val expectedCharacters = expectedCharacterIndexes.joinToString("") { expectedText[it].toString() }
     var expectedCursor = 0
@@ -2668,7 +2671,7 @@ private fun List<JsonObject>.toWrongCharacterIndexes(
             val characterStart = if (matchedStart >= 0) matchedStart else expectedCursor
             val mappedIndexes = expectedCharacterIndexes.drop(characterStart).take(returnedCharacters.length)
             expectedCursor = (characterStart + returnedCharacters.length).coerceAtMost(expectedCharacterIndexes.size)
-            if (resultWord.isPronunciationWrong()) addAll(mappedIndexes)
+            if (resultWord.isPronunciationWrong(targetType)) addAll(mappedIndexes)
         }
         // 对重复字朗读，“花花”不能通过参考文本“花花花”的第三次。腾讯未返回的
         // 参考字同样视为未读对；这也会让词、句漏读时维持原有的“不加星”行为。
@@ -2691,7 +2694,13 @@ private fun JsonElement.firstTencentWords(): List<JsonObject>? = when (this) {
     else -> null
 }
 
-private fun JsonObject.isPronunciationWrong(): Boolean {
+internal fun readingPronunciationThreshold(targetType: String): Double = when (targetType) {
+    "word" -> 50.0
+    "sentence" -> 30.0
+    else -> 60.0
+}
+
+internal fun JsonObject.isPronunciationWrong(targetType: String): Boolean {
     val word = stringValue("Word", "word")
     val characterCount = word?.count { it.isChineseCharacter() } ?: 0
     // TEXT_MODE=1 的结果可能在正式文本前包含 Word="*" 的额外音段。这些音段不映射
@@ -2699,15 +2708,9 @@ private fun JsonObject.isPronunciationWrong(): Boolean {
     if (characterCount == 0) return false
     val matchTag = stringValue("MatchTag", "matchTag")?.toIntOrNull()
     val pronunciationAccuracy = stringValue("PronAccuracy", "pronAccuracy")?.toDoubleOrNull()
-    val isWrong = when {
-        // SDK 会返回 0~1 或 0~100 两种量纲，统一为百分制后以 60 分作为读对阈值。
-        // TEXT_MODE=0 仍会有声学波动，不能用过低阈值掩盖；后续应切到携带指定拼音的
-        // TEXT_MODE=1，从根本提高单字评测的稳定性。
-        pronunciationAccuracy != null -> pronunciationAccuracy.toPercentScore() < 60.0
-        matchTag != null -> matchTag != 0
-        else -> false
-    }
-    return isWrong
+    // MatchTag=0 是必要条件，不能单独证明发音正确。腾讯分数缺失时沿用匹配回退。
+    return matchTag != 0 ||
+        (pronunciationAccuracy != null && pronunciationAccuracy.toPercentScore() < readingPronunciationThreshold(targetType))
 }
 
 private fun Double.toPercentScore(): Double = if (this <= 1.0) this * 100 else this
