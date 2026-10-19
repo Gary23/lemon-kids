@@ -864,20 +864,21 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
 
 @Composable
 private fun LiteracyBottomNav(current: Page, onNavigate: (Page) -> Unit) {
+    val scale = LocalGardenLayoutScale.current
     val unselectedColor = Color(0xFF6D7A89)
     Box(Modifier.fillMaxWidth().padding(bottom = 6.dp), contentAlignment = Alignment.Center) {
-        Surface(Modifier.widthIn(max = 342.dp).fillMaxWidth(),
+        Surface(Modifier.widthIn(max = 342.dp * scale).fillMaxWidth(),
             shape = CircleShape, color = Background, shadowElevation = 5.dp) {
             Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(Page.HOME to "认字", Page.PROFILE to "我的").forEach { (page, title) ->
                     val selected = current == page
-                    Surface(Modifier.weight(1f).heightIn(min = 48.dp).semantics { this.selected = selected; role = Role.Tab }.clickable { onNavigate(page) },
+                    Surface(Modifier.weight(1f).heightIn(min = 48.dp * scale).semantics { this.selected = selected; role = Role.Tab }.clickable { onNavigate(page) },
                         shape = CircleShape, color = if (selected) SkyLight else Color.Transparent,
                         border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, Color.White) else null) {
                         Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                             Icon(if (page == Page.HOME) Icons.Default.Home else Icons.Default.Person, null, tint = if (selected) Sky else unselectedColor)
                             Spacer(Modifier.width(8.dp))
-                            Text(title, color = if (selected) Sky else unselectedColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text(title, color = if (selected) Sky else unselectedColor, fontSize = 18.sp * scale, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -888,36 +889,37 @@ private fun LiteracyBottomNav(current: Page, onNavigate: (Page) -> Unit) {
 
 @Composable
 private fun HomePageHeader(childName: String, isLoading: Boolean, onRefresh: () -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = 102.dp)) {
+    val scale = LocalGardenLayoutScale.current
+    BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = 102.dp * scale)) {
         val compact = maxWidth < 690.dp || LocalDensity.current.fontScale > 1.3f
         Row(
             Modifier.fillMaxWidth().padding(start = if (compact) 0.dp else 80.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            GardenArt(R.drawable.garden_logo_lemon, Modifier.size(if (compact) 42.dp else 56.dp))
+            GardenArt(R.drawable.garden_logo_lemon, Modifier.size((if (compact) 42.dp else 56.dp) * scale))
             Spacer(Modifier.width(8.dp))
-            Column(Modifier.widthIn(max = if (compact) 175.dp else 256.dp)) {
-                Text("柠檬认字", color = Ink, fontSize = if (compact) 28.sp else 36.sp,
+            Column(Modifier.widthIn(max = (if (compact) 175.dp else 256.dp) * scale)) {
+                Text("柠檬认字", color = Ink, fontSize = (if (compact) 28.sp else 36.sp) * scale,
                     fontWeight = FontWeight.ExtraBold, maxLines = 1)
                 Text("$childName，和小麦一起认识新朋友", color = Color(0xFF687D9F),
-                    fontSize = if (compact) 14.sp else 16.sp, maxLines = 2)
+                    fontSize = (if (compact) 14.sp else 16.sp) * scale, maxLines = 2)
             }
             Spacer(Modifier.width(12.dp))
             Surface(onClick = onRefresh, enabled = !isLoading,
-                modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 48.dp),
+                modifier = Modifier.widthIn(min = 96.dp * scale).heightIn(min = 48.dp * scale),
                 shape = CircleShape, color = Color(0xFFDDF3FF).copy(alpha = .84f),
                 border = androidx.compose.foundation.BorderStroke(2.dp, Color.White)) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                     Icon(Icons.Default.Refresh, contentDescription = null, tint = Sky)
                     Spacer(Modifier.width(4.dp))
-                    Text("刷新", fontSize = 18.sp, color = Sky)
+                    Text("刷新", fontSize = 18.sp * scale, color = Sky)
                 }
             }
             if (!compact) {
                 Spacer(Modifier.width(12.dp))
-                GardenArt(R.drawable.garden_mascot_welcome, Modifier.size(112.dp))
+                GardenArt(R.drawable.garden_mascot_welcome, Modifier.size(112.dp * scale))
             }
         }
     }
@@ -936,9 +938,10 @@ private fun HomeScreen(
     val listState = rememberLazyListState()
     val showScrollToTop by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
     val coroutineScope = rememberCoroutineScope()
+    val scale = LocalGardenLayoutScale.current
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val contentWidth = (maxWidth - 32.dp).coerceAtMost(815.dp)
+        val contentWidth = gardenContentWidth((maxWidth - 32.dp).value, 815f, scale).dp
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(
@@ -1041,6 +1044,7 @@ private fun LessonCard(
     knownCornerIndex: Int,
     modifier: Modifier = Modifier
 ) {
+    val scale = LocalGardenLayoutScale.current
     val accent = if (lesson.known) Leaf else Coral
     val frameColor = if (lesson.known) Color(0xFFD9F6A8) else Color(0xFFFFBBAA)
     val cornerArt = if (!lesson.known) R.drawable.garden_card_corner_sprout else when (knownCornerIndex % 3) {
@@ -1048,8 +1052,8 @@ private fun LessonCard(
         1 -> R.drawable.garden_card_corner_white_b
         else -> R.drawable.garden_card_corner_pink
     }
-    val cornerWidth = if (!lesson.known) 118.dp else (120 + knownCornerIndex.coerceAtMost(2) * 3).dp
-    val cornerHeight = if (!lesson.known) 50.dp else (51 + knownCornerIndex.coerceAtMost(2)).dp
+    val cornerWidth = (if (!lesson.known) 118.dp else (120 + knownCornerIndex.coerceAtMost(2) * 3).dp) * scale
+    val cornerHeight = (if (!lesson.known) 50.dp else (51 + knownCornerIndex.coerceAtMost(2)).dp) * scale
     val cardShape = RoundedCornerShape(24.dp)
     val innerShape = RoundedCornerShape(20.dp)
     Surface(modifier, shape = cardShape,
@@ -1061,19 +1065,19 @@ private fun LessonCard(
             } else {
                 listOf(Color(0xFFFFF8EE), Color(0xFFFFE5DA))
             })).border(1.dp, Color.White.copy(alpha = .9f), innerShape)) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
-                Box(Modifier.fillMaxWidth().heightIn(min = 45.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(end = cornerWidth - 12.dp).heightIn(min = 45.dp),
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp * scale, vertical = 12.dp * scale)) {
+                Box(Modifier.fillMaxWidth().heightIn(min = 45.dp * scale)) {
+                    Row(Modifier.fillMaxWidth().padding(end = cornerWidth - 12.dp * scale).heightIn(min = 45.dp * scale),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         GardenArt(if (lesson.known) R.drawable.garden_sprout_shaded else R.drawable.garden_tulip,
-                            Modifier.width(40.dp).height(45.dp))
+                            Modifier.width(40.dp * scale).height(45.dp * scale))
                         Column(Modifier.weight(1f)) {
-                            Text(lesson.title, fontSize = 18.sp, lineHeight = 20.sp,
+                            Text(lesson.title, fontSize = 18.sp * scale, lineHeight = 20.sp * scale,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = if (lesson.known) Color(0xFF126B20) else Color(0xFFDE432A))
                             lesson.dateLabel?.let { date ->
-                                Text(date, fontSize = 13.sp, lineHeight = 16.sp,
+                                Text(date, fontSize = 13.sp * scale, lineHeight = 16.sp * scale,
                                     fontWeight = FontWeight.Bold,
                                     color = if (lesson.known) Color(0xFF126B20) else Color(0xFFDE432A))
                             }
@@ -1088,16 +1092,16 @@ private fun LessonCard(
                 }
                 HorizontalDivider(color = accent.copy(alpha = .18f), thickness = 1.dp)
                 BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 7.dp)) {
-                    val layout = homeTileLayout(maxWidth.value, LocalDensity.current.fontScale)
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val layout = homeTileLayout(maxWidth.value, LocalDensity.current.fontScale, scale)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp * scale)) {
                         lesson.characters.chunked(layout.columns).forEachIndexed { rowIndex, row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp * scale)) {
                                 row.forEachIndexed { colIndex, char ->
                                     val index = rowIndex * layout.columns + colIndex
                                     GardenCharacterTile(char, Modifier.width(layout.widthDp.dp).height(layout.heightDp.dp),
                                         completed = lesson.characterIds.getOrNull(index) in lesson.completedCharacterIds,
                                         onClick = { onCharacterClick(index) }, fontSize = layout.fontSp.sp,
-                                        cornerRadius = 10.dp, accent = accent)
+                                        cornerRadius = 10.dp * scale, accent = accent)
                                 }
                             }
                         }
@@ -1192,7 +1196,7 @@ private fun LearnScreen(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 900.dp)
+                    .widthIn(max = 900.dp * LocalGardenLayoutScale.current)
                     .aspectRatio(A4_PAPER_WIDTH_TO_HEIGHT),
                 shape = RoundedCornerShape(16.dp),
                 color = Color.White,
@@ -2170,7 +2174,7 @@ private fun ReadingDialog(
                 onAction = ::performAction
             )
         } else Card(
-            modifier = Modifier.widthIn(max = 500.dp).padding(24.dp),
+            modifier = Modifier.widthIn(max = 500.dp * LocalGardenLayoutScale.current).padding(24.dp),
             shape = RoundedCornerShape(32.dp),
             colors = CardDefaults.cardColors(containerColor = Background)
         ) {
@@ -2720,11 +2724,12 @@ private fun ProfileScreen(
     libraryViewModel: LibraryViewModel = hiltViewModel()
 ) {
     val libraryState by libraryViewModel.uiState.collectAsState()
+    val scale = LocalGardenLayoutScale.current
     LaunchedEffect(userId) { libraryViewModel.load(userId) }
     Column(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp),
             contentAlignment = Alignment.TopCenter) {
-            val contentWidth = maxWidth.coerceAtMost(720.dp)
+            val contentWidth = maxWidth.coerceAtMost(720.dp * scale)
             val columns = gardenMenuColumns(contentWidth.value, LocalDensity.current.fontScale)
             val menus = listOf(
                 GardenMenu("已认识的字", "看看我已经掌握了哪些字", R.drawable.garden_entry_book, Coral,
@@ -2747,11 +2752,11 @@ private fun ProfileScreen(
                     if (columns == 2) {
                         Row(verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            ProfileIdentityCard(childName, avatarUrl, Modifier.width(350.dp))
+                            ProfileIdentityCard(childName, avatarUrl, Modifier.width(350.dp * scale))
                             if (libraryState.hasLocalData) {
-                                ProfileMetricCard(libraryState.characters.size.toString(), Modifier.width(138.dp))
+                                ProfileMetricCard(libraryState.characters.size.toString(), Modifier.width(138.dp * scale))
                             }
-                            GardenArt(R.drawable.garden_mascot_welcome, Modifier.size(116.dp))
+                            GardenArt(R.drawable.garden_mascot_welcome, Modifier.size(116.dp * scale))
                         }
                     } else {
                         ProfileIdentityCard(childName, avatarUrl, Modifier.fillMaxWidth())
@@ -2773,7 +2778,8 @@ private fun ProfileScreen(
 
 @Composable
 private fun ProfileIdentityCard(childName: String, avatarUrl: String?, modifier: Modifier) {
-    ProfileDecoratedCard(modifier.heightIn(min = 108.dp), Color(0xFFFFFCF6), Color(0xFFFFFDF5), Color(0xFFFFCCAC)) {
+    val scale = LocalGardenLayoutScale.current
+    ProfileDecoratedCard(modifier.heightIn(min = 108.dp * scale), Color(0xFFFFFCF6), Color(0xFFFFFDF5), Color(0xFFFFCCAC)) {
         Image(painterResource(R.drawable.profile_floral_corner), null,
             Modifier.align(Alignment.BottomStart).padding(start = 5.dp, bottom = 5.dp)
                 .width(148.dp).height(31.dp), contentScale = ContentScale.FillBounds)
@@ -2787,11 +2793,11 @@ private fun ProfileIdentityCard(childName: String, avatarUrl: String?, modifier:
             AsyncImage(model = avatarUrl, contentDescription = "$childName 的头像",
                 placeholder = painterResource(R.drawable.garden_avatar_child), error = painterResource(R.drawable.garden_avatar_child),
                 fallback = painterResource(R.drawable.garden_avatar_child), contentScale = ContentScale.Crop,
-                modifier = Modifier.size(84.dp).clip(CircleShape).border(3.dp, Wheat, CircleShape))
+                modifier = Modifier.size(84.dp * scale).clip(CircleShape).border(3.dp, Wheat, CircleShape))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(childName, modifier = Modifier.weight(1f, fill = false),
-                        color = Ink, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                        color = Ink, fontSize = 24.sp * scale, fontWeight = FontWeight.ExtraBold)
                     GardenArt(R.drawable.garden_study_rays, Modifier.size(28.dp))
                 }
                 Text("今天也在认真认识汉字呀！", color = Color(0xFF687D9F), fontSize = 14.sp)
@@ -2802,11 +2808,12 @@ private fun ProfileIdentityCard(childName: String, avatarUrl: String?, modifier:
 
 @Composable
 private fun ProfileMetricCard(value: String, modifier: Modifier) {
-    Surface(modifier.heightIn(min = 108.dp), shape = RoundedCornerShape(22.dp), color = LeafLight.copy(alpha = .97f),
+    val scale = LocalGardenLayoutScale.current
+    Surface(modifier.heightIn(min = 108.dp * scale), shape = RoundedCornerShape(22.dp), color = LeafLight.copy(alpha = .97f),
         border = androidx.compose.foundation.BorderStroke(2.dp, Color.White), shadowElevation = 4.dp) {
         Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center) {
-            Text(value, fontSize = 38.sp, fontWeight = FontWeight.ExtraBold, color = Leaf)
+            Text(value, fontSize = 38.sp * scale, fontWeight = FontWeight.ExtraBold, color = Leaf)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                 GardenArt(R.drawable.garden_sprout_shaded, Modifier.size(25.dp))
                 Text("累计认识汉字", color = Leaf, fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -3087,7 +3094,7 @@ private fun HelpedCharactersScreen(
     }
     LaunchedEffect(userId) { viewModel.load(userId) }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-    LazyColumn(Modifier.fillMaxHeight().widthIn(max = 720.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+    LazyColumn(Modifier.fillMaxHeight().widthIn(max = 720.dp * LocalGardenLayoutScale.current), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
             BackHeader("帮助过的内容", "这些词和句请求朗读过", onBack) {
@@ -3126,9 +3133,9 @@ private fun HelpedCharactersScreen(
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    GardenArt(R.drawable.garden_entry_megaphone, Modifier.size(58.dp))
+                                    GardenArt(R.drawable.garden_entry_megaphone, Modifier.size(58.dp * LocalGardenLayoutScale.current))
                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                        Text(item.highlightedTargetText(), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Ink)
+                                        Text(item.highlightedTargetText(), fontSize = 24.sp * LocalGardenLayoutScale.current, fontWeight = FontWeight.ExtraBold, color = Ink)
                                         if (item.highlightedCharacterIndex() == null) Text("旧记录无法定位目标字，可保留或删除", color = EvaluationErrorRed)
                                         Text(if (item.targetType == "sentence") "请求朗读过的句子" else "请求朗读过的词", fontSize = 16.sp, color = Color(0xFF7D898C))
                                     }
@@ -3272,7 +3279,7 @@ private fun ParentPassesScreen(
     var operationErrorMessage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(userId) { viewModel.load(userId) }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-    LazyColumn(Modifier.fillMaxHeight().widthIn(max = 760.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+    LazyColumn(Modifier.fillMaxHeight().widthIn(max = 760.dp * LocalGardenLayoutScale.current), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { BackHeader("通过记录", "家长手动确认时保留的星级快照", onBack) }
         item {
@@ -3303,7 +3310,7 @@ private fun ParentPassesScreen(
                     ) {
                         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                GardenCharacterTile(record.character, Modifier.size(72.dp), fontSize = 46.sp)
+                                GardenCharacterTile(record.character, Modifier.size(72.dp * LocalGardenLayoutScale.current), fontSize = 46.sp * LocalGardenLayoutScale.current)
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(
                                         if (record.contentSource == ReadingContentSource.RECOGNIZED.wireValue) "已认识字复习" else "待认识字学习",
@@ -3549,14 +3556,15 @@ private fun ProfileDecoratedCard(
 
 @Composable
 private fun ProfileMenuCard(menu: GardenMenu, modifier: Modifier) {
-    ProfileDecoratedCard(modifier.heightIn(min = 84.dp).clickable(onClick = menu.onClick),
+    val scale = LocalGardenLayoutScale.current
+    ProfileDecoratedCard(modifier.heightIn(min = 84.dp * scale).clickable(onClick = menu.onClick),
         menu.topColor, menu.bottomColor, menu.borderColor) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            GardenArt(menu.art, Modifier.width(82.dp).height(66.dp))
+            GardenArt(menu.art, Modifier.width(82.dp * scale).height(66.dp * scale))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(menu.title, color = menu.color, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
-                Text(menu.subtitle, color = Color(0xFF687D9F), fontSize = 14.sp)
+                Text(menu.title, color = menu.color, fontSize = 20.sp * scale, fontWeight = FontWeight.ExtraBold)
+                Text(menu.subtitle, color = Color(0xFF687D9F), fontSize = 14.sp * scale)
             }
             Box(Modifier.size(34.dp).background(menu.borderColor, CircleShape),
                 contentAlignment = Alignment.Center) {
@@ -3670,7 +3678,7 @@ private fun KnownScreen(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-    val contentWidth = maxWidth.coerceAtMost(790.dp)
+    val contentWidth = maxWidth.coerceAtMost(790.dp * LocalGardenLayoutScale.current)
     val columns = if (contentWidth / LocalDensity.current.fontScale.coerceAtLeast(1f) >= 720.dp) 3
         else if (contentWidth >= 470.dp) 2 else 1
     LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.width(contentWidth).fillMaxHeight(),
@@ -3724,9 +3732,9 @@ private fun RecognizedCharacterCard(
 ) {
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = LeafLight,
         border = androidx.compose.foundation.BorderStroke(2.dp, Color.White), shadowElevation = 3.dp) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(12.dp * LocalGardenLayoutScale.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GardenCharacterTile(character.character, Modifier.size(64.dp), fontSize = 42.sp)
+                GardenCharacterTile(character.character, Modifier.size(64.dp * LocalGardenLayoutScale.current), fontSize = 42.sp * LocalGardenLayoutScale.current)
                 Text("收录于\n${character.recognizedAt?.take(10) ?: "未知日期"}", color = Color(0xFF687D9F), fontSize = 13.sp)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -3795,7 +3803,7 @@ private fun PendingCharactersScreen(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        val contentWidth = maxWidth.coerceAtMost(656.dp)
+        val contentWidth = maxWidth.coerceAtMost(656.dp * LocalGardenLayoutScale.current)
         val fontScale = LocalDensity.current.fontScale
         val sidePadding = if (contentWidth >= 600.dp && fontScale <= 1.1f) 50.dp else 20.dp
         val columns = if (sidePadding == 50.dp) 6 else gardenGridColumns((contentWidth - sidePadding * 2).value, fontScale)
@@ -3819,7 +3827,7 @@ private fun PendingCharactersScreen(
                 else -> {
                     items(state.characters, key = { it.id }) { character ->
                         GardenCharacterTile(character.character, Modifier.fillMaxWidth().aspectRatio(1.04f),
-                            onClick = { viewModel.showPhonetics(character) }, fontSize = 48.sp)
+                            onClick = { viewModel.showPhonetics(character) }, fontSize = 48.sp * LocalGardenLayoutScale.current)
                     }
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         GardenMetricStrip("已显示全部待认识的字", LeafLight)
@@ -4001,8 +4009,8 @@ private fun LibraryScreen(
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        val contentWidth = maxWidth.coerceAtMost(632.dp)
-        val columns = gardenGridColumns((contentWidth - 40.dp).value, LocalDensity.current.fontScale)
+        val contentWidth = maxWidth.coerceAtMost(632.dp * LocalGardenLayoutScale.current)
+        val columns = gardenGridColumns(((contentWidth - 40.dp) / LocalGardenLayoutScale.current).value, LocalDensity.current.fontScale)
         LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.width(contentWidth).fillMaxHeight(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -4110,7 +4118,7 @@ private fun LibraryScreen(
             }
             else -> {
                 items(visible, key = { it.character }) { character ->
-                    GardenCharacterTile(character.character, Modifier.fillMaxWidth().aspectRatio(1.04f), fontSize = 48.sp)
+                    GardenCharacterTile(character.character, Modifier.fillMaxWidth().aspectRatio(1.04f), fontSize = 48.sp * LocalGardenLayoutScale.current)
                 }
                 if (query.isBlank()) item(span = { GridItemSpan(maxLineSpan) }) {
                     GardenMetricStrip("已显示本地保存的全部字库", LeafLight)

@@ -50,11 +50,12 @@ internal fun StudyDialogFrame(
             Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(12.dp),
             contentAlignment = Alignment.Center
         ) {
+            val scale = LocalGardenLayoutScale.current
             val compact = maxWidth < 650.dp || maxHeight < 430.dp || LocalDensity.current.fontScale > 1.25f
             val frameWidth = if (compact) maxWidth * .96f else (maxWidth * .74f).coerceAtMost(900.dp)
             val headerHeight = frameWidth * (199f / 1136f)
             val bodyTop = frameWidth * (59f / 1136f)
-            val titleSize = if (compact) 24.sp else 34.sp
+            val titleSize = (if (compact) 24.sp else 34.sp) * scale
             val frameHeight = maxHeight * .98f
             Box(Modifier.width(frameWidth).height(frameHeight).testTag("study-dialog-frame")) {
                 Surface(
@@ -74,13 +75,13 @@ internal fun StudyDialogFrame(
                     Column(Modifier.fillMaxSize().padding(top = headerHeight - bodyTop + if (compact) 2.dp else 8.dp)) {
                         Column(
                             modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
-                                .padding(start = if (compact) 14.dp else 28.dp,
-                                    end = if (compact) 14.dp else 28.dp, top = 4.dp, bottom = 12.dp)
+                                .padding(start = (if (compact) 14.dp else 28.dp) * scale,
+                                    end = (if (compact) 14.dp else 28.dp) * scale, top = 4.dp, bottom = 12.dp)
                                 .testTag("study-dialog-list"),
                             verticalArrangement = Arrangement.spacedBy(if (compact) 9.dp else 8.dp),
                             content = content
                         )
-                        Box(Modifier.fillMaxWidth().padding(horizontal = if (compact) 18.dp else 100.dp,
+                        Box(Modifier.fillMaxWidth().padding(horizontal = (if (compact) 18.dp else 100.dp) * scale,
                             vertical = 8.dp).testTag("study-dialog-footer")) { footer() }
                     }
                     }
@@ -123,7 +124,7 @@ internal fun StudyDialogFrame(
                     }, fontSize = titleSize, fontWeight = FontWeight.ExtraBold, color = Ink,
                         maxLines = 1)
                     Text("长按汉字可听正确读音", color = Color(0xFF3973B8),
-                        fontSize = if (compact) 13.sp else 17.sp, fontWeight = FontWeight.Bold)
+                        fontSize = (if (compact) 13.sp else 17.sp) * scale, fontWeight = FontWeight.Bold)
                 }
                 Surface(Modifier.align(Alignment.TopEnd).padding(top = if (compact) 5.dp else headerHeight * .17f, end = 3.dp),
                     shape = CircleShape, color = Color.White, shadowElevation = 3.dp) {

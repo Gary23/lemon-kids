@@ -16,6 +16,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +42,8 @@ import androidx.compose.ui.window.DialogProperties
 import com.lemonkids.kidliteracy.R
 import com.lemonkids.kidliteracy.ui.theme.*
 
+internal val LocalGardenLayoutScale = staticCompositionLocalOf { 1f }
+
 @Composable
 internal fun GardenArt(@DrawableRes resource: Int, modifier: Modifier = Modifier) {
     Image(painterResource(resource), contentDescription = null, modifier = modifier, contentScale = ContentScale.Fit)
@@ -49,26 +53,33 @@ internal fun GardenArt(@DrawableRes resource: Int, modifier: Modifier = Modifier
 internal fun GardenPageScaffold(@DrawableRes scene: Int, sceneAlignment: Alignment = Alignment.Center, content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Image(painterResource(scene), null, Modifier.matchParentSize(), alignment = sceneAlignment, contentScale = ContentScale.Crop)
-        Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
-            Box(Modifier.widthIn(max = 1200.dp).fillMaxSize()) { content() }
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
+            val scale = gardenLayoutScale(maxWidth.value)
+            CompositionLocalProvider(LocalGardenLayoutScale provides scale) {
+                Box(Modifier.widthIn(max = 1200.dp).fillMaxSize()) { content() }
+            }
         }
     }
 }
 
 @Composable
 internal fun GardenPanel(modifier: Modifier = Modifier, tint: Color = Background, content: @Composable ColumnScope.() -> Unit) {
+    val scale = LocalGardenLayoutScale.current
     Surface(modifier, shape = RoundedCornerShape(28.dp), color = tint.copy(alpha = .97f),
         border = BorderStroke(2.dp, Color.White), shadowElevation = 4.dp) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+        Column(Modifier.padding(20.dp * scale), verticalArrangement = Arrangement.spacedBy(12.dp * scale), content = content)
     }
 }
 
 @Composable
 private fun GardenTitle(title: String, compact: Boolean, count: Int? = null) {
-    val style = if (compact) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineLarge
+    val scale = LocalGardenLayoutScale.current
+    val baseStyle = if (compact) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineLarge
+    val lineHeight = if (baseStyle.lineHeight == TextUnit.Unspecified) TextUnit.Unspecified else baseStyle.lineHeight * scale
+    val style = baseStyle.copy(fontSize = baseStyle.fontSize * scale, lineHeight = lineHeight)
     val displayTitle = buildAnnotatedString {
         append(title)
-        if (count != null) withStyle(SpanStyle(fontSize = if (compact) 16.sp else 19.sp)) {
+        if (count != null) withStyle(SpanStyle(fontSize = (if (compact) 16.sp else 19.sp) * scale)) {
             append("（${count}个字）")
         }
     }
@@ -84,6 +95,7 @@ internal fun GardenPageHeader(title: String, subtitle: String, onBack: (() -> Un
     mascot: Int = R.drawable.garden_mascot_welcome, count: Int? = null,
     compactActionRightAligned: Boolean = false, action: @Composable () -> Unit = {}) {
     BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        val scale = LocalGardenLayoutScale.current
         val compact = maxWidth < 680.dp || androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.2f
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -91,16 +103,17 @@ internal fun GardenPageHeader(title: String, subtitle: String, onBack: (() -> Un
                 if (onBack != null) Surface(shape = CircleShape, color = Background, shadowElevation = 3.dp) {
                     IconButton(onClick = onBack, modifier = Modifier.size(56.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回", tint = Ink) }
                 }
-                if (!compact) GardenArt(R.drawable.garden_logo_lemon, Modifier.size(56.dp))
+                if (!compact) GardenArt(R.drawable.garden_logo_lemon, Modifier.size(56.dp * scale))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     GardenTitle(title, compact, count)
                     Surface(shape = RoundedCornerShape(12.dp), color = Background.copy(alpha = .95f)) {
-                        Text(subtitle, color = Color(0xFF687D9F), modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                        Text(subtitle, color = Color(0xFF687D9F), fontSize = MaterialTheme.typography.bodyMedium.fontSize * scale,
+                            modifier = Modifier.padding(horizontal = 10.dp * scale, vertical = 5.dp * scale))
                     }
                 }
                 if (!compact) {
                     action()
-                    GardenArt(mascot, Modifier.size(100.dp))
+                    GardenArt(mascot, Modifier.size(100.dp * scale))
                 }
             }
             if (compact) {
@@ -154,13 +167,14 @@ internal fun GardenDialogFrame(title: String, subtitle: String, onDismiss: () ->
     maxDialogHeight: Dp? = null, content: LazyListScope.() -> Unit) {
     Dialog(onDismissRequest = { if (closeEnabled) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(24.dp), contentAlignment = Alignment.Center) {
+            val scale = LocalGardenLayoutScale.current
             val dialogWidth = maxWidth
-            Surface(Modifier.widthIn(max = maxDialogWidth).fillMaxWidth(.96f)
-                .heightIn(max = minOf(maxHeight * .94f, maxDialogHeight ?: maxHeight)),
+            Surface(Modifier.widthIn(max = maxDialogWidth * scale).fillMaxWidth(.96f)
+                .heightIn(max = minOf(maxHeight * .94f, maxDialogHeight?.times(scale) ?: maxHeight)),
                 shape = RoundedCornerShape(32.dp), color = Background, border = BorderStroke(3.dp, Color.White), shadowElevation = 16.dp) {
                 Box {
-                    LazyColumn(state = rememberLazyListState(), contentPadding = PaddingValues(24.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    LazyColumn(state = rememberLazyListState(), contentPadding = PaddingValues(24.dp * scale),
+                        verticalArrangement = Arrangement.spacedBy(14.dp * scale)) {
                         item(key = "garden-dialog-header") {
                             GardenPanel(Modifier.fillMaxWidth().padding(end = 48.dp), tint) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {

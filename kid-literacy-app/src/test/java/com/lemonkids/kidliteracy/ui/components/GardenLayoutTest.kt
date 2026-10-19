@@ -4,6 +4,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GardenLayoutTest {
+    @Test fun wideTabletGrowsContentAndTilesWithoutChangingReferenceSize() {
+        assertEquals(1f, gardenLayoutScale(1000f), 0.001f)
+        assertEquals(1.205f, gardenLayoutScale(1205f), 0.001f)
+        assertEquals(1.35f, gardenLayoutScale(1800f), 0.001f)
+        assertEquals(815f, gardenContentWidth(1000f, 815f, gardenLayoutScale(1000f)), 0.001f)
+        assertEquals(980f, gardenContentWidth(1205f, 815f, gardenLayoutScale(1205f)), 3f)
+        val standard = homeTileLayout(371f, 1f)
+        val large = homeTileLayout(450f, 1f, gardenLayoutScale(1205f))
+        assertEquals(6, large.columns)
+        assertTrue(large.widthDp > standard.widthDp)
+        assertTrue(large.fontSp > standard.fontSp)
+    }
+
     @Test fun standardTabletGridHasAtMostSixColumns() {
         listOf(752f, 976f, 1152f).forEach { assertEquals(6, gardenGridColumns(it)) }
         assertEquals(6, gardenGridColumns(2000f))

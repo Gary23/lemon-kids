@@ -40,9 +40,10 @@ internal fun StudyPracticeRow(
     dots: @Composable () -> Unit
 ) {
     val density = LocalDensity.current
-    val scale = density.fontScale.coerceAtLeast(1f)
+    val layoutScale = LocalGardenLayoutScale.current
+    val scale = density.fontScale.coerceAtLeast(1f) * layoutScale
     val actionWidth = 92.dp * scale
-    val dotsWidth = 152.dp
+    val dotsWidth = 152.dp * layoutScale
     val actionHeight = 48.dp * scale
     val messageHeight = with(density) { 18.sp.toDp() * 2 }.coerceAtLeast(48.dp)
     var showDetails by remember { mutableStateOf(false) }
@@ -90,7 +91,7 @@ internal fun StudyPracticeRow(
                                 .clickable(enabled = actionEnabled, role = Role.Button, onClick = onAction)
                                 .testTag("practice-action"), contentAlignment = Alignment.Center) {
                             Text(actionLabel, color = Color.White,
-                                maxLines = 1, fontSize = 19.sp, fontWeight = FontWeight.Bold,
+                                maxLines = 1, fontSize = 19.sp * layoutScale, fontWeight = FontWeight.Bold,
                                 textAlign = TextAlign.Center)
                             }
                         }
@@ -133,7 +134,7 @@ internal fun StudyPracticeRow(
                         y = if (showHintBelowDots) (-9).dp else 0.dp)
                         .width(dotsWidth).height(28.dp).testTag("practice-controls"),
                         contentAlignment = Alignment.Center) { if (!completed) dots() }
-                    Box(Modifier.align(Alignment.CenterStart).offset(x = rowWidth * .86f)) { action() }
+                    Box(Modifier.align(Alignment.CenterStart).offset(x = rowWidth - actionWidth)) { action() }
                     if (showHintBelowDots && !message.isNullOrBlank()) Box(
                         Modifier.align(Alignment.CenterStart).offset(x = rowWidth * .57f, y = 18.dp)
                             .width(dotsWidth).height(20.dp).testTag("practice-message"),
