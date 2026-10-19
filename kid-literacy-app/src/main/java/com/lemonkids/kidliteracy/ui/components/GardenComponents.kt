@@ -32,6 +32,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.lemonkids.kidliteracy.R
@@ -61,18 +64,25 @@ internal fun GardenPanel(modifier: Modifier = Modifier, tint: Color = Background
 }
 
 @Composable
-private fun GardenTitle(title: String, compact: Boolean) {
+private fun GardenTitle(title: String, compact: Boolean, count: Int? = null) {
     val style = if (compact) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineLarge
+    val displayTitle = buildAnnotatedString {
+        append(title)
+        if (count != null) withStyle(SpanStyle(fontSize = if (compact) 16.sp else 19.sp)) {
+            append("（${count}个字）")
+        }
+    }
     Box {
-        Text(title, style = style.copy(drawStyle = Stroke(width = 6f)), color = Color.White,
+        Text(displayTitle, style = style.copy(drawStyle = Stroke(width = 6f)), color = Color.White,
             fontWeight = FontWeight.ExtraBold, modifier = Modifier.clearAndSetSemantics {})
-        Text(title, style = style, color = Ink, fontWeight = FontWeight.ExtraBold)
+        Text(displayTitle, style = style, color = Ink, fontWeight = FontWeight.ExtraBold)
     }
 }
 
 @Composable
 internal fun GardenPageHeader(title: String, subtitle: String, onBack: (() -> Unit)? = null,
-    mascot: Int = R.drawable.garden_mascot_welcome, action: @Composable () -> Unit = {}) {
+    mascot: Int = R.drawable.garden_mascot_welcome, count: Int? = null,
+    compactActionRightAligned: Boolean = false, action: @Composable () -> Unit = {}) {
     BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         val compact = maxWidth < 680.dp || androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.2f
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -83,7 +93,7 @@ internal fun GardenPageHeader(title: String, subtitle: String, onBack: (() -> Un
                 }
                 if (!compact) GardenArt(R.drawable.garden_logo_lemon, Modifier.size(56.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GardenTitle(title, compact)
+                    GardenTitle(title, compact, count)
                     Surface(shape = RoundedCornerShape(12.dp), color = Background.copy(alpha = .95f)) {
                         Text(subtitle, color = Color(0xFF687D9F), modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
                     }
@@ -93,7 +103,10 @@ internal fun GardenPageHeader(title: String, subtitle: String, onBack: (() -> Un
                     GardenArt(mascot, Modifier.size(100.dp))
                 }
             }
-            if (compact) action()
+            if (compact) {
+                if (compactActionRightAligned) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { action() }
+                else action()
+            }
         }
     }
 }
@@ -137,11 +150,13 @@ internal fun GardenMetricStrip(text: String, tint: Color = WheatLight) {
 /** 大表单和练习各使用一套 lazy 滚动；关闭按钮附着外壳，不受滚动影响。 */
 @Composable
 internal fun GardenDialogFrame(title: String, subtitle: String, onDismiss: () -> Unit,
-    closeEnabled: Boolean = true, tint: Color = SkyLight, content: LazyListScope.() -> Unit) {
+    closeEnabled: Boolean = true, tint: Color = SkyLight, maxDialogWidth: Dp = 1100.dp,
+    maxDialogHeight: Dp? = null, content: LazyListScope.() -> Unit) {
     Dialog(onDismissRequest = { if (closeEnabled) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(24.dp), contentAlignment = Alignment.Center) {
             val dialogWidth = maxWidth
-            Surface(Modifier.widthIn(max = 1100.dp).fillMaxWidth(.96f).heightIn(max = maxHeight * .94f),
+            Surface(Modifier.widthIn(max = maxDialogWidth).fillMaxWidth(.96f)
+                .heightIn(max = minOf(maxHeight * .94f, maxDialogHeight ?: maxHeight)),
                 shape = RoundedCornerShape(32.dp), color = Background, border = BorderStroke(3.dp, Color.White), shadowElevation = 16.dp) {
                 Box {
                     LazyColumn(state = rememberLazyListState(), contentPadding = PaddingValues(24.dp),
