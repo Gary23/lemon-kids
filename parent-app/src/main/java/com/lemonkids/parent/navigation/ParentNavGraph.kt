@@ -44,6 +44,8 @@ import com.lemonkids.parent.feature.monitor.MonitorScreen
 import com.lemonkids.parent.feature.profile.BadgeProgressScreen
 import com.lemonkids.parent.feature.profile.CategoryManageScreen
 import com.lemonkids.parent.feature.profile.DeviceStatusLogScreen
+import com.lemonkids.parent.feature.profile.ReadingDiagnosticScreen
+import com.lemonkids.parent.feature.profile.ReadingDiagnosticGuideScreen
 import com.lemonkids.parent.feature.profile.FamilyManageScreen
 import com.lemonkids.parent.feature.profile.RecycleBinScreen
 import com.lemonkids.parent.feature.profile.RewardManageScreen
@@ -191,6 +193,8 @@ private fun ParentMainScreen() {
                     navController.navigate("recycle_bin")
                 }, onDeviceStatusLogClick = {
                     navController.navigate("device_status_logs")
+                }, onReadingDiagnosticClick = {
+                    navController.navigate("reading_diagnostics")
                 })
             }
             composable("family_manage") {
@@ -213,6 +217,13 @@ private fun ParentMainScreen() {
             }
             composable("device_status_logs") {
                 DeviceStatusLogScreen(onBack = { navController.popBackStack() })
+            }
+            composable("reading_diagnostics") {
+                ReadingDiagnosticScreen(onBack = { navController.popBackStack() },
+                    onGuideClick = { navController.navigate("reading_diagnostic_guide") })
+            }
+            composable("reading_diagnostic_guide") {
+                ReadingDiagnosticGuideScreen(onBack = { navController.popBackStack() })
             }
         }
     }

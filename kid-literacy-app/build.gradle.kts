@@ -32,6 +32,7 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 dependencies {
@@ -61,5 +62,9 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.datasource.cache)
     implementation(libs.kotlinx.serialization.json)
+    testImplementation(libs.junit)
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

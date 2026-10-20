@@ -23,6 +23,10 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -235,6 +239,32 @@ class ReadingEvaluationViewModel @Inject constructor(
             contextText = help.requiredString("contextText")
         )
     }
+
+    /** 诊断旁路发送摘要与受限的腾讯原始评测 JSON；调用者不等待其结果来决定星级。 */
+    suspend fun recordFailedDiagnostic(target: ReadingTarget, attemptId: String, indexes: Set<Int>,
+                                       textMode: Int, evaluationLength: Int, words: JsonArray,
+                                       reasons: List<String>, rawEvaluation: JsonObject?,
+                                       rawEvaluationStatus: String): Result<Unit> = runCatching {
+        val body = buildJsonObject {
+            put("action", "record_failed_reading_diagnostic")
+            put("attemptId", attemptId)
+            put("literacyCharacterId", target.literacyCharacterId)
+            put("targetType", target.targetType)
+            put("contentSource", target.contentSource.wireValue)
+            put("itemOrder", target.itemOrder)
+            target.wordText?.let { put("wordText", it) }
+            target.sentenceText?.let { put("sentenceText", it) }
+            put("wrongCharacterIndexes", JsonArray(indexes.sorted().map(::JsonPrimitive)))
+            put("failureReason", JsonArray(reasons.map(::JsonPrimitive)))
+            put("textMode", textMode)
+            put("evaluationTextLength", evaluationLength)
+            put("words", words)
+            put("rawEvaluationStatus", rawEvaluationStatus)
+            rawEvaluation?.let { put("rawEvaluation", it) }
+        }
+        request(body.toString(), readTimeoutMillis = 5_000)
+        Unit
+    }.onFailure { Log.w("ReadingEvaluation", "诊断上报失败：${it.javaClass.simpleName}") }
 
     /** 首页加载时读取同一绑定码在其他设备产生的当天朗读进度。 */
     suspend fun loadPracticeProgress(): Result<PracticeProgressSyncResult> = runCatching {

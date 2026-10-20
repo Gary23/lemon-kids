@@ -17,6 +17,8 @@ LITERACY_TENCENT_REGION
 DEEPSEEK_API_KEY
 ```
 
+家长端诊断查询只需额外配置 `LITERACY_CLS_TOPIC_ID`，填写当前 SCF 自定义日志投递所用 CLS 主题的 Topic ID。查询复用已有的 `LITERACY_TENCENT_REGION` 和 `LITERACY_STS_SECRET_ID` / `LITERACY_STS_SECRET_KEY`；主题必须位于该地域，现有 CAM 密钥须获授该主题的 `cls:SearchLog` 权限。无需更换日志投递主题。未配置主题 ID 时该查询动作返回服务不可用，其他动作照常运行。
+
 `LITERACY_TENCENT_REGION` 应填写有效腾讯云地域，例如函数部署在北京时填写 `ap-beijing`。
 `DEEPSEEK_API_KEY` 是 DeepSeek 平台创建的 API Key，只配置在 SCF 环境变量中，绝不能写入 APK 或提交到仓库。识字生成固定调用官方当前模型名 `deepseek-v4-flash`，不接受环境变量切换模型。识字接口显式关闭思考模式：该模式不会切换或关闭模型，而是避免短 JSON 请求将全部 `max_tokens: 1600` 消耗在 `reasoning_content`、没有最终 `content`。首次会批量生成；词语含有字库外汉字时，合规项会保留，问题字随后单独重试 9 次（含首次最多 10 次）。第 10 次仍无法生成纯字库词语时，会原样保留 DeepSeek 最后一版词语，但前提是该句子至多含 2 个字库外汉字。整次生成的 DeepSeek 时间预算为 65 秒，防止多字逐个重试时触发 SCF 的 90 秒硬超时。思维链绝不作为生成结果或写入日志。每次 DeepSeek 请求最多等待 20 秒；Supabase 鉴权和数据读取最多等待 15 秒。
 
@@ -35,7 +37,9 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 4. 在现有 Web 函数的“代码”页上传 ZIP，并保存发布到 `$LATEST`。
 5. 访问函数 URL 时仍保持“开放”；函数内部会强制校验 `Authorization: Bearer <Supabase access token>`。
 
-本次交付包为 `evaluate-reading-web-20261010-helped-recognized-check.zip`，包含帮助记录的已认识状态检查。部署前需执行 `supabase/sql/20261009_helped_character_recognized_content.sql`；补充功能无新增 SQL 迁移。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`、`supabase/sql/20260903_literacy_practice_progress_sync.sql`、`supabase/sql/20260907_literacy_daily_task_snapshot.sql`、`supabase/sql/20260912_smart_add_recognized_to_pending.sql`、`supabase/sql/20260920_literacy_parent_pass_records.sql`；智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；已认识字重新添加到待认识时会原子删除旧已认识记录及其音素资产，再写入新的待认识任务，重新添加到已认识时则更新收录时间置顶。朗读进度迁移创建同码多设备共享的当天进度表，任务快照迁移固定同一孩子当天各 Pad 展示的待认识任务及顺序；家长通过记录会保存点击前的星级快照、同步补满进度并允许当天撤销恢复，删除和清空操作会严格按当前登录孩子的范围执行。TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
+当前待部署包为 `evaluate-reading-web-20261019-child-reading-threshold.zip`，新增认字朗读失败诊断原因 `nonzero_match_tag`、`missing_match_tag`，规则版本为 `match-tag-0-pron-accuracy-60-50-30-v2`；历史原因仍可接收。此包已完成自动测试，待上传部署；Pad 朗读人工测试由用户另日进行。此前已交付包 `evaluate-reading-web-20261019-smart-add-preview-format.zip` 包含智能添加识字预览的句子格式兼容、格式诊断，以及此前的认字失败诊断上报与家长受控查询。预览生成器接受 DeepSeek 返回的非空字符串句子或 `{text}` 对象，统一为 `{text}` 后执行目标字及字库校验；保存入口仍要求对象句子。格式失败与字库越界分别返回对应提示，日志只记录目标字、失败类别和字段类型。用户已上传部署包并确认 Pad 人工测试通过。查询复用现有腾讯云地域和 CAM 密钥，按固定事件检索 CLS 日志，再由服务端核对孩子哈希并解析 `SCF_Message`；因此事件名须可检索，哈希无需单独建立全文索引。现有 CAM 密钥须获授该主题 `cls:SearchLog` 权限。若家长端提示“诊断日志查询服务暂不可用”，在函数运行日志中检索 `READING_DIAGNOSTIC_CLS_SEARCH_FAILED` 的 `code`、`requestId`。若家长端成功刷新但显示空记录，检索 `READING_DIAGNOSTIC_CLS_EMPTY` 的各阶段计数及结构计数 `shapes`；该日志不含日志正文、密钥、孩子 ID 或哈希。缺少主题 ID 时家长端提示服务未配置。
+
+此前交付包 `evaluate-reading-web-20261010-helped-recognized-check.zip` 包含帮助记录的已认识状态检查。部署前需执行 `supabase/sql/20261009_helped_character_recognized_content.sql`；补充功能无新增 SQL 迁移。既有认字迁移之后已按顺序执行 `supabase/sql/20260823_literacy_phonetic_assets.sql`、`supabase/sql/20260823_literacy_phonetic_asset_lifecycle_atomic.sql`、`supabase/sql/20260827_smart_add_recognized_literacy_tasks.sql`、`supabase/sql/20260827_smart_add_recognized_existing_task_fix.sql`、`supabase/sql/20260903_literacy_practice_progress_sync.sql`、`supabase/sql/20260907_literacy_daily_task_snapshot.sql`、`supabase/sql/20260912_smart_add_recognized_to_pending.sql`、`supabase/sql/20260920_literacy_parent_pass_records.sql`；智能添加可在同一事务中创建根任务并立即转入已认识，同时仅限制未完成同字任务，允许保留和再次创建已完成历史任务；已认识字重新添加到待认识时会原子删除旧已认识记录及其音素资产，再写入新的待认识任务，重新添加到已认识时则更新收录时间置顶。朗读进度迁移创建同码多设备共享的当天进度表，任务快照迁移固定同一孩子当天各 Pad 展示的待认识任务及顺序；家长通过记录会保存点击前的星级快照、同步补满进度并允许当天撤销恢复，删除和清空操作会严格按当前登录孩子的范围执行。TTS 生成结果会同时回写已认识记录。评测函数使用的 CAM 身份仍需具有目标 `generate-literacy-audio` 函数的 `scf:InvokeFunction` 权限。
 
 待认识内容保存后会在本次请求内立即生成音素。遗留 `pending` 和可重试 `failed` 的低频兜底由独立事件函数
 [`generate-literacy-phonetics`](../generate-literacy-phonetics/README.md) 每 30 分钟处理；不要为本 Web 函数配置携带后台密钥的定时 HTTP 请求。
@@ -47,6 +51,8 @@ CAM 用户（不是 `evaluate-reading` 的执行角色）还必须仅对该目�
 ## 当前接口契约
 
 所有请求为 `POST` JSON，并必须带上述 Bearer Token。
+
+失败评测完成后，认字端以 `record_failed_reading_diagnostic` 上报 `attemptId`、教学目标定位、标红位置、原因、文本模式及腾讯逐项白名单字段；新记录可附经敏感字段剔除、64 KiB 大小限制的腾讯评测 JSON 和保存状态，旧记录无法补齐。函数核对登录孩子和教学内容，只向 SCF 日志写入 `READING_EVAL_FAILED` 单行 JSON；上报失败不影响朗读。家长端用 `list_failed_reading_diagnostics` 与 `childId` 查询本家庭孩子近 24 小时最多 50 条，服务端校验家长身份与家庭关系，并用 CLS 只读凭证查询固定主题。日志可能延迟，腾讯 `Word` 字段不能当作实际语音转写。此查询接口不接受客户端提供 CLS 语句或主题 ID。
 
 Android 进入认字页时先调用一次 `issue_credentials` 领取 STS；凭证有效期为
 30 分钟，客户端在剩余不足 5 分钟时刷新，因此同一认字页内最多约每 25 分钟

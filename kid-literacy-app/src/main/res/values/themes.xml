@@ -2,7 +2,7 @@
     <style name="Theme.LemonLiteracy" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#FFF9E8</item>
-        <item name="android:navigationBarColor">#FFF9E8</item>
+        <item name="android:statusBarColor">#FFFDF4</item>
+        <item name="android:navigationBarColor">#FFFDF4</item>
     </style>
 </resources>

@@ -1,0 +1,138 @@
+> Task :kid-literacy-app:preBuild UP-TO-DATE
+> Task :kid-literacy-app:preDebugBuild UP-TO-DATE
+> Task :kid-literacy-app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :kid-literacy-app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:preBuild UP-TO-DATE
+> Task :shared:preDebugBuild UP-TO-DATE
+> Task :shared:writeDebugAarMetadata UP-TO-DATE
+> Task :kid-literacy-app:checkDebugAarMetadata UP-TO-DATE
+> Task :kid-literacy-app:generateDebugResValues UP-TO-DATE
+> Task :shared:generateDebugResValues UP-TO-DATE
+> Task :shared:generateDebugResources UP-TO-DATE
+> Task :shared:packageDebugResources UP-TO-DATE
+> Task :kid-literacy-app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :kid-literacy-app:generateDebugResources UP-TO-DATE
+> Task :kid-literacy-app:mergeDebugResources UP-TO-DATE
+> Task :kid-literacy-app:packageDebugResources UP-TO-DATE
+> Task :kid-literacy-app:parseDebugLocalResources UP-TO-DATE
+> Task :kid-literacy-app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :kid-literacy-app:extractDeepLinksDebug UP-TO-DATE
+> Task :shared:extractDeepLinksDebug UP-TO-DATE
+> Task :shared:processDebugManifest UP-TO-DATE
+> Task :kid-literacy-app:processDebugMainManifest UP-TO-DATE
+> Task :kid-literacy-app:processDebugManifest UP-TO-DATE
+> Task :kid-literacy-app:processDebugManifestForPackage UP-TO-DATE
+> Task :shared:compileDebugLibraryResources UP-TO-DATE
+> Task :shared:parseDebugLocalResources UP-TO-DATE
+> Task :shared:generateDebugRFile UP-TO-DATE
+> Task :kid-literacy-app:processDebugResources UP-TO-DATE
+> Task :shared:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :shared:kspDebugKotlin UP-TO-DATE
+> Task :shared:compileDebugKotlin UP-TO-DATE
+> Task :shared:javaPreCompileDebug UP-TO-DATE
+> Task :shared:compileDebugJavaWithJavac UP-TO-DATE
+> Task :shared:transformDebugClassesWithAsm UP-TO-DATE
+> Task :shared:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :kid-literacy-app:javaPreCompileDebug UP-TO-DATE
+> Task :kid-literacy-app:mergeDebugShaders UP-TO-DATE
+> Task :kid-literacy-app:compileDebugShaders NO-SOURCE
+> Task :kid-literacy-app:generateDebugAssets UP-TO-DATE
+> Task :shared:mergeDebugShaders UP-TO-DATE
+> Task :shared:compileDebugShaders NO-SOURCE
+> Task :shared:generateDebugAssets UP-TO-DATE
+> Task :shared:mergeDebugAssets UP-TO-DATE
+> Task :kid-literacy-app:mergeDebugAssets UP-TO-DATE
+> Task :kid-literacy-app:compressDebugAssets UP-TO-DATE
+> Task :shared:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :kid-literacy-app:desugarDebugFileDependencies UP-TO-DATE
+> Task :shared:processDebugJavaRes UP-TO-DATE
+> Task :kid-literacy-app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :kid-literacy-app:mergeExtDexDebug UP-TO-DATE
+> Task :shared:bundleLibRuntimeToDirDebug UP-TO-DATE
+> Task :kid-literacy-app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :shared:mergeDebugJniLibFolders UP-TO-DATE
+> Task :shared:mergeDebugNativeLibs NO-SOURCE
+> Task :shared:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :kid-literacy-app:mergeDebugNativeLibs NO-SOURCE
+> Task :kid-literacy-app:mergeLibDexDebug UP-TO-DATE
+> Task :kid-literacy-app:stripDebugDebugSymbols NO-SOURCE
+> Task :kid-literacy-app:validateSigningDebug UP-TO-DATE
+> Task :kid-literacy-app:writeDebugAppMetadata UP-TO-DATE
+> Task :kid-literacy-app:writeDebugSigningConfigVersions UP-TO-DATE
+> Task :shared:stripDebugDebugSymbols NO-SOURCE
+> Task :shared:copyDebugJniLibsProjectAndLocalJars UP-TO-DATE
+> Task :shared:extractDebugAnnotations UP-TO-DATE
+> Task :shared:extractDeepLinksForAarDebug UP-TO-DATE
+> Task :shared:mergeDebugGeneratedProguardFiles UP-TO-DATE
+> Task :shared:mergeDebugConsumerProguardFiles UP-TO-DATE
+> Task :shared:prepareDebugArtProfile UP-TO-DATE
+> Task :shared:prepareLintJarForPublish UP-TO-DATE
+> Task :shared:mergeDebugJavaResource UP-TO-DATE
+> Task :shared:syncDebugLibJars UP-TO-DATE
+> Task :shared:bundleDebugLocalLintAar UP-TO-DATE
+> Task :kid-literacy-app:preDebugAndroidTestBuild SKIPPED
+> Task :kid-literacy-app:generateDebugAndroidTestResValues UP-TO-DATE
+> Task :shared:createFullJarDebug UP-TO-DATE
+> Task :shared:writeDebugLintModelMetadata UP-TO-DATE
+> Task :kid-literacy-app:extractProguardFiles UP-TO-DATE
+> Task :shared:extractProguardFiles UP-TO-DATE
+> Task :shared:generateDebugLintModel UP-TO-DATE
+> Task :kid-literacy-app:preDebugUnitTestBuild UP-TO-DATE
+> Task :shared:lintAnalyzeDebug UP-TO-DATE
+> Task :shared:preDebugAndroidTestBuild UP-TO-DATE
+> Task :shared:generateDebugAndroidTestResValues UP-TO-DATE
+> Task :shared:generateDebugAndroidTestLintModel UP-TO-DATE
+> Task :shared:preDebugUnitTestBuild UP-TO-DATE
+> Task :shared:generateDebugUnitTestLintModel UP-TO-DATE
+> Task :shared:lintAnalyzeDebugAndroidTest UP-TO-DATE
+> Task :shared:lintAnalyzeDebugUnitTest UP-TO-DATE
+> Task :kid-literacy-app:packageDebugUnitTestForUnitTest UP-TO-DATE
+> Task :kid-literacy-app:generateDebugUnitTestConfig UP-TO-DATE
+> Task :kid-literacy-app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :kid-literacy-app:kspDebugKotlin
+> Task :kid-literacy-app:compileDebugKotlin
+> Task :kid-literacy-app:compileDebugJavaWithJavac
+> Task :kid-literacy-app:hiltAggregateDepsDebug UP-TO-DATE
+> Task :kid-literacy-app:hiltJavaCompileDebug
+> Task :kid-literacy-app:processDebugJavaRes UP-TO-DATE
+> Task :kid-literacy-app:mergeDebugJavaResource UP-TO-DATE
+> Task :kid-literacy-app:generateDebugLintReportModel
+> Task :kid-literacy-app:bundleDebugClassesToCompileJar
+> Task :kid-literacy-app:generateDebugAndroidTestLintModel
+> Task :kid-literacy-app:generateDebugUnitTestLintModel
+> Task :kid-literacy-app:transformDebugClassesWithAsm
+> Task :kid-literacy-app:lintAnalyzeDebugAndroidTest
+> Task :kid-literacy-app:kspDebugUnitTestKotlin
+> Task :kid-literacy-app:lintAnalyzeDebugUnitTest
+> Task :kid-literacy-app:dexBuilderDebug
+> Task :kid-literacy-app:mergeDebugGlobalSynthetics UP-TO-DATE
+> Task :kid-literacy-app:bundleDebugClassesToRuntimeJar
+> Task :kid-literacy-app:compileDebugUnitTestKotlin
+> Task :kid-literacy-app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :kid-literacy-app:hiltAggregateDepsDebugUnitTest UP-TO-DATE
+> Task :kid-literacy-app:hiltJavaCompileDebugUnitTest NO-SOURCE
+> Task :kid-literacy-app:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :kid-literacy-app:transformDebugUnitTestClassesWithAsm
+> Task :kid-literacy-app:mergeProjectDexDebug
+> Task :kid-literacy-app:lintAnalyzeDebug
+> Task :kid-literacy-app:testDebugUnitTest
+> Task :kid-literacy-app:packageDebug
+> Task :kid-literacy-app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :kid-literacy-app:assembleDebug
+
+> Task :kid-literacy-app:lintReportDebug
+Wrote HTML report to file:///Users/yupengjun/lemon-kids/kid-literacy-app/build/reports/lint-results-debug.html
+
+> Task :kid-literacy-app:lintDebug
+
+[Incubating] Problems report is available at: file:///Users/yupengjun/lemon-kids/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.0.0/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 1m 8s
+101 actionable tasks: 22 executed, 79 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.0.0/userguide/configuration_cache_enabling.html

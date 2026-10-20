@@ -1,7 +1,21 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 
 package com.lemonkids.kidliteracy
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
+import com.lemonkids.kidliteracy.ui.components.*
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
 import android.provider.Settings
 import android.Manifest
 import android.content.Intent
@@ -14,6 +28,8 @@ import android.speech.tts.UtteranceProgressListener
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.animation.core.animateFloat
@@ -31,6 +47,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,31 +55,26 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddCircle
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.HelpOutline
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.Button
+import com.lemonkids.kidliteracy.ui.components.GardenActionButton as Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -73,38 +85,36 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -114,7 +124,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
+import com.lemonkids.kidliteracy.ui.components.GardenDialog as Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -139,6 +149,8 @@ import com.lemonkids.kidliteracy.feature.pending.PhoneticAsset
 import com.lemonkids.kidliteracy.feature.home.LiteracyHomeViewModel
 import com.lemonkids.kidliteracy.feature.home.LiteracyCharacterGroup
 import com.lemonkids.kidliteracy.feature.home.DailyLiteracyTaskSnapshotStore
+import com.lemonkids.kidliteracy.feature.home.homeHeading
+import com.lemonkids.kidliteracy.feature.home.homeDateLabel
 import com.lemonkids.kidliteracy.feature.recognized.RecognizedCharactersViewModel
 import com.lemonkids.kidliteracy.feature.help.HelpedContent
 import com.lemonkids.kidliteracy.feature.help.HelpedCharactersViewModel
@@ -166,10 +178,10 @@ import com.lemonkids.shared.ui.auth.AuthViewModel
 import com.lemonkids.shared.ui.auth.BindingCodeScreen
 import dagger.hilt.android.HiltAndroidApp
 import java.text.SimpleDateFormat
-import java.time.Instant
-import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.Instant
+import java.time.OffsetDateTime
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -202,8 +214,7 @@ private const val A4_PAPER_WIDTH_TO_HEIGHT = 0.70710677f
 
 private data class Lesson(
     val title: String,
-    val date: String,
-    val progress: String,
+    val dateLabel: String?,
     val known: Boolean,
     val characters: List<String>,
     /** 当前列表中当天已完成全部朗读要求的字。 */
@@ -326,7 +337,7 @@ private fun SessionRecoveryDialog(
             shadowElevation = 20.dp
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()).padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
@@ -648,17 +659,21 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
         }
     }
 
-    val showNav = page == Page.HOME || page == Page.PROFILE
-    Scaffold(
-        containerColor = Background,
-        bottomBar = {
-            if (showNav) LiteracyBottomNav(page) { page = it }
-        }
-    ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+    val scene = when (page) {
+        Page.HOME -> R.drawable.garden_a07_a10_recognition_garden
+        Page.PROFILE -> R.drawable.garden_a01_profile_farm
+        Page.PENDING -> R.drawable.garden_a02_pending_garden
+        Page.KNOWN -> R.drawable.garden_a03_recognized_garden
+        Page.LIBRARY -> R.drawable.garden_a04_library_shelves
+        Page.HELPED -> R.drawable.garden_a05_helped_reading_corner
+        Page.PARENT_PASSES -> R.drawable.garden_a06_passes_desktop
+    }
+    GardenPageScaffold(scene, sceneAlignment = if (page == Page.HOME || page == Page.PROFILE) Alignment.TopCenter else Alignment.Center) {
+        Box(Modifier.fillMaxSize()) {
             when (page) {
                 Page.HOME -> HomeScreen(
                     childName = childName,
+                    onNavigate = { page = it },
                     groups = homeState.groups,
                     isLoading = homeState.isLoading,
                     practiceProgress = practiceProgress,
@@ -675,6 +690,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                 Page.PROFILE -> ProfileScreen(
                     childName = childName,
                     avatarUrl = avatarUrl,
+                    onNavigate = { page = it },
                     userId = userId,
                     onKnown = { page = Page.KNOWN },
                     onPending = { page = Page.PENDING },
@@ -848,27 +864,62 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
 
 @Composable
 private fun LiteracyBottomNav(current: Page, onNavigate: (Page) -> Unit) {
-    val tabs = listOf(
-        Triple(Page.HOME, "首页", Icons.Filled.Home),
-        Triple(Page.PROFILE, "我的", Icons.Filled.Person)
-    )
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp).shadow(10.dp, RoundedCornerShape(28.dp)),
-        shape = RoundedCornerShape(28.dp), color = Color.White
-    ) {
-        NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
-            tabs.forEach { (page, title, icon) ->
-                val selected = current == page
-                NavigationBarItem(
-                    selected = selected,
-                    onClick = { onNavigate(page) },
-                    icon = { Icon(icon, title, Modifier.size(25.dp)) },
-                    label = { Text(title, fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Sky, selectedTextColor = Sky, indicatorColor = SkyLight,
-                        unselectedIconColor = Color(0xFF99A1A5), unselectedTextColor = Color(0xFF99A1A5)
-                    )
-                )
+    val scale = LocalGardenLayoutScale.current
+    val unselectedColor = Color(0xFF6D7A89)
+    Box(Modifier.fillMaxWidth().padding(bottom = 6.dp), contentAlignment = Alignment.Center) {
+        Surface(Modifier.widthIn(max = 342.dp * scale).fillMaxWidth(),
+            shape = CircleShape, color = Background, shadowElevation = 5.dp) {
+            Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(Page.HOME to "认字", Page.PROFILE to "我的").forEach { (page, title) ->
+                    val selected = current == page
+                    Surface(Modifier.weight(1f).heightIn(min = 48.dp * scale).semantics { this.selected = selected; role = Role.Tab }.clickable { onNavigate(page) },
+                        shape = CircleShape, color = if (selected) SkyLight else Color.Transparent,
+                        border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, Color.White) else null) {
+                        Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            Icon(if (page == Page.HOME) Icons.Default.Home else Icons.Default.Person, null, tint = if (selected) Sky else unselectedColor)
+                            Spacer(Modifier.width(8.dp))
+                            Text(title, color = if (selected) Sky else unselectedColor, fontSize = 18.sp * scale, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomePageHeader(childName: String, isLoading: Boolean, onRefresh: () -> Unit) {
+    val scale = LocalGardenLayoutScale.current
+    BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = 102.dp * scale)) {
+        val compact = maxWidth < 690.dp || LocalDensity.current.fontScale > 1.3f
+        Row(
+            Modifier.fillMaxWidth().padding(start = if (compact) 0.dp else 80.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GardenArt(R.drawable.garden_logo_lemon, Modifier.size((if (compact) 42.dp else 56.dp) * scale))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.widthIn(max = (if (compact) 175.dp else 256.dp) * scale)) {
+                Text("柠檬认字", color = Ink, fontSize = (if (compact) 28.sp else 36.sp) * scale,
+                    fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                Text("$childName，和小麦一起认识新朋友", color = Color(0xFF687D9F),
+                    fontSize = (if (compact) 14.sp else 16.sp) * scale, maxLines = 2)
+            }
+            Spacer(Modifier.width(12.dp))
+            Surface(onClick = onRefresh, enabled = !isLoading,
+                modifier = Modifier.widthIn(min = 96.dp * scale).heightIn(min = 48.dp * scale),
+                shape = CircleShape, color = Color(0xFFDDF3FF).copy(alpha = .84f),
+                border = androidx.compose.foundation.BorderStroke(2.dp, Color.White)) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, tint = Sky)
+                    Spacer(Modifier.width(4.dp))
+                    Text("刷新", fontSize = 18.sp * scale, color = Sky)
+                }
+            }
+            if (!compact) {
+                Spacer(Modifier.width(12.dp))
+                GardenArt(R.drawable.garden_mascot_welcome, Modifier.size(112.dp * scale))
             }
         }
     }
@@ -877,6 +928,7 @@ private fun LiteracyBottomNav(current: Page, onNavigate: (Page) -> Unit) {
 @Composable
 private fun HomeScreen(
     childName: String,
+    onNavigate: (Page) -> Unit,
     groups: List<LiteracyCharacterGroup>,
     isLoading: Boolean,
     practiceProgress: Map<String, Int>,
@@ -884,80 +936,68 @@ private fun HomeScreen(
     onCharacter: (LiteracyCharacterGroup, Int) -> Unit
 ) {
     val listState = rememberLazyListState()
+    val showScrollToTop by remember(listState) { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
     val coroutineScope = rememberCoroutineScope()
+    val scale = LocalGardenLayoutScale.current
 
-    Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 28.dp, end = 28.dp, top = 22.dp, bottom = 108.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.weight(1f)) {
-                        Text("柠檬认字", style = MaterialTheme.typography.headlineLarge, color = Ink)
-                        Text("$childName，和小麦一起认识今天的新朋友", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF7C898D))
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val contentWidth = gardenContentWidth((maxWidth - 32.dp).value, 815f, scale).dp
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.width(contentWidth).fillMaxHeight().align(Alignment.TopCenter),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item { HomePageHeader(childName, isLoading, onRefresh) }
+                    if (groups.isEmpty()) {
+                        item { LiteracyEmptyState() }
+                    } else {
+                        itemsIndexed(groups.chunked(2), key = { _, row -> "${row.first().type}-${row.first().groupNumber}" }) { rowIndex, row ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                row.forEachIndexed { columnIndex, group ->
+                                    val knownCornerIndex = groups.take(rowIndex * 2 + columnIndex).count { it.isKnown }
+                                    LessonCard(group.toLesson(practiceProgress),
+                                        onCharacterClick = { index -> onCharacter(group, index) },
+                                        knownCornerIndex = knownCornerIndex,
+                                        modifier = Modifier.weight(1f))
+                                }
+                                if (row.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
                     }
-                    Button(
-                        onClick = onRefresh,
-                        enabled = !isLoading,
-                        colors = ButtonDefaults.buttonColors(containerColor = Sky),
-                        shape = RoundedCornerShape(18.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 9.dp)
-                    ) {
-                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("刷新")
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Surface(shape = CircleShape, color = WheatLight, modifier = Modifier.size(58.dp)) {
-                        Box(contentAlignment = Alignment.Center) { Text("🌾", fontSize = 30.sp) }
+                }
+                if (showScrollToTop) Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 24.dp, bottom = 12.dp)
+                        .size(52.dp)
+                        .shadow(8.dp, CircleShape)
+                        .clickable { coroutineScope.launch { listState.animateScrollToItem(0) } },
+                    shape = CircleShape,
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, SkyLight)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "返回顶部", tint = Sky)
                     }
                 }
             }
-            item {
-                Text("识字任务", style = MaterialTheme.typography.titleLarge, color = Ink)
-            }
-            if (groups.isEmpty()) {
-                item { LiteracyEmptyState() }
-            } else {
-                items(groups, key = { "${it.type}-${it.groupNumber}" }) { group ->
-                    LessonCard(
-                        lesson = group.toLesson(practiceProgress),
-                        onCharacterClick = { index -> onCharacter(group, index) }
-                    )
-                }
-            }
+            LiteracyBottomNav(Page.HOME, onNavigate)
         }
 
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 24.dp, bottom = 28.dp)
-                .size(52.dp)
-                .shadow(8.dp, CircleShape)
-                .clickable { coroutineScope.launch { listState.animateScrollToItem(0) } },
-            shape = CircleShape,
-            color = Color.White,
-            border = androidx.compose.foundation.BorderStroke(1.dp, SkyLight)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "返回顶部", tint = Sky)
-            }
-        }
-
-        if (isLoading) RequestLoadingOverlay()
+        if (isLoading && groups.isEmpty()) RequestLoadingOverlay()
     }
 }
 
 @Composable
 private fun RequestLoadingOverlay() {
     Box(
-        modifier = Modifier.fillMaxSize().background(Background.copy(alpha = .94f)),
+        modifier = Modifier.fillMaxSize().background(Background.copy(alpha = .94f)).clickable {},
         contentAlignment = Alignment.Center
     ) {
-        LoadingContent()
+        GardenPanel(Modifier.padding(24.dp)) { LoadingContent() }
     }
 }
 
@@ -982,16 +1022,8 @@ private fun LiteracyEmptyState() {
 }
 
 private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) = Lesson(
-    title = if (isKnown) {
-        recognizedDates.takeIf { it.isNotEmpty() }
-            ?.joinToString(separator = "、") { "${it.monthValue}月${it.dayOfMonth}日" }
-            ?.let { "已认识的字 · $it" }
-            ?: "已认识的字 · 第${groupNumber}组"
-    } else {
-        "待认识的字 · 第${groupNumber}组"
-    },
-    date = recognizedDates.joinToString(separator = "、"),
-    progress = "",
+    title = homeHeading(),
+    dateLabel = homeDateLabel(),
     known = isKnown,
     characters = characters,
     completedCharacterIds = if (isKnown) {
@@ -1006,48 +1038,70 @@ private fun LiteracyCharacterGroup.toLesson(practiceProgress: Map<String, Int>) 
 )
 
 @Composable
-private fun LessonCard(lesson: Lesson, onCharacterClick: (Int) -> Unit) {
-    val background = if (lesson.known) LeafLight else CoralLight
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = background)
-    ) {
-        Box {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(lesson.title, style = MaterialTheme.typography.titleMedium, color = Ink)
+private fun LessonCard(
+    lesson: Lesson,
+    onCharacterClick: (Int) -> Unit,
+    knownCornerIndex: Int,
+    modifier: Modifier = Modifier
+) {
+    val scale = LocalGardenLayoutScale.current
+    val accent = if (lesson.known) Leaf else Coral
+    val frameColor = if (lesson.known) Color(0xFFD9F6A8) else Color(0xFFFFBBAA)
+    val cornerArt = if (!lesson.known) R.drawable.garden_card_corner_sprout else when (knownCornerIndex % 3) {
+        0 -> R.drawable.garden_card_corner_white_a
+        1 -> R.drawable.garden_card_corner_white_b
+        else -> R.drawable.garden_card_corner_pink
+    }
+    val cornerWidth = (if (!lesson.known) 118.dp else (120 + knownCornerIndex.coerceAtMost(2) * 3).dp) * scale
+    val cornerHeight = (if (!lesson.known) 50.dp else (51 + knownCornerIndex.coerceAtMost(2)).dp) * scale
+    val cardShape = RoundedCornerShape(24.dp)
+    val innerShape = RoundedCornerShape(20.dp)
+    Surface(modifier, shape = cardShape,
+        color = frameColor,
+        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White), shadowElevation = 4.dp) {
+        Box(Modifier.fillMaxWidth().padding(4.dp).clip(innerShape)
+            .background(Brush.verticalGradient(if (lesson.known) {
+                listOf(Color(0xFFF9FFE9), Color(0xFFEAFBD5))
+            } else {
+                listOf(Color(0xFFFFF8EE), Color(0xFFFFE5DA))
+            })).border(1.dp, Color.White.copy(alpha = .9f), innerShape)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp * scale, vertical = 12.dp * scale)) {
+                Box(Modifier.fillMaxWidth().heightIn(min = 45.dp * scale)) {
+                    Row(Modifier.fillMaxWidth().padding(end = cornerWidth - 12.dp * scale).heightIn(min = 45.dp * scale),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GardenArt(if (lesson.known) R.drawable.garden_sprout_shaded else R.drawable.garden_tulip,
+                            Modifier.width(40.dp * scale).height(45.dp * scale))
+                        Column(Modifier.weight(1f)) {
+                            Text(lesson.title, fontSize = 18.sp * scale, lineHeight = 20.sp * scale,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (lesson.known) Color(0xFF126B20) else Color(0xFFDE432A))
+                            lesson.dateLabel?.let { date ->
+                                Text(date, fontSize = 13.sp * scale, lineHeight = 16.sp * scale,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (lesson.known) Color(0xFF126B20) else Color(0xFFDE432A))
+                            }
+                        }
+                    }
+                    // 角饰不参与标题区测量；高度超过 45 dp 时向上延伸，底边始终贴住分隔线。
+                    Box(Modifier.matchParentSize()) {
+                        // 素材底部含透明留白；下移 5 dp，让可见花草边缘落在分隔线上。
+                        GardenArt(cornerArt, Modifier.align(Alignment.BottomEnd).offset(y = 5.dp)
+                            .width(cornerWidth).height(cornerHeight))
+                    }
                 }
-                // 每行最多 6 个字并均分卡片宽度；字较多时自动换行。
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    val characterCellSize = (maxWidth - 8.dp * 5) / 6
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        lesson.characters.chunked(6).forEachIndexed { rowIndex, rowCharacters ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                rowCharacters.forEachIndexed { columnIndex, char ->
-                                    val index = rowIndex * 6 + columnIndex
-                                    val isCompleted = lesson.characterIds.getOrNull(index) in lesson.completedCharacterIds
-                                    Surface(
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = if (isCompleted) LeafLight else Color.White.copy(alpha = .74f),
-                                        border = if (isCompleted) {
-                                            androidx.compose.foundation.BorderStroke(1.dp, Leaf.copy(alpha = .65f))
-                                        } else {
-                                            null
-                                        },
-                                        modifier = Modifier
-                                            .size(characterCellSize)
-                                            .clickable { onCharacterClick(index) }
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                char,
-                                                fontSize = 32.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isCompleted) Leaf else Ink
-                                            )
-                                        }
-                                    }
+                HorizontalDivider(color = accent.copy(alpha = .18f), thickness = 1.dp)
+                BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 7.dp)) {
+                    val layout = homeTileLayout(maxWidth.value, LocalDensity.current.fontScale, scale)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp * scale)) {
+                        lesson.characters.chunked(layout.columns).forEachIndexed { rowIndex, row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp * scale)) {
+                                row.forEachIndexed { colIndex, char ->
+                                    val index = rowIndex * layout.columns + colIndex
+                                    GardenCharacterTile(char, Modifier.width(layout.widthDp.dp).height(layout.heightDp.dp),
+                                        completed = lesson.characterIds.getOrNull(index) in lesson.completedCharacterIds,
+                                        onClick = { onCharacterClick(index) }, fontSize = layout.fontSp.sp,
+                                        cornerRadius = 10.dp * scale, accent = accent)
                                 }
                             }
                         }
@@ -1074,7 +1128,7 @@ private fun LoadingContent() {
 
 @Composable
 private fun EmptyContent(title: String, subtitle: String, emoji: String) {
-    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(28.dp)) {
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Background), shape = RoundedCornerShape(28.dp)) {
         Column(Modifier.padding(vertical = 46.dp, horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(emoji, fontSize = 54.sp); Spacer(Modifier.height(12.dp)); Text(title, style = MaterialTheme.typography.titleLarge, color = Ink); Spacer(Modifier.height(6.dp)); Text(subtitle, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF849094))
         }
@@ -1121,7 +1175,7 @@ private fun LearnScreen(
         ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack, colors = IconButtonDefaults.iconButtonColors(containerColor = Color.White)) { Icon(Icons.Filled.ArrowBack, "返回", tint = Ink) }
+                IconButton(onClick = onBack, colors = IconButtonDefaults.iconButtonColors(containerColor = Color.White)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回", tint = Ink) }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("${if (group.isKnown) "已认识的字" else "待认识的字"} · 第${group.groupNumber}组", style = MaterialTheme.typography.titleLarge, color = Ink)
@@ -1142,7 +1196,7 @@ private fun LearnScreen(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 900.dp)
+                    .widthIn(max = 900.dp * LocalGardenLayoutScale.current)
                     .aspectRatio(A4_PAPER_WIDTH_TO_HEIGHT),
                 shape = RoundedCornerShape(16.dp),
                 color = Color.White,
@@ -1477,29 +1531,30 @@ private fun CharacterStudyDialog(
 
     // 正在评测时也必须允许退出。ReadingDialog 被移除时会在 DisposableEffect 中取消并释放 SDK，
     // 避免一次没有回包的评测把整个字词句弹层永久锁住。
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Card(
-            modifier = Modifier.fillMaxWidth(.9f).fillMaxHeight(.9f),
-            shape = RoundedCornerShape(30.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
-        ) {
-            Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 16.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${card.word}的朗读练习", style = MaterialTheme.typography.titleLarge, color = Ink)
-                        Text("长按汉字可听正确读音", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF7C898D))
-                    }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Filled.Close, contentDescription = "关闭学习弹层", tint = Color(0xFF748185))
-                    }
+    StudyDialogFrame(card.word, onDismiss, footer = {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            passErrorMessage?.let { Text(it, color = Coral, fontSize = 13.sp) }
+            Button(
+                onClick = {
+                    if (!isPassing && !card.completed) showPassConfirmation = true
+                },
+                enabled = !isPassing && !card.completed,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).background(Leaf, CircleShape),
+                colors = ButtonDefaults.buttonColors(containerColor = Leaf),
+                shape = CircleShape
+            ) {
+                if (isPassing) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(9.dp))
+                    Text("正在记录…")
+                } else {
+                    Text(if (card.completed) "已满星" else "通过", fontSize = 25.sp, fontWeight = FontWeight.ExtraBold)
                 }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = Line)
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    item { StudySectionHeader("字", "先认识这个字") }
-                    item(key = card.character.target.practiceProgressKey()) {
+            }
+        }
+    }) {
+                    StudySectionHeader("字", "先认识这个字")
+                    key(card.character.target.practiceProgressKey()) {
                         StudyPracticeItem(
                             content = card.character,
                             activeTarget = activeTarget,
@@ -1513,24 +1568,9 @@ private fun CharacterStudyDialog(
                             onCorrectReadings = onCorrectReadings
                         )
                     }
-                    item { StudySectionHeader("词", "一词一行，逐个练习") }
-                    items(card.terms, key = { it.target.practiceProgressKey() }) { content ->
-                        StudyPracticeItem(
-                            content = content,
-                            activeTarget = activeTarget,
-                            otherRecordingActive = isActivePracticeLocked(),
-                            onStart = { start(content) },
-                            onDismiss = { activeTarget = null; activeRecordingState = null },
-                            onReadingStateChanged = { activeRecordingState = it },
-                            onSpeak = onSpeak,
-                            onStopPlayback = onStopPlayback,
-                            onCharacterAudioPointRead = onCharacterAudioPointRead,
-                            onCorrectReadings = onCorrectReadings
-                        )
-                    }
-                    if (card.sentences.isNotEmpty()) {
-                        item { StudySectionHeader("句", "读一读完整的句子") }
-                        items(card.sentences, key = { it.target.practiceProgressKey() }) { content ->
+                    StudySectionHeader("词", "一词一行，逐个练习")
+                    card.terms.forEach { content ->
+                        key(content.target.practiceProgressKey()) {
                             StudyPracticeItem(
                                 content = content,
                                 activeTarget = activeTarget,
@@ -1545,38 +1585,32 @@ private fun CharacterStudyDialog(
                             )
                         }
                     }
-                }
-                HorizontalDivider(modifier = Modifier.padding(top = 10.dp, bottom = 8.dp), color = Line)
-                passErrorMessage?.let {
-                    Text(it, color = Coral, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
-                }
-                Button(
-                    onClick = {
-                        if (isPassing || card.completed) return@Button
-                        showPassConfirmation = true
-                    },
-                    enabled = !isPassing && !card.completed,
-                    modifier = Modifier.fillMaxWidth().height(50.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-                    shape = RoundedCornerShape(17.dp)
-                ) {
-                    if (isPassing) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(9.dp))
-                        Text("正在记录…")
-                    } else {
-                        Text(if (card.completed) "已满星" else "通过")
+                    if (card.sentences.isNotEmpty()) {
+                        StudySectionHeader("句", "读一读完整的句子")
+                        card.sentences.forEach { content ->
+                            key(content.target.practiceProgressKey()) {
+                                StudyPracticeItem(
+                                    content = content,
+                                    activeTarget = activeTarget,
+                                    otherRecordingActive = isActivePracticeLocked(),
+                                    onStart = { start(content) },
+                                    onDismiss = { activeTarget = null; activeRecordingState = null },
+                                    onReadingStateChanged = { activeRecordingState = it },
+                                    onSpeak = onSpeak,
+                                    onStopPlayback = onStopPlayback,
+                                    onCharacterAudioPointRead = onCharacterAudioPointRead,
+                                    onCorrectReadings = onCorrectReadings
+                                )
+                            }
+                        }
                     }
-                }
-            }
-        }
     }
 
     if (showPassConfirmation) {
         Dialog(onDismissRequest = { if (!isPassing) showPassConfirmation = false }) {
             Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
                 Column(
-                    modifier = Modifier.padding(22.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(22.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text("确认通过？", color = Ink, fontWeight = FontWeight.ExtraBold)
@@ -1622,10 +1656,15 @@ private fun StudySectionHeader(title: String, subtitle: String) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Surface(shape = RoundedCornerShape(9.dp), color = WheatLight) {
-            Text(title, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), color = Ink, fontWeight = FontWeight.ExtraBold)
+        Surface(shape = RoundedCornerShape(14.dp), color = if (title == "字") CoralLight else LeafLight) {
+            Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                GardenArt(R.drawable.garden_sprout_shaded, Modifier.size(28.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(title, color = if (title == "字") Coral else Leaf,
+                    fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+            }
         }
-        Text(subtitle, color = Color(0xFF7C898D), fontSize = 13.sp)
+        Text(subtitle, color = Color(0xFF637393), fontSize = 17.sp, fontWeight = FontWeight.Bold)
         HorizontalDivider(modifier = Modifier.weight(1f), color = Line)
     }
 }
@@ -1685,33 +1724,14 @@ private fun StudyContentRow(
         content.learned -> Leaf
         else -> Sky
     }
-    val background = when {
-        content.learned -> LeafLight
-        else -> SkyLight
-    }
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = .62f))
-    ) {
-        // 未开始时也保留与朗读中完全一致的提示栏位置。这样点“开始”后，
-        // 卡片高度和后续词句的位置都不会因为出现状态提示而跳动。
-        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // 右侧操作区固定宽度，字、词、句的内容区便统一使用句子的最大可用宽度。
-                StudyContentPanel(
-                    content = content,
-                    accent = accent,
-                    background = background,
-                    contentPressed = isContentPressed,
-                    pointReadCharacterIndex = pointReadCharacterIndex,
-                    modifier = Modifier.weight(1f),
-                    onPressChanged = { isContentPressed = it },
+    StudyPracticeRow(completed = content.learned, accent = accent, contentPressed = isContentPressed,
+        readingWidth = when (content.target.targetType) { "character" -> 85.dp; "word" -> 115.dp; else -> null },
+        actionLabel = "开始", actionEnabled = !otherRecordingActive, onAction = onStart,
+        stars = { StudyStarRail(content.correctReadings, content.requiredReadings) },
+        dots = {},
+        reading = {
+            DialogReadingContent(target = content.target, enabled = true, studyInline = true, pointReadCharacterIndex = pointReadCharacterIndex,
+                onPressChanged = { isContentPressed = it },
                     onLongPress = { character, characterIndex ->
                         val target = content.target
                         val clickedContent = target.clickedReadingContent(character, characterIndex)
@@ -1736,99 +1756,18 @@ private fun StudyContentRow(
                             evaluationViewModel.recordHelpRequest(target, character, characterIndex)
                         }
                     }
-                )
-                // 即使满星后隐藏动画与按钮，也必须保留完整的右侧操作区，不能让文字区扩张。
-                Row(
-                    modifier = Modifier.width(172.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    PracticeRecordingDots(active = false, color = accent, visible = !content.learned)
-                    Button(
-                        onClick = onStart,
-                        enabled = !content.learned && !otherRecordingActive,
-                        modifier = Modifier.width(82.dp).graphicsLayer { alpha = if (content.learned) 0f else 1f },
-                        colors = ButtonDefaults.buttonColors(containerColor = accent),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 9.dp)
-                    ) {
-                        Text("开始", maxLines = 1)
-                    }
-                }
-            }
-            PracticeMessageSlot()
-        }
-    }
-}
-
-@Composable
-private fun StudyContentPanel(
-    content: LearningContent,
-    accent: Color,
-    background: Color,
-    contentPressed: Boolean,
-    pointReadCharacterIndex: Int?,
-    modifier: Modifier = Modifier,
-    onPressChanged: (Boolean) -> Unit,
-    onLongPress: (Char, Int) -> Unit
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = when {
-            contentPressed -> Sky.copy(alpha = .25f)
-            content.learned -> background.copy(alpha = .65f)
-            else -> Color.White
-        },
-        border = androidx.compose.foundation.BorderStroke(
-            if (contentPressed) 2.dp else 1.dp,
-            if (contentPressed) Sky else accent.copy(alpha = .55f)
-        )
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 7.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            StudyStarRail(content.correctReadings, content.requiredReadings)
-            // 与朗读中的文字使用同一套排版和内边距，避免切换状态时内容框高度变化；
-            // 未开始的行同样保留长按点读和按压反馈，不能因为 UI 重构而丢失原交互。
-            Box(Modifier.weight(1f)) {
-                DialogReadingContent(
-                    target = content.target,
-                    enabled = true,
-                    pointReadCharacterIndex = pointReadCharacterIndex,
-                    onPressChanged = onPressChanged,
-                    onLongPress = onLongPress
-                )
-            }
-        }
-    }
-}
-
-/** 行内朗读提示始终占位，状态切换只更新文案，绝不改变练习卡高度。 */
-@Composable
-private fun PracticeMessageSlot(message: String? = null, isError: Boolean = false) {
-    Box(
-        modifier = Modifier.fillMaxWidth().height(18.dp).padding(start = 28.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        message?.let {
-            Text(
-                it,
-                color = if (isError) EvaluationErrorRed else Color(0xFF718084),
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
             )
-        }
-    }
+        })
 }
+
+
 
 @Composable
 private fun StudyStarRail(correctReadings: Int, requiredReadings: Int) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy((-2).dp)) {
         repeat(requiredReadings) { index ->
-            Text(if (index < correctReadings) "★" else "☆", color = Wheat, fontSize = 17.sp, lineHeight = 17.sp)
+            Text(if (index < correctReadings) "★" else "☆", color = if (index < correctReadings) Color(0xFFFFC83D) else Color(0xFF86A7D5),
+                fontSize = 21.sp, lineHeight = 21.sp)
         }
     }
 }
@@ -1954,6 +1893,18 @@ private fun ReadingDialog(
                     controller?.release()
                     controller = null
                     val summary = parseTencentEvaluationSummary(msg, evaluationText, readingTarget.targetType)
+                    if (summary.wrongCharacterIndexes.isNotEmpty()) {
+                        val diagnostic = extractTencentDiagnostic(msg, evaluationText, readingTarget.targetType)
+                        val rawEvaluation = prepareTencentEvaluationDiagnostic(msg)
+                        scope.launch {
+                            evaluationViewModel.recordFailedDiagnostic(
+                                readingTarget, java.util.UUID.randomUUID().toString(),
+                                summary.wrongCharacterIndexes, evaluationReference.textMode,
+                                evaluationText.length, diagnostic.first, diagnostic.second,
+                                rawEvaluation.first, rawEvaluation.second
+                            )
+                        }
+                    }
                     wordSummaries[wordIndex] = summary
                     state = RecordingState.FINISHED
                     val correctReadingsThisAttempt = if (readingTarget.targetType == "character") {
@@ -1977,7 +1928,9 @@ private fun ReadingDialog(
                         message = "“${readingTarget.displayText}”完成，点击下一词继续"
                     } else {
                         evaluationSummary = summary
-                        message = if (correctReadingsThisAttempt > 0) {
+                        message = if (inline && (correctReadingsThisAttempt > 0 || summary.wrongCharacterIndexes.isNotEmpty())) {
+                            ""
+                        } else if (correctReadingsThisAttempt > 0) {
                             if (displayedCorrectReadingCount >= target.requiredCorrectReadings()) {
                                 "太棒啦，这一项读完了！"
                             } else if (target.targetType == "character") {
@@ -1985,8 +1938,10 @@ private fun ReadingDialog(
                             } else {
                                 "读对啦！再读 ${target.requiredCorrectReadings() - displayedCorrectReadingCount} 次就完成。"
                             }
+                        } else if (summary.wrongCharacterIndexes.isNotEmpty()) {
+                            ""
                         } else {
-                            "这次还没有点亮星星，看看红色的字，再读一次吧。"
+                            "这次评测未识别出有效朗读，请重试"
                         }
                     }
                 }
@@ -2130,6 +2085,7 @@ private fun ReadingDialog(
         else -> SkyLight
     }
     val isWaitingForResult = state == RecordingState.EVALUATING
+    val hasWrongCharacters = evaluationSummary?.wrongCharacterIndexes?.isNotEmpty() == true
     val hasCompletedCurrentTarget = displayedCorrectReadingCount >= target.requiredCorrectReadings()
     // 只在当前弹窗生命期内保留点读高亮；关闭后自然还原，绝不写入学习状态。
     var pointReadCharacterIndex by remember(target) { mutableStateOf<Int?>(null) }
@@ -2192,6 +2148,7 @@ private fun ReadingDialog(
         state == RecordingState.FINISHED && hasCompletedCurrentTarget -> "完成"
         state == RecordingState.FINISHED && isWordGroup && currentWordIndex < wordTargets.lastIndex -> "下一词"
         state == RecordingState.FINISHED && isWordGroup -> "再读一遍"
+        state == RecordingState.FINISHED && hasWrongCharacters -> "重试"
         state == RecordingState.FINISHED -> "开始"
         state == RecordingState.ERROR -> "重试"
         else -> "开始"
@@ -2217,13 +2174,13 @@ private fun ReadingDialog(
                 onAction = ::performAction
             )
         } else Card(
-            modifier = Modifier.widthIn(max = 500.dp).padding(24.dp),
+            modifier = Modifier.widthIn(max = 500.dp * LocalGardenLayoutScale.current).padding(24.dp),
             shape = RoundedCornerShape(32.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
+            colors = CardDefaults.cardColors(containerColor = Background)
         ) {
-            Column(Modifier.padding(30.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(30.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    IconButton(onClick = ::close, enabled = !isWaitingForResult, colors = IconButtonDefaults.iconButtonColors(contentColor = Color(0xFF748185))) { Icon(Icons.Filled.Close, if (isWaitingForResult) "正在生成结果，请稍候" else "关闭") }
+                    IconButton(onClick = ::close, enabled = true, colors = IconButtonDefaults.iconButtonColors(contentColor = Color(0xFF748185))) { Icon(Icons.Filled.Close, if (isWaitingForResult) "正在生成结果，请稍候" else "关闭") }
                 }
                 Surface(shape = CircleShape, color = light, modifier = Modifier.size(82.dp)) { Box(contentAlignment = Alignment.Center) { Text(if (state == RecordingState.FINISHED) "🎯" else "🎙️", fontSize = 42.sp) } }
                 Text(when (state) {
@@ -2295,100 +2252,27 @@ private fun InlineReadingPracticeRow(
     val completed = correctReadingCount >= requiredReadingCount
     val panelAccent = when {
         completed -> Leaf
-        state == RecordingState.RECORDING || state == RecordingState.EVALUATING -> Coral
-        wrongCharacterIndexes.isNotEmpty() -> Coral
+        state == RecordingState.PREPARING || state == RecordingState.RECORDING || state == RecordingState.EVALUATING -> Sky
+        wrongCharacterIndexes.isNotEmpty() -> StudyErrorBorder
         else -> Sky
     }
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = Color.White,
-        border = androidx.compose.foundation.BorderStroke(2.dp, panelAccent.copy(alpha = .72f))
-    ) {
-        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Surface(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    color = when {
-                        contentPressed -> Sky.copy(alpha = .25f)
-                        completed -> LeafLight.copy(alpha = .62f)
-                        else -> Color.White
-                    },
-                    border = androidx.compose.foundation.BorderStroke(
-                        if (contentPressed) 2.dp else 1.dp,
-                        if (contentPressed) Sky else panelAccent.copy(alpha = .55f)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(start = 7.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        StudyStarRail(correctReadingCount, requiredReadingCount)
-                        Box(Modifier.weight(1f)) {
-                            DialogReadingContent(
-                                target = target,
-                                enabled = true,
-                                wrongCharacterIndexes = wrongCharacterIndexes,
-                                pointReadCharacterIndex = pointReadCharacterIndex,
-                                onPressChanged = onPressChanged,
-                                onLongPress = onLongPress
-                            )
-                        }
-                    }
-                }
-                Row(
-                    modifier = Modifier.width(172.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    PracticeRecordingDots(
-                        active = state == RecordingState.RECORDING || state == RecordingState.EVALUATING,
-                        color = accent,
-                        // 最后一颗星点亮的同一帧即隐藏，位置仍由固定宽度的占位区域保持。
-                        visible = !completed
-                    )
-                    Button(
-                        onClick = onAction,
-                        enabled = !completed && actionEnabled,
-                        modifier = Modifier.width(82.dp).graphicsLayer { alpha = if (completed) 0f else 1f },
-                        colors = ButtonDefaults.buttonColors(containerColor = accent),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 9.dp)
-                    ) {
-                        Text(actionLabel, maxLines = 1)
-                    }
-                }
-            }
-            PracticeMessageSlot(
-                message = message,
-                isError = state == RecordingState.ERROR
-            )
-        }
-    }
+    StudyPracticeRow(completed = completed, accent = panelAccent,
+        contentPressed = contentPressed, actionLabel = actionLabel, actionEnabled = actionEnabled,
+        message = message, isError = state == RecordingState.ERROR || wrongCharacterIndexes.isNotEmpty(),
+        showHintBelowDots = state == RecordingState.PREPARING || state == RecordingState.RECORDING || state == RecordingState.EVALUATING,
+        readingWidth = when (target.targetType) { "character" -> 85.dp; "word" -> 115.dp; else -> null },
+        onAction = onAction,
+        stars = { StudyStarRail(correctReadingCount, requiredReadingCount) },
+        dots = { PracticeRecordingDots(active = state == RecordingState.PREPARING || state == RecordingState.RECORDING || state == RecordingState.EVALUATING) },
+        reading = {
+            DialogReadingContent(target = target, enabled = true, studyInline = true, wrongCharacterIndexes = wrongCharacterIndexes,
+                pointReadCharacterIndex = pointReadCharacterIndex, onPressChanged = onPressChanged, onLongPress = onLongPress)
+        })
 }
 
 @Composable
-private fun PracticeRecordingDots(active: Boolean, color: Color, visible: Boolean = true) {
-    if (active) {
-        Box(Modifier.width(80.dp).height(18.dp).graphicsLayer { alpha = if (visible) 1f else 0f }) {
-            RecordingAnimation(color)
-        }
-    } else {
-        Row(
-            modifier = Modifier.width(80.dp).height(18.dp).graphicsLayer { alpha = if (visible) 1f else 0f },
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            repeat(5) {
-                Surface(shape = CircleShape, color = color.copy(alpha = .32f), modifier = Modifier.size(12.dp)) {}
-            }
-        }
-    }
+private fun PracticeRecordingDots(active: Boolean) {
+    if (active) RecordingAnimation(Sky, large = true)
 }
 
 @Composable
@@ -2407,12 +2291,13 @@ private fun ReadingDialogContainer(
 }
 
 @Composable
-private fun RecordingAnimation(color: Color) {
+private fun RecordingAnimation(color: Color, large: Boolean = false) {
     val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "recording")
     // 圆点始终占用相同空间，只在自己的图层内缩放，避免把下方按钮来回顶动。
+    val dotSize = if (large) 24.dp else 12.dp
     Row(
-        modifier = Modifier.width(80.dp).height(18.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier.width(if (large) 152.dp else 80.dp).height(if (large) 28.dp else 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (large) 8.dp else 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         repeat(5) { index ->
@@ -2431,7 +2316,7 @@ private fun RecordingAnimation(color: Color) {
             Surface(
                 shape = CircleShape,
                 color = color,
-                modifier = Modifier.size(12.dp).graphicsLayer {
+                modifier = Modifier.size(dotSize).graphicsLayer {
                     scaleX = scale
                     scaleY = scale
                 }
@@ -2471,6 +2356,7 @@ private fun PracticeProgressRating(
 private fun DialogReadingContent(
     target: ReadingTarget,
     enabled: Boolean,
+    studyInline: Boolean = false,
     activeWordIndex: Int? = null,
     wordSummaries: List<EvaluationSummary?> = emptyList(),
     wrongCharacterIndexes: Set<Int> = emptySet(),
@@ -2484,6 +2370,7 @@ private fun DialogReadingContent(
             target = target.displayText,
             targetType = target.targetType,
             enabled = enabled,
+            studyInline = studyInline,
             wrongCharacterIndexes = wrongCharacterIndexes,
             pointReadCharacterIndexes = pointReadCharacterIndex?.let(::setOf).orEmpty(),
             onPressChanged = onPressChanged,
@@ -2571,10 +2458,11 @@ private fun ReadingTarget.clickedReadingContent(character: Char, characterIndex:
 }
 
 @Composable
-private fun DialogCharacterText(
+internal fun DialogCharacterText(
     target: String,
     targetType: String? = null,
     enabled: Boolean = true,
+    studyInline: Boolean = false,
     wrongCharacterIndexes: Set<Int> = emptySet(),
     pointReadCharacterIndexes: Set<Int> = emptySet(),
     modifier: Modifier = Modifier,
@@ -2584,7 +2472,8 @@ private fun DialogCharacterText(
     val isSentence = targetType == "sentence"
     val text = buildAnnotatedString {
         target.forEachIndexed { index, character ->
-            val color = if (character.isChineseCharacter() && index in wrongCharacterIndexes) EvaluationErrorRed else Ink
+            val color = if (character.isChineseCharacter() && index in wrongCharacterIndexes)
+                (if (studyInline) StudyErrorText else EvaluationErrorRed) else Ink
             // 点读高亮独立于错读样式：即使该字此前读错，也不改变错误红的语义。
             val background = when {
                 index in pointReadCharacterIndexes -> Sky.copy(alpha = .42f)
@@ -2609,7 +2498,7 @@ private fun DialogCharacterText(
     // 句子将文本块置于内容区中央，但固定一个略小于内容区的阅读宽度，
     // 让换行后的每一行从同一条左边线开始，读起来更自然。
     Box(
-        modifier = modifier.fillMaxWidth().padding(18.dp),
+        modifier = modifier.fillMaxWidth().padding(if (studyInline) 5.dp else 18.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -2659,16 +2548,20 @@ private fun DialogCharacterText(
                 textAlign = if (isSentence) TextAlign.Start else TextAlign.Center,
                 // 朗读弹层是孩子跟读时的主视觉：词、句需要明显大于普通正文，
                 // 句子保留较小一级以便较长内容在平板上自然换行。
-                fontSize = when (targetType) {
-                    "word" -> 40.sp
-                    "sentence" -> 34.sp
-                    else -> if (target.count { it.isChineseCharacter() } == 1) 58.sp else 34.sp
+                fontSize = when {
+                    studyInline && targetType == "word" -> 32.sp
+                    studyInline && targetType == "sentence" -> 22.sp
+                    studyInline -> 44.sp
+                    targetType == "word" -> 40.sp
+                    targetType == "sentence" -> 34.sp
+                    else -> if (target.count { it.isChineseCharacter() } == 1) 68.sp else 34.sp
                 },
                 letterSpacing = when (targetType) {
                     "word", "sentence" -> 1.5.sp
                     else -> 0.sp
                 },
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = if (studyInline) FontWeight.Bold else FontWeight.Normal,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Default
             ),
             onTextLayout = { layoutResult = it }
         )
@@ -2678,8 +2571,8 @@ private fun DialogCharacterText(
 private fun Char.isChineseCharacter(): Boolean = this in '\u4E00'..'\u9FFF'
 
 /**
- * SDK 回调的内容只保留在当前弹层。当前 TEXT_MODE=0 的实际回调中，错读时 MatchTag
- * 仍可能为 0，不能作为正误依据；优先按逐字 PronAccuracy 判定，缺少分数时才回退 MatchTag。
+ * SDK 回调的内容只保留在当前弹层。MatchTag=0 仅表示与参考文本匹配，
+ * 仍须检查逐项 PronAccuracy；非 0 或缺失均不通过。
  */
 private fun parseTencentEvaluationSummary(
     response: String,
@@ -2695,7 +2588,7 @@ private fun parseTencentEvaluationSummary(
         // 回调本身没有有效逐词结果时不给出“读对”的假反馈。
         expectedCharacterIndexes.toSet()
     } else {
-        words.toWrongCharacterIndexes(expectedText, expectedCharacterIndexes)
+        words.toWrongCharacterIndexes(expectedText, expectedCharacterIndexes, targetType)
     }
     return EvaluationSummary(
         wrongCharacterIndexes = wrongCharacterIndexes,
@@ -2703,13 +2596,67 @@ private fun parseTencentEvaluationSummary(
     )
 }
 
+/** 保留腾讯已知评分字段；Word 是腾讯返回字段，不是实际语音转写。 */
+internal fun extractTencentDiagnostic(response: String, expectedText: String, targetType: String): Pair<JsonArray, List<String>> {
+    val words = runCatching { Json.parseToJsonElement(response).firstTencentWords().orEmpty() }.getOrDefault(emptyList())
+    val fields = listOf("Word", "PronAccuracy", "MatchTag", "PronFluency", "PronCompletion", "TotalScore")
+    val safeWords = words.take(80).map { word ->
+        JsonObject(fields.mapNotNull { field ->
+            word.stringValue(field, field.replaceFirstChar { it.lowercase() })
+                ?.take(120)?.let { field to JsonPrimitive(it) }
+        }.toMap())
+    }
+    val reasons = buildSet {
+        if (words.isEmpty()) add("missing_words")
+        words.filter { it.stringValue("Word", "word").orEmpty().any(Char::isChineseCharacter) }.forEach { word ->
+            if (word.stringValue("PronAccuracy", "pronAccuracy")?.toDoubleOrNull()
+                    ?.toPercentScore()?.let { it < readingPronunciationThreshold(targetType) } == true) add("low_pron_accuracy")
+            when (word.stringValue("MatchTag", "matchTag")?.toIntOrNull()) {
+                0 -> Unit
+                null -> add("missing_match_tag")
+                else -> add("nonzero_match_tag")
+            }
+        }
+        if (words.sumOf { it.stringValue("Word", "word").orEmpty().count(Char::isChineseCharacter) } <
+            expectedText.count(Char::isChineseCharacter) && words.isNotEmpty()) add("unreturned_expected_characters")
+        if (words.any { word ->
+                val returned = word.stringValue("Word", "word").orEmpty().filter(Char::isChineseCharacter)
+                returned.isNotEmpty() && !expectedText.contains(returned)
+            }) add("mapping_uncertain")
+    }
+    return JsonArray(safeWords) to reasons.toList()
+}
+
+/** 保留腾讯回调的评测结构；凭证和音频等非评测内容不得写入诊断日志。 */
+private fun prepareTencentEvaluationDiagnostic(response: String): Pair<JsonObject?, String> {
+    val root = runCatching { Json.parseToJsonElement(response) as? JsonObject }.getOrNull()
+        ?: return null to "invalid_json"
+    var redacted = false
+    val forbidden = Regex("(?i)(secret|token|credential|authorization|password|audio|voice|base64|payload|private.?key|access.?key)")
+    fun clean(value: JsonElement, depth: Int): JsonElement {
+        if (depth > 24) return JsonPrimitive("[depth limit]").also { redacted = true }
+        return when (value) {
+            is JsonObject -> JsonObject(value.mapNotNull { (key, child) ->
+                if (forbidden.containsMatchIn(key)) { redacted = true; null }
+                else key to clean(child, depth + 1)
+            }.toMap())
+            is JsonArray -> JsonArray(value.map { clean(it, depth + 1) })
+            else -> value
+        }
+    }
+    val safe = clean(root, 0) as JsonObject
+    if (safe.toString().toByteArray(Charsets.UTF_8).size > 64 * 1024) return null to "too_large"
+    return safe to if (redacted) "redacted" else "complete"
+}
+
 /**
  * 腾讯会按字或词返回 Words。优先按返回文字在教学文本中的位置映射；识别字与参考字
  * 不一致时，回退为顺序映射，才能把“把甲读成乙”正确标红到教学文本中的甲。
  */
-private fun List<JsonObject>.toWrongCharacterIndexes(
+internal fun List<JsonObject>.toWrongCharacterIndexes(
     expectedText: String,
-    expectedCharacterIndexes: List<Int>
+    expectedCharacterIndexes: List<Int>,
+    targetType: String
 ): Set<Int> {
     val expectedCharacters = expectedCharacterIndexes.joinToString("") { expectedText[it].toString() }
     var expectedCursor = 0
@@ -2724,7 +2671,7 @@ private fun List<JsonObject>.toWrongCharacterIndexes(
             val characterStart = if (matchedStart >= 0) matchedStart else expectedCursor
             val mappedIndexes = expectedCharacterIndexes.drop(characterStart).take(returnedCharacters.length)
             expectedCursor = (characterStart + returnedCharacters.length).coerceAtMost(expectedCharacterIndexes.size)
-            if (resultWord.isPronunciationWrong()) addAll(mappedIndexes)
+            if (resultWord.isPronunciationWrong(targetType)) addAll(mappedIndexes)
         }
         // 对重复字朗读，“花花”不能通过参考文本“花花花”的第三次。腾讯未返回的
         // 参考字同样视为未读对；这也会让词、句漏读时维持原有的“不加星”行为。
@@ -2747,7 +2694,13 @@ private fun JsonElement.firstTencentWords(): List<JsonObject>? = when (this) {
     else -> null
 }
 
-private fun JsonObject.isPronunciationWrong(): Boolean {
+internal fun readingPronunciationThreshold(targetType: String): Double = when (targetType) {
+    "word" -> 50.0
+    "sentence" -> 30.0
+    else -> 60.0
+}
+
+internal fun JsonObject.isPronunciationWrong(targetType: String): Boolean {
     val word = stringValue("Word", "word")
     val characterCount = word?.count { it.isChineseCharacter() } ?: 0
     // TEXT_MODE=1 的结果可能在正式文本前包含 Word="*" 的额外音段。这些音段不映射
@@ -2755,15 +2708,9 @@ private fun JsonObject.isPronunciationWrong(): Boolean {
     if (characterCount == 0) return false
     val matchTag = stringValue("MatchTag", "matchTag")?.toIntOrNull()
     val pronunciationAccuracy = stringValue("PronAccuracy", "pronAccuracy")?.toDoubleOrNull()
-    val isWrong = when {
-        // SDK 会返回 0~1 或 0~100 两种量纲，统一为百分制后以 60 分作为读对阈值。
-        // TEXT_MODE=0 仍会有声学波动，不能用过低阈值掩盖；后续应切到携带指定拼音的
-        // TEXT_MODE=1，从根本提高单字评测的稳定性。
-        pronunciationAccuracy != null -> pronunciationAccuracy.toPercentScore() < 60.0
-        matchTag != null -> matchTag != 0
-        else -> false
-    }
-    return isWrong
+    // MatchTag=0 是必要条件，不能单独证明发音正确。腾讯分数缺失时沿用匹配回退。
+    return matchTag != 0 ||
+        (pronunciationAccuracy != null && pronunciationAccuracy.toPercentScore() < readingPronunciationThreshold(targetType))
 }
 
 private fun Double.toPercentScore(): Double = if (this <= 1.0) this * 100 else this
@@ -2774,65 +2721,107 @@ private fun JsonObject.stringValue(vararg keys: String): String? = keys.firstNot
 
 @Composable
 private fun ProfileScreen(
-    childName: String,
-    avatarUrl: String?,
-    userId: String,
-    onKnown: () -> Unit,
-    onPending: () -> Unit,
-    onLibrary: () -> Unit,
-    onHelped: () -> Unit,
-    onParentPasses: () -> Unit,
-    onGenerateLiteracyTasks: () -> Unit,
+    childName: String, avatarUrl: String?, userId: String, onNavigate: (Page) -> Unit,
+    onKnown: () -> Unit, onPending: () -> Unit, onLibrary: () -> Unit, onHelped: () -> Unit,
+    onParentPasses: () -> Unit, onGenerateLiteracyTasks: () -> Unit,
     libraryViewModel: LibraryViewModel = hiltViewModel()
 ) {
     val libraryState by libraryViewModel.uiState.collectAsState()
-
+    val scale = LocalGardenLayoutScale.current
     LaunchedEffect(userId) { libraryViewModel.load(userId) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 28.dp, end = 28.dp, top = 26.dp, bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
-    ) {
-        item { Text("我的小麦仓", style = MaterialTheme.typography.headlineLarge, color = Ink) }
-        item {
-            Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = SkyLight)) {
-                Row(Modifier.fillMaxWidth().padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = CircleShape, color = Color.White, modifier = Modifier.size(76.dp), border = androidx.compose.foundation.BorderStroke(3.dp, Wheat)) {
-                        Box(contentAlignment = Alignment.Center) {
-                            if (avatarUrl.isNullOrBlank()) {
-                                Text("🧒", fontSize = 42.sp)
-                            } else {
-                                AsyncImage(
-                                    model = avatarUrl,
-                                    contentDescription = "$childName 的头像",
-                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
-                                )
+    Column(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp),
+            contentAlignment = Alignment.TopCenter) {
+            val contentWidth = maxWidth.coerceAtMost(720.dp * scale)
+            val columns = gardenMenuColumns(contentWidth.value, LocalDensity.current.fontScale)
+            val menus = listOf(
+                GardenMenu("已认识的字", "看看我已经掌握了哪些字", R.drawable.garden_entry_book, Coral,
+                    Color(0xFFFFF3ED), Color(0xFFFFEEE7), Color(0xFFFFCBBD), onKnown),
+                GardenMenu("查看待认识的字", "这些字正等着学习", R.drawable.garden_entry_pencil, Leaf,
+                    Color(0xFFFAFFEF), Color(0xFFF1FFDE), Color(0xFFD8F7A3), onPending),
+                GardenMenu("字库", "收集我的汉字", R.drawable.garden_entry_books, Sky,
+                    Color(0xFFF0FBFF), Color(0xFFE7F6FF), Color(0xFFBBE6FF), onLibrary),
+                GardenMenu("帮助过的内容", "我请求朗读过的词和句", R.drawable.garden_entry_megaphone, Color(0xFF996000),
+                    Color(0xFFFFFAE9), Color(0xFFFFF7DF), Color(0xFFFFE89D), onHelped),
+                GardenMenu("通过记录", "查看学习通过记录", R.drawable.garden_entry_clipboard, Color(0xFF6330B6),
+                    Color(0xFFF7F2FF), Color(0xFFF0EBFF), Color(0xFFDECDFF), onParentPasses),
+                GardenMenu("智能添加识字", "输入汉字，生成词和句", R.drawable.garden_entry_add_blank, Leaf,
+                    Color(0xFFF3FFF3), Color(0xFFE9FFE9), Color(0xFFBDF5BD), onGenerateLiteracyTasks)
+            )
+            LazyColumn(Modifier.width(contentWidth).fillMaxHeight(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 24.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    if (columns == 2) {
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            ProfileIdentityCard(childName, avatarUrl, Modifier.width(350.dp * scale))
+                            if (libraryState.hasLocalData) {
+                                ProfileMetricCard(libraryState.characters.size.toString(), Modifier.width(138.dp * scale))
                             }
+                            GardenArt(R.drawable.garden_mascot_welcome, Modifier.size(116.dp * scale))
                         }
+                    } else {
+                        ProfileIdentityCard(childName, avatarUrl, Modifier.fillMaxWidth())
                     }
-                    Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f)) { Text(childName, style = MaterialTheme.typography.titleLarge, color = Ink); Text("今天也在认真认识汉字呀！", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF618091)) }
+                }
+                if (libraryState.hasLocalData && columns == 1) item {
+                    ProfileMetricCard(libraryState.characters.size.toString(), Modifier.fillMaxWidth())
+                }
+                items(menus.chunked(columns)) { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { menu -> ProfileMenuCard(menu, Modifier.weight(1f)) }
+                    }
                 }
             }
         }
-        if (libraryState.hasLocalData) {
-            item {
-                MetricCard(
-                    libraryState.characters.size.toString(),
-                    "累计认识汉字",
-                    "🌾",
-                    LeafLight,
-                    Modifier.fillMaxWidth()
-                )
+        LiteracyBottomNav(Page.PROFILE, onNavigate)
+    }
+}
+
+@Composable
+private fun ProfileIdentityCard(childName: String, avatarUrl: String?, modifier: Modifier) {
+    val scale = LocalGardenLayoutScale.current
+    ProfileDecoratedCard(modifier.heightIn(min = 108.dp * scale), Color(0xFFFFFCF6), Color(0xFFFFFDF5), Color(0xFFFFCCAC)) {
+        Image(painterResource(R.drawable.profile_floral_corner), null,
+            Modifier.align(Alignment.BottomStart).padding(start = 5.dp, bottom = 5.dp)
+                .width(148.dp).height(31.dp), contentScale = ContentScale.FillBounds)
+        Image(painterResource(R.drawable.profile_floral_corner), null,
+            Modifier.align(Alignment.BottomEnd).padding(end = 5.dp, bottom = 5.dp)
+                .width(106.dp).height(31.dp).graphicsLayer { scaleX = -1f },
+            contentScale = ContentScale.FillBounds)
+        Row(Modifier.align(Alignment.CenterStart).padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            AsyncImage(model = avatarUrl, contentDescription = "$childName 的头像",
+                placeholder = painterResource(R.drawable.garden_avatar_child), error = painterResource(R.drawable.garden_avatar_child),
+                fallback = painterResource(R.drawable.garden_avatar_child), contentScale = ContentScale.Crop,
+                modifier = Modifier.size(84.dp * scale).clip(CircleShape).border(3.dp, Wheat, CircleShape))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(childName, modifier = Modifier.weight(1f, fill = false),
+                        color = Ink, fontSize = 24.sp * scale, fontWeight = FontWeight.ExtraBold)
+                    GardenArt(R.drawable.garden_study_rays, Modifier.size(28.dp))
+                }
+                Text("今天也在认真认识汉字呀！", color = Color(0xFF687D9F), fontSize = 14.sp)
             }
         }
-        item { Text("我的学习", style = MaterialTheme.typography.titleLarge, color = Ink) }
-        item { ProfileMenuCard("已认识的字", "看看我已经掌握了哪些字", Icons.Filled.CheckCircle, Leaf, LeafLight, onKnown) }
-        item { ProfileMenuCard("查看待认识的字", "看看接下来要学习哪些汉字", Icons.Filled.AutoStories, Wheat, WheatLight, onPending) }
-        item { ProfileMenuCard("字库", "按拼音收集我的汉字", Icons.Filled.LibraryBooks, Sky, SkyLight, onLibrary) }
-        item { ProfileMenuCard("帮助过的内容", "看看我请求朗读过的词和句", Icons.Filled.HelpOutline, Coral, CoralLight, onHelped) }
-        item { ProfileMenuCard("通过记录", "查看家长手动通过时的星星状态", Icons.Filled.CheckCircle, Leaf, LeafLight, onParentPasses) }
-        item { ProfileMenuCard("智能添加识字", "输入汉字，自动生成字库范围内的词和句", Icons.Filled.AddCircle, Leaf, LeafLight, onGenerateLiteracyTasks) }
+    }
+}
+
+@Composable
+private fun ProfileMetricCard(value: String, modifier: Modifier) {
+    val scale = LocalGardenLayoutScale.current
+    Surface(modifier.heightIn(min = 108.dp * scale), shape = RoundedCornerShape(22.dp), color = LeafLight.copy(alpha = .97f),
+        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White), shadowElevation = 4.dp) {
+        Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center) {
+            Text(value, fontSize = 38.sp * scale, fontWeight = FontWeight.ExtraBold, color = Leaf)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                GardenArt(R.drawable.garden_sprout_shaded, Modifier.size(25.dp))
+                Text("累计认识汉字", color = Leaf, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
     }
 }
 
@@ -2849,8 +2838,8 @@ private fun GenerateLiteracyTasksDialog(
     var isWorking by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
-    val normalizedCharacters = characters.trim()
-    val validInput = normalizedCharacters.isNotEmpty() && normalizedCharacters.all { it.isChineseCharacter() }
+    val inputResult = parseLiteracyCharacterInput(characters)
+    val normalizedCharacters = inputResult.characters
     val hasTasksToSave = editableTasks.isNotEmpty()
     LaunchedEffect(helpedCharacter) {
         if (helpedCharacter == null) return@LaunchedEffect
@@ -2880,231 +2869,79 @@ private fun GenerateLiteracyTasksDialog(
                 return@launch
             }
             isWorking = true
-            val result = onSave(destination, normalizedCharacters, tasks)
+            val result = onSave(destination, if (helpedCharacter != null) helpedCharacter else normalizedCharacters, tasks)
             if (result.isSuccess) onDismiss()
             else errorMessage = result.exceptionOrNull()?.message ?: "保存识字任务失败，请稍后重试"
             isWorking = false
         }
     }
 
-    Dialog(
-        onDismissRequest = { if (!isWorking) onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    fun loadPreview() {
+        coroutineScope.launch {
+            val currentInput = if (helpedCharacter != null) LiteracyCharacterInput(helpedCharacter)
+                else parseLiteracyCharacterInput(characters)
+            currentInput.error?.let { errorMessage = it; return@launch }
+            isWorking = true
+            errorMessage = null
+            onPreview(currentInput.characters).onSuccess { loaded ->
+                preview = loaded
+                editableTasks = loaded.tasks.map { EditableLiteracyTask(it.character, it.words.joinToString("、") { word -> word.text }, it.sentence.text) }
+            }.onFailure { errorMessage = it.message ?: "生成识字内容失败，请稍后重试" }
+            isWorking = false
+        }
+    }
+    GardenDialogFrame(
+        title = if (helpedCharacter != null) "添加到已认识的字" else "智能添加识字",
+        subtitle = if (preview == null && helpedCharacter == null) "输入汉字，自动生成学习内容" else "字不可修改；词和句子可按需要修改",
+        onDismiss = onDismiss, closeEnabled = !isWorking,
+        maxDialogWidth = 650.dp, maxDialogHeight = 450.dp
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(.92f).widthIn(max = 680.dp).heightIn(max = 760.dp).padding(18.dp),
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(if (helpedCharacter != null) "添加到已认识的字" else if (preview == null) "智能添加识字" else "确认识字内容", style = MaterialTheme.typography.headlineSmall, color = Ink)
-                        Text(
-                            if (helpedCharacter != null || preview != null) "字不可修改；词和句子可按需要修改" else "DeepSeek V4 Flash 会按字库生成学习内容",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFF7D898C)
-                        )
-                    }
-                    IconButton(onClick = onDismiss, enabled = !isWorking) {
-                        Icon(Icons.Filled.Close, "关闭", tint = Ink)
-                    }
+        item {
+            GardenPanel(tint = SkyLight) {
+                if (helpedCharacter != null) Text("目标字：$helpedCharacter", color = Ink, style = MaterialTheme.typography.titleLarge)
+                else OutlinedTextField(value = characters, onValueChange = { characters = it; errorMessage = null },
+                    enabled = !isWorking && preview == null, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("要添加的汉字") }, placeholder = { Text("例如：春夏秋冬") },
+                    supportingText = { Text("支持空格、顿号或逗号分隔；去重后一次最多 12 个字") },
+                    isError = characters.isNotBlank() && inputResult.error != null, shape = RoundedCornerShape(20.dp))
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                preview?.skippedExistingCharacters?.takeIf { it.isNotEmpty() }?.let {
+                    GardenMetricStrip("已存在待认识任务，不会覆盖：${it.joinToString("、")}")
                 }
-                if (preview == null && helpedCharacter != null) {
-                    if (isWorking) CircularProgressIndicator(color = Leaf)
-                } else if (preview == null) {
-                    OutlinedTextField(
-                        value = characters,
-                        onValueChange = {
-                            characters = it
-                            errorMessage = null
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isWorking,
-                        singleLine = true,
-                        label = { Text("要添加的汉字") },
-                        placeholder = { Text("例如：春夏秋冬") },
-                        supportingText = {
-                            Text("仅限汉字；去重后一次最多 12 个字", color = Color(0xFF7D898C))
-                        },
-                        isError = characters.isNotBlank() && !validInput,
-                        shape = RoundedCornerShape(18.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Sky,
-                            unfocusedBorderColor = Line,
-                            focusedContainerColor = Color.White,
-                            unfocusedContainerColor = Color.White
-                        )
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = WheatLight,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            "每个字生成词语和句子。词语优先使用字库里的字加本次输入字；句子允许少量字库外生字，不限制字数。",
-                            modifier = Modifier.padding(14.dp),
-                            fontSize = 13.sp,
-                            color = Ink
-                        )
-                    }
-                } else {
-                    preview?.knownCharacters?.takeIf { it.isNotEmpty() }?.let { knownCharacters ->
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = WheatLight,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                "以下汉字已在字库中，仍已生成内容，可按需要删除：${knownCharacters.joinToString("、")}",
-                                modifier = Modifier.padding(14.dp),
-                                fontSize = 13.sp,
-                                color = Ink
-                            )
-                        }
-                    }
-                    preview?.skippedExistingCharacters?.takeIf { it.isNotEmpty() }?.let { skipped ->
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = WheatLight,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                "已存在待认识任务，不会覆盖：${skipped.joinToString("、")}",
-                                modifier = Modifier.padding(14.dp),
-                                fontSize = 13.sp,
-                                color = Ink
-                            )
-                        }
-                    }
-                    preview?.skippedRecognizedCharacters?.takeIf { it.isNotEmpty() }?.let { skipped ->
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = WheatLight,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                "以下汉字已在已认识中：添加到待认识会转入待认识；添加到已认识会置顶：${skipped.joinToString("、")}",
-                                modifier = Modifier.padding(14.dp),
-                                fontSize = 13.sp,
-                                color = Ink
-                            )
-                        }
-                    }
-                    if (hasTasksToSave) {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(editableTasks, key = { it.character }) { task ->
-                                EditableLiteracyTaskCard(
-                                    task = task,
-                                    isKnownCharacter = preview?.knownCharacters?.contains(task.character) == true,
-                                    isRecognizedCharacter = preview?.skippedRecognizedCharacters?.contains(task.character) == true,
-                                    onWordsChange = { words ->
-                                        editableTasks = editableTasks.map {
-                                            if (it.character == task.character) it.copy(wordsText = words) else it
-                                        }
-                                        errorMessage = null
-                                    },
-                                    onSentenceChange = { sentence ->
-                                        editableTasks = editableTasks.map {
-                                            if (it.character == task.character) it.copy(sentence = sentence) else it
-                                        }
-                                        errorMessage = null
-                                    },
-                                    onDelete = {
-                                        editableTasks = editableTasks.filter { it.character != task.character }
-                                        errorMessage = null
-                                    },
-                                    canDelete = helpedCharacter == null
-                                )
-                            }
-                        }
-                    } else {
-                        Text("输入的汉字都已在待认识任务中。", color = Color(0xFF7D898C))
-                    }
+                preview?.skippedRecognizedCharacters?.takeIf { it.isNotEmpty() }?.let {
+                    GardenMetricStrip("以下汉字已在已认识中：添加到待认识会转入待认识；添加到已认识会置顶：${it.joinToString("、")}")
                 }
-                errorMessage?.let { Text(it, color = Coral, fontSize = 13.sp) }
-                if (preview == null && helpedCharacter != null) {
-                    if (!isWorking) Button(
-                        onClick = {
-                            coroutineScope.launch {
-                                isWorking = true
-                                onPreview(helpedCharacter).onSuccess { loaded ->
-                                    preview = loaded
-                                    editableTasks = loaded.tasks.map { task ->
-                                        EditableLiteracyTask(task.character,
-                                            task.words.joinToString("、") { it.text }, task.sentence.text)
-                                    }
-                                    errorMessage = null
-                                }.onFailure { errorMessage = it.message ?: "加载失败，请重试" }
-                                isWorking = false
-                            }
-                        }, modifier = Modifier.fillMaxWidth()
-                    ) { Text("重试加载") }
-                } else if (preview == null) {
-                    Button(
-                        onClick = {
-                            coroutineScope.launch {
-                                if (!validInput) {
-                                    errorMessage = "请输入一个或多个汉字"
-                                    return@launch
-                                }
-                                isWorking = true
-                                val result = onPreview(normalizedCharacters)
-                                if (result.isSuccess) {
-                                    preview = result.getOrThrow()
-                                    editableTasks = preview!!.tasks.map {
-                                        EditableLiteracyTask(
-                                            character = it.character,
-                                            wordsText = it.words.joinToString("、") { example -> example.text },
-                                            sentence = it.sentence.text
-                                        )
-                                    }
-                                } else {
-                                    errorMessage = result.exceptionOrNull()?.message ?: "生成识字内容失败，请稍后重试"
-                                }
-                                isWorking = false
-                            }
-                        },
-                        enabled = !isWorking,
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-                        shape = RoundedCornerShape(17.dp)
-                    ) {
-                        if (isWorking) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                            Spacer(Modifier.width(9.dp))
-                            Text("正在生成…")
-                        } else {
-                            Icon(Icons.Filled.AddCircle, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            Text("生成内容")
-                        }
+            }
+        }
+        items(editableTasks, key = { it.character }) { task ->
+            EditableLiteracyTaskCard(task,
+                isKnownCharacter = preview?.knownCharacters?.contains(task.character) == true,
+                isRecognizedCharacter = preview?.skippedRecognizedCharacters?.contains(task.character) == true,
+                onWordsChange = { words -> editableTasks = editableTasks.map { if (it.character == task.character) it.copy(wordsText = words) else it }; errorMessage = null },
+                onSentenceChange = { sentence -> editableTasks = editableTasks.map { if (it.character == task.character) it.copy(sentence = sentence) else it }; errorMessage = null },
+                onDelete = { editableTasks = editableTasks.filter { it.character != task.character }; errorMessage = null },
+                canDelete = helpedCharacter == null)
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                errorMessage?.let { Text(it, color = EvaluationErrorRed) }
+                if (preview != null && !hasTasksToSave) Text("暂无可添加的字词句，可重新生成。", color = Ink)
+                if (isWorking) Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(24.dp), color = Sky); Spacer(Modifier.width(12.dp)); Text("正在处理…", color = Ink)
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (helpedCharacter == null || preview == null) Button(onClick = ::loadPreview, enabled = !isWorking,
+                        colors = ButtonDefaults.buttonColors(containerColor = Sky)) {
+                        Text(if (helpedCharacter != null) "重试加载" else if (preview == null) "生成内容" else "重新生成内容")
                     }
-                } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (helpedCharacter == null) OutlinedButton(
-                            onClick = { saveEditedTasks(LiteracySaveDestination.PENDING) },
-                            enabled = !isWorking && hasTasksToSave,
-                            modifier = Modifier.weight(1f).height(52.dp),
-                            shape = RoundedCornerShape(17.dp)
-                        ) {
-                            Text(if (isWorking) "正在保存…" else "确认并添加到待认识", maxLines = 2)
-                        }
-                        Button(
-                            onClick = { saveEditedTasks(LiteracySaveDestination.RECOGNIZED) },
-                            enabled = !isWorking && hasTasksToSave,
-                            modifier = if (helpedCharacter != null) Modifier.fillMaxWidth().height(52.dp) else Modifier.weight(1f).height(52.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-                            shape = RoundedCornerShape(17.dp)
-                        ) {
-                            Text(if (isWorking) "正在保存…" else "确认并添加到已认识", maxLines = 2)
-                        }
+                    if (preview != null) {
+                        if (helpedCharacter == null) Button(onClick = { saveEditedTasks(LiteracySaveDestination.PENDING) },
+                            enabled = !isWorking && hasTasksToSave, colors = ButtonDefaults.buttonColors(containerColor = Wheat, contentColor = Ink)) { Text("添加到待认识") }
+                        Button(onClick = { saveEditedTasks(LiteracySaveDestination.RECOGNIZED) }, enabled = !isWorking && hasTasksToSave,
+                            colors = ButtonDefaults.buttonColors(containerColor = Leaf)) { Text(if (helpedCharacter != null) "确认并添加到已认识" else "添加到已认识") }
                     }
                 }
             }
@@ -3255,77 +3092,64 @@ private fun HelpedCharactersScreen(
         }
     }
     LaunchedEffect(userId) { viewModel.load(userId) }
-    Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
-        BackHeader("帮助过的内容", "这些词和句请求朗读过", onBack)
-        Spacer(Modifier.height(18.dp))
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    LazyColumn(Modifier.fillMaxHeight().widthIn(max = 720.dp * LocalGardenLayoutScale.current), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item {
+            BackHeader("帮助过的内容", "这些词和句请求朗读过", onBack) {
+                Button(onClick = {
+                    pendingExportContent = state.contents.toHelpedContentsTxt()
+                    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                    createDocumentLauncher.launch("帮助过的内容_$timestamp.txt")
+                }, enabled = state.contents.isNotEmpty(), colors = ButtonDefaults.buttonColors(containerColor = Leaf)) {
+                    Icon(Icons.Default.Download, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("下载 TXT", fontSize = 14.sp)
+                }
+            }
+        }
+        item {
+            Column {
+                exportMessage?.let { Text(it, color = Ink) }
+                state.deleteErrorMessage?.let { Text(it, color = EvaluationErrorRed) }
+                checkError?.let { Text(it, color = EvaluationErrorRed) }
+            }
+        }
         when {
-            state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Coral)
-            }
-            state.errorMessage != null -> Column(
-                modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(state.errorMessage!!, color = Color(0xFF839094))
-                Button(onClick = { viewModel.load(userId) }, colors = ButtonDefaults.buttonColors(containerColor = Sky)) { Text("重新加载") }
-            }
-            state.contents.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("还没有请求过帮助的内容", color = Color(0xFF839094), fontSize = 16.sp)
-            }
-            else -> Column(Modifier.fillMaxSize()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        onClick = {
-                            pendingExportContent = state.contents.toHelpedContentsTxt()
-                            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-                            createDocumentLauncher.launch("帮助过的内容_$timestamp.txt")
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-                        shape = RoundedCornerShape(18.dp)
-                    ) {
-                        Icon(Icons.Filled.Download, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("下载 TXT")
-                    }
-                    exportMessage?.let { message ->
-                        Spacer(Modifier.width(10.dp))
-                        Text(message, color = if (message == "已下载 TXT 文档") Leaf else Coral, fontSize = 13.sp)
+            state.isLoading -> item { LoadingContent() }
+            state.errorMessage != null -> item {
+                GardenPanel {
+                    Text(state.errorMessage!!, color = EvaluationErrorRed)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        Button(onClick = { viewModel.load(userId) }) { Text("重新加载") }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                state.deleteErrorMessage?.let { message ->
-                    Text(message, color = Coral, fontSize = 13.sp)
-                    Spacer(Modifier.height(8.dp))
-                }
-                checkError?.let { message ->
-                    Text(message, color = Coral, fontSize = 13.sp)
-                    Spacer(Modifier.height(8.dp))
-                }
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+            }
+            state.contents.isEmpty() -> item { EmptyContent("还没有请求过帮助", "长按学习内容可以听正确读音", "📖") }
+            else -> {
                     items(state.contents, key = { it.id }) { item ->
                         Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = WheatLight)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(start = 18.dp, top = 12.dp, end = 8.dp, bottom = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                                ) {
-                                    Text(item.highlightedTargetText(), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Ink)
-                                    Text(if (item.targetType == "sentence") "请求朗读过的句子" else "请求朗读过的词", fontSize = 12.sp, color = Color(0xFF7D898C))
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    GardenArt(R.drawable.garden_entry_megaphone, Modifier.size(58.dp * LocalGardenLayoutScale.current))
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        Text(item.highlightedTargetText(), fontSize = 24.sp * LocalGardenLayoutScale.current, fontWeight = FontWeight.ExtraBold, color = Ink)
+                                        if (item.highlightedCharacterIndex() == null) Text("旧记录无法定位目标字，可保留或删除", color = EvaluationErrorRed)
+                                        Text(if (item.targetType == "sentence") "请求朗读过的句子" else "请求朗读过的词", fontSize = 16.sp, color = Color(0xFF7D898C))
+                                    }
                                 }
                                 val targetCharacter = item.requestedCharacter?.takeIf { character ->
                                     character.length == 1 && character[0].isChineseCharacter() &&
                                         item.highlightedCharacterIndex() != null
                                 }
-                                TextButton(
+                                FlowRow(Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    colors = ButtonDefaults.buttonColors(containerColor = Leaf),
                                     onClick = {
-                                        if (checkingHelpId != null) return@TextButton
+                                        if (checkingHelpId != null) return@Button
                                         checkError = null
                                         checkingHelpId = item.id
                                         coroutineScope.launch {
@@ -3344,31 +3168,33 @@ private fun HelpedCharactersScreen(
                                 ) {
                                     if (checkingHelpId == item.id) {
                                         CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Leaf, strokeWidth = 2.dp)
-                                    } else Text("加入已认识", color = Leaf)
+                                    } else Text("加入已认识")
                                 }
-                                TextButton(
+                                Button(
+                                    colors = ButtonDefaults.buttonColors(containerColor = Coral),
                                     onClick = { viewModel.delete(userId, item.id) },
                                     enabled = item.id !in state.deletingContentIds
                                 ) {
                                     if (item.id in state.deletingContentIds) {
                                         CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Coral, strokeWidth = 2.dp)
                                     } else {
-                                        Icon(Icons.Filled.Delete, contentDescription = "删除这条帮助记录", tint = Coral)
+                                        Icon(Icons.Filled.Delete, contentDescription = null, tint = Color.White)
                                         Spacer(Modifier.width(3.dp))
-                                        Text("删除", color = Coral)
+                                        Text("删除")
                                     }
+                                }
                                 }
                             }
                         }
                     }
-                }
             }
         }
     }
+    }
     alreadyRecognizedCharacter?.let { character ->
         Dialog(onDismissRequest = { alreadyRecognizedCharacter = null }) {
-            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Background)) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                     Text("无需重复添加", style = MaterialTheme.typography.headlineSmall, color = Ink)
                     Text("“$character”已在已认识的字中，无需重复添加。", color = Ink)
                     Button(
@@ -3451,64 +3277,54 @@ private fun ParentPassesScreen(
     var isClearing by remember { mutableStateOf(false) }
     var operationErrorMessage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(userId) { viewModel.load(userId) }
-    Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
-        BackHeader("通过记录", "家长手动确认时保留的星级快照", onBack)
-        if (state.records.isNotEmpty()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("共 ${state.records.size} 条记录", fontSize = 13.sp, color = Color(0xFF5B7B68))
-                Spacer(Modifier.weight(1f))
-                TextButton(
-                    onClick = { showClearAllConfirmation = true },
-                    enabled = deletingRecordId == null && undoingRecordId == null && !isClearing
-                ) { Text(if (isClearing) "正在清空…" else "清空全部", color = Coral) }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    LazyColumn(Modifier.fillMaxHeight().widthIn(max = 760.dp * LocalGardenLayoutScale.current), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { BackHeader("通过记录", "家长手动确认时保留的星级快照", onBack) }
+        item {
+            Column {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("共 ${state.records.size} 条记录", color = Ink, style = MaterialTheme.typography.titleMedium)
+                    Button(onClick = { showClearAllConfirmation = true },
+                        enabled = state.records.isNotEmpty() && deletingRecordId == null && undoingRecordId == null && !isClearing,
+                        colors = ButtonDefaults.buttonColors(containerColor = Coral)) { Text(if (isClearing) "正在清空…" else "清空全部") }
+                }
+                operationErrorMessage?.let { Text(it, color = EvaluationErrorRed) }
             }
         }
-        operationErrorMessage?.let { message ->
-            Text(message, color = Coral, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
-        }
-        Spacer(Modifier.height(12.dp))
         when {
-            state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Leaf)
-            }
-            state.errorMessage != null -> Column(
-                modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(state.errorMessage!!, color = Color(0xFF839094))
-                Button(onClick = { viewModel.load(userId) }, colors = ButtonDefaults.buttonColors(containerColor = Sky)) {
-                    Text("重新加载")
+            state.isLoading -> item { LoadingContent() }
+            state.errorMessage != null -> item {
+                GardenPanel {
+                    Text(state.errorMessage!!, color = EvaluationErrorRed)
+                    Button(onClick = { viewModel.load(userId) }) { Text("重新加载") }
                 }
             }
-            state.records.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("还没有家长通过记录", color = Color(0xFF839094), fontSize = 16.sp)
-            }
-            else -> LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp)
-            ) {
+            state.records.isEmpty() -> item { EmptyContent("还没有家长通过记录", "通过时会保留当时的真实星数", "🌱") }
+            else -> {
                 items(state.records, key = { it.id }) { record ->
                     Card(
                         shape = RoundedCornerShape(22.dp),
                         colors = CardDefaults.cardColors(containerColor = LeafLight)
                     ) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text(record.character, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Ink)
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    if (record.contentSource == ReadingContentSource.RECOGNIZED.wireValue) "已认识字复习" else "待认识字学习",
-                                    fontSize = 13.sp,
-                                    color = Color(0xFF5B7B68)
-                                )
-                                Spacer(Modifier.weight(1f))
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                GardenCharacterTile(record.character, Modifier.size(72.dp * LocalGardenLayoutScale.current), fontSize = 46.sp * LocalGardenLayoutScale.current)
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        if (record.contentSource == ReadingContentSource.RECOGNIZED.wireValue) "已认识字复习" else "待认识字学习",
+                                        fontSize = 16.sp, color = Color(0xFF5B7B68)
+                                    )
+                                    Text(record.passedAtInChina(), fontSize = 14.sp, color = Color(0xFF5B7B68))
+                                }
+                                if (record.undoneAt == null) {
+                                    Button(onClick = { recordPendingUndo = record },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Wheat, contentColor = Ink),
+                                        enabled = deletingRecordId == null && undoingRecordId == null && !isClearing,
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)) {
+                                        Text("撤销通过", fontSize = 14.sp)
+                                    }
+                                }
                                 IconButton(
                                     onClick = { recordPendingDeletion = record },
                                     enabled = deletingRecordId == null && undoingRecordId == null && !isClearing
@@ -3520,29 +3336,20 @@ private fun ParentPassesScreen(
                                     )
                                 }
                             }
-                            Text(record.passedAtInChina(), fontSize = 13.sp, color = Color(0xFF5B7B68))
-                            Text("通过前：${record.starSnapshot.describe()}", fontSize = 14.sp, color = Ink)
-                            if (record.undoneAt == null) {
-                                TextButton(
-                                    onClick = { recordPendingUndo = record },
-                                    enabled = deletingRecordId == null && undoingRecordId == null && !isClearing,
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                                ) { Text("撤销通过", color = Color(0xFFB66B27)) }
-                            } else {
-                                Text("已撤销：${record.undoneAtInChina()}", fontSize = 13.sp, color = Color(0xFF5B7B68))
-                            }
+                            ParentPassSnapshotPanel(record.starSnapshot)
+                            record.undoneAt?.let { Text("已撤销：${record.undoneAtInChina()}", fontSize = 14.sp, color = Color(0xFF5B7B68)) }
                         }
                     }
                 }
             }
         }
     }
-
+    }
     recordPendingDeletion?.let { record ->
         Dialog(onDismissRequest = { if (deletingRecordId == null && undoingRecordId == null) recordPendingDeletion = null }) {
             Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
                 Column(
-                    modifier = Modifier.padding(22.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(22.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text("删除这条通过记录？", color = Ink, fontWeight = FontWeight.ExtraBold)
@@ -3582,7 +3389,7 @@ private fun ParentPassesScreen(
         Dialog(onDismissRequest = { if (undoingRecordId == null) recordPendingUndo = null }) {
             Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
                 Column(
-                    modifier = Modifier.padding(22.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(22.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text("撤销这次通过？", color = Ink, fontWeight = FontWeight.ExtraBold)
@@ -3625,7 +3432,7 @@ private fun ParentPassesScreen(
         Dialog(onDismissRequest = { if (!isClearing) showClearAllConfirmation = false }) {
             Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
                 Column(
-                    modifier = Modifier.padding(22.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(22.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text("清空全部通过记录？", color = Ink, fontWeight = FontWeight.ExtraBold)
@@ -3661,12 +3468,6 @@ private fun ParentPassesScreen(
         }
     }
 }
-
-private fun ParentPassStarSnapshot.describe(): String = buildList {
-    add("字 ${character.earned}/${character.required}★")
-    words.forEachIndexed { index, state -> add("词${index + 1} ${state.earned}/${state.required}★") }
-    sentences.forEachIndexed { index, state -> add("句${index + 1} ${state.earned}/${state.required}★") }
-}.joinToString("；")
 
 private val chinaZone: ZoneId = ZoneId.of("Asia/Shanghai")
 private val parentPassTimeFormatter: DateTimeFormatter =
@@ -3731,19 +3532,49 @@ private fun HelpedContent.highlightedTargetText() = buildAnnotatedString {
     )
 }
 
+private data class GardenMenu(
+    val title: String, val subtitle: String, val art: Int, val color: Color,
+    val topColor: Color, val bottomColor: Color, val borderColor: Color,
+    val onClick: () -> Unit
+)
+
 @Composable
-private fun MetricCard(value: String, label: String, emoji: String, color: Color, modifier: Modifier) {
-    Card(modifier = modifier, shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = color)) {
-        Column(Modifier.padding(18.dp)) { Text(emoji, fontSize = 25.sp); Text(value, style = MaterialTheme.typography.headlineMedium, color = Ink); Text(label, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF728086)) }
+private fun ProfileDecoratedCard(
+    modifier: Modifier, topColor: Color, bottomColor: Color, borderColor: Color,
+    content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    Box(modifier.shadow(4.dp, shape).clip(shape)
+        .background(Brush.verticalGradient(listOf(topColor, bottomColor)))
+        .border(3.dp, Color.White, shape)) {
+        Box(Modifier.matchParentSize().padding(4.dp)
+            .border(3.dp, borderColor, RoundedCornerShape(14.dp)))
+        content()
     }
 }
 
 @Composable
-private fun ProfileMenuCard(title: String, sub: String, icon: ImageVector, color: Color, light: Color, onClick: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = RoundedCornerShape(16.dp), color = light, modifier = Modifier.size(54.dp)) { Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = color, modifier = Modifier.size(29.dp)) } }
-            Spacer(Modifier.width(15.dp)); Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleMedium, color = Ink); Text(sub, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF839094)) }; Icon(Icons.Filled.KeyboardArrowRight, null, tint = color)
+private fun ProfileMenuCard(menu: GardenMenu, modifier: Modifier) {
+    val scale = LocalGardenLayoutScale.current
+    ProfileDecoratedCard(modifier.heightIn(min = 84.dp * scale).clickable(onClick = menu.onClick),
+        menu.topColor, menu.bottomColor, menu.borderColor) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            GardenArt(menu.art, Modifier.width(82.dp * scale).height(66.dp * scale))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(menu.title, color = menu.color, fontSize = 20.sp * scale, fontWeight = FontWeight.ExtraBold)
+                Text(menu.subtitle, color = Color(0xFF687D9F), fontSize = 14.sp * scale)
+            }
+            Box(Modifier.size(34.dp).background(menu.borderColor, CircleShape),
+                contentAlignment = Alignment.Center) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val stroke = 3.dp.toPx()
+                    drawLine(menu.color, Offset(size.width * .40f, size.height * .28f),
+                        Offset(size.width * .64f, size.height * .50f), stroke, cap = StrokeCap.Round)
+                    drawLine(menu.color, Offset(size.width * .64f, size.height * .50f),
+                        Offset(size.width * .40f, size.height * .72f), stroke, cap = StrokeCap.Round)
+                }
+            }
         }
     }
 }
@@ -3771,13 +3602,9 @@ private fun KnownScreen(
 
     if (state.isLoadingPhonetics) {
         Dialog(onDismissRequest = viewModel::dismissPhonetics) {
-            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Sky, strokeWidth = 2.dp)
+            GardenPanel(Modifier.verticalScroll(rememberScrollState())) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Sky, strokeWidth = 2.dp)
                     Text("正在加载发音标注…", color = Ink, fontWeight = FontWeight.Bold)
                 }
             }
@@ -3796,7 +3623,7 @@ private fun KnownScreen(
     state.phoneticErrorMessage?.takeIf { state.phoneticDetail == null && !state.isLoadingPhonetics }?.let { message ->
         Dialog(onDismissRequest = viewModel::dismissPhonetics) {
             Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
-                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("无法加载发音标注", color = Ink, fontWeight = FontWeight.ExtraBold)
                     Text(message, color = EvaluationErrorRed)
                     Button(onClick = viewModel::dismissPhonetics, modifier = Modifier.fillMaxWidth()) { Text("知道了") }
@@ -3808,7 +3635,7 @@ private fun KnownScreen(
         Dialog(onDismissRequest = { archiveConfirmationCharacter = null }) {
             Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
                 Column(
-                    modifier = Modifier.padding(22.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(22.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text("确认存入字库？", color = Ink, fontWeight = FontWeight.ExtraBold)
@@ -3849,62 +3676,48 @@ private fun KnownScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
-        BackHeader("已认识的字", "每一粒小麦，都是你的进步", onBack)
-        Spacer(Modifier.height(15.dp))
-        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = LeafLight)) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("🎓", fontSize = 30.sp)
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text("已经认识 ${state.characters.size} 个汉字", color = Ink, fontWeight = FontWeight.ExtraBold)
-                    Text("置顶后，该字会从今天起重新学习 3 天", color = Leaf, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    val contentWidth = maxWidth.coerceAtMost(790.dp * LocalGardenLayoutScale.current)
+    val columns = if (contentWidth / LocalDensity.current.fontScale.coerceAtLeast(1f) >= 720.dp) 3
+        else if (contentWidth >= 470.dp) 2 else 1
+    LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.width(contentWidth).fillMaxHeight(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            BackHeader("已认识的字", "置顶后，从今天起重新学习3天", onBack, count = state.characters.size)
         }
-        Spacer(Modifier.height(14.dp))
-        when {
-            state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingContent() }
-            state.characters.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                EmptyContent(
-                    title = "还没有已认识的字",
-                    subtitle = state.errorMessage ?: "完成一个认字任务后，它会出现在这里",
-                    emoji = "🌱"
-                )
-            }
-            else -> LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp)
-            ) {
-                items(state.characters, key = { it.id.ifBlank { it.character } }) { character ->
-                    RecognizedCharacterCard(
-                        character = character,
-                        isArchiving = character.id in archivingCharacterIds,
-                        isTopping = state.toppingCharacterId == character.id,
-                        onDetails = { viewModel.showPhonetics(character) },
-                        onTop = { viewModel.topCharacter(character) },
-                        onArchive = {
-                            if (character.id.isNotBlank() && character.id !in archivingCharacterIds) {
-                                archiveConfirmationCharacter = character
-                            }
-                        }
-                    )
-                }
-            }
+        if (state.isLoading) item(span = { GridItemSpan(maxLineSpan) }) { LoadingContent() }
+        else if (state.characters.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+            EmptyContent("还没有已认识的字", state.errorMessage ?: "完成一个认字任务后，它会出现在这里", "🌱")
+            if (state.errorMessage != null) Button(onClick = { viewModel.load(userId) }) { Text("重新加载") }
         }
+        else items(state.characters, key = { it.id.ifBlank { it.character } }) { character ->
+            RecognizedCharacterCard(character,
+                isArchiving = character.id in archivingCharacterIds,
+                isTopping = state.toppingCharacterId == character.id,
+                onDetails = { viewModel.showPhonetics(character) },
+                onTop = { viewModel.topCharacter(character) },
+                onArchive = {
+                    if (character.id.isNotBlank() && character.id !in archivingCharacterIds) archiveConfirmationCharacter = character
+                })
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Text("每个汉字，都是一份成长", color = Ink, modifier = Modifier.fillMaxWidth().padding(12.dp), textAlign = TextAlign.Center)
+        }
+    }
     }
     if (state.isLoading) RequestLoadingOverlay()
 }
 
 @Composable
-private fun BackHeader(title: String, subtitle: String, onBack: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack, colors = IconButtonDefaults.iconButtonColors(containerColor = Color.White)) { Icon(Icons.Filled.ArrowBack, "返回", tint = Ink) }
-        Spacer(Modifier.width(10.dp)); Column { Text(title, style = MaterialTheme.typography.headlineMedium, color = Ink); Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF849094)) }
-    }
+private fun BackHeader(title: String, subtitle: String, onBack: () -> Unit,
+    count: Int? = null, action: @Composable () -> Unit = {}) {
+    GardenPageHeader(title, subtitle, onBack,
+        mascot = when (title) {
+            "已认识的字" -> R.drawable.garden_mascot_red_book
+            "字库", "帮助过的内容" -> R.drawable.garden_mascot_blue_book
+            else -> R.drawable.garden_mascot_welcome
+        }, count = count, compactActionRightAligned = title == "帮助过的内容", action = action)
 }
 
 @Composable
@@ -3916,53 +3729,23 @@ private fun RecognizedCharacterCard(
     onTop: () -> Unit,
     onArchive: () -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(9.dp)
-        ) {
-            Surface(shape = RoundedCornerShape(16.dp), color = LeafLight, modifier = Modifier.size(58.dp)) {
-                Box(contentAlignment = Alignment.Center) { Text(character.character, fontSize = 33.sp, color = Ink, fontWeight = FontWeight.ExtraBold) }
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = LeafLight,
+        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White), shadowElevation = 3.dp) {
+        Column(Modifier.padding(12.dp * LocalGardenLayoutScale.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GardenCharacterTile(character.character, Modifier.size(64.dp * LocalGardenLayoutScale.current), fontSize = 42.sp * LocalGardenLayoutScale.current)
+                Text("收录于\n${character.recognizedAt?.take(10) ?: "未知日期"}", color = Color(0xFF687D9F), fontSize = 13.sp)
             }
-            Text("收录于 ${character.recognizedAt?.take(10) ?: "未知日期"}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF7D898C))
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = onDetails,
-                    enabled = !isArchiving && !isTopping,
-                    modifier = Modifier.weight(1f).height(34.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Sky),
-                    shape = RoundedCornerShape(11.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
-                ) { Text("查看", fontSize = 12.sp) }
-                Button(
-                    onClick = onTop,
-                    enabled = !isArchiving && !isTopping,
-                    modifier = Modifier.weight(1f).height(34.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Wheat, contentColor = Ink),
-                    shape = RoundedCornerShape(11.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp)
-                ) {
-                    if (isTopping) CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Ink, strokeWidth = 2.dp)
-                    else Text("置顶", fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Button(onClick = onDetails, enabled = !isArchiving && !isTopping, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Sky), contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("查看", fontSize = 14.sp) }
+                Button(onClick = onTop, enabled = !isArchiving && !isTopping, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Wheat, contentColor = Ink), contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                    if (isTopping) CircularProgressIndicator(Modifier.size(18.dp), color = Ink) else Text("置顶", fontSize = 14.sp)
                 }
-                Button(
-                    onClick = onArchive,
-                    enabled = !isArchiving && !isTopping,
-                    modifier = Modifier.weight(1f).height(34.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-                    shape = RoundedCornerShape(11.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
-                ) {
-                    if (isArchiving) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
-                    } else {
-                        Text("存库", fontSize = 12.sp)
-                    }
+                Button(onClick = onArchive, enabled = !isArchiving && !isTopping, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Leaf), contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                    if (isArchiving) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White) else Text("存库", fontSize = 14.sp)
                 }
             }
         }
@@ -3989,13 +3772,9 @@ private fun PendingCharactersScreen(
 
     if (state.isLoadingPhonetics) {
         Dialog(onDismissRequest = viewModel::dismissPhonetics) {
-            Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Sky, strokeWidth = 2.dp)
+            GardenPanel(Modifier.verticalScroll(rememberScrollState())) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Sky, strokeWidth = 2.dp)
                     Text("正在加载发音标注…", color = Ink, fontWeight = FontWeight.Bold)
                 }
             }
@@ -4013,7 +3792,7 @@ private fun PendingCharactersScreen(
     state.phoneticErrorMessage?.takeIf { state.phoneticDetail == null && !state.isLoadingPhonetics }?.let { message ->
         Dialog(onDismissRequest = viewModel::dismissPhonetics) {
             Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
-                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("无法加载发音标注", color = Ink, fontWeight = FontWeight.ExtraBold)
                     Text(message, color = EvaluationErrorRed)
                     Button(onClick = viewModel::dismissPhonetics, modifier = Modifier.fillMaxWidth()) { Text("知道了") }
@@ -4022,58 +3801,37 @@ private fun PendingCharactersScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
-        BackHeader("待认识的字", "这些汉字正等着和你见面", onBack)
-        Spacer(Modifier.height(15.dp))
-        Surface(shape = RoundedCornerShape(18.dp), color = WheatLight) {
-            Text(
-                "待认识  ${state.characters.size} 个字",
-                color = Ink,
-                fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        when {
-            state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                LoadingContent()
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        val contentWidth = maxWidth.coerceAtMost(656.dp * LocalGardenLayoutScale.current)
+        val fontScale = LocalDensity.current.fontScale
+        val sidePadding = if (contentWidth >= 600.dp && fontScale <= 1.1f) 50.dp else 20.dp
+        val columns = if (sidePadding == 50.dp) 6 else gardenGridColumns((contentWidth - sidePadding * 2).value, fontScale)
+        LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.width(contentWidth).fillMaxHeight(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = sidePadding, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                BackHeader("待认识的字", "这些汉字正等着和你见面", onBack, count = state.characters.size)
             }
-            state.errorMessage != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                EmptyContent("暂时无法加载", state.errorMessage.orEmpty(), "📖")
-            }
-            state.characters.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                EmptyContent("暂时没有待认识的字", "完成新的识字任务后会显示在这里。", "📖")
-            }
-            else -> Column(Modifier.fillMaxSize()) {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 58.dp),
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp)
-                ) {
-                    items(state.characters, key = { it.id }) { character ->
-                        Surface(
-                            shape = RoundedCornerShape(18.dp),
-                            color = Color.White,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Line),
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clickable { viewModel.showPhonetics(character) }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(character.character, fontSize = 28.sp, color = Ink, fontWeight = FontWeight.ExtraBold)
-                            }
-                        }
+            when {
+                state.isLoading -> item(span = { GridItemSpan(maxLineSpan) }) { LoadingContent() }
+                state.errorMessage != null -> item(span = { GridItemSpan(maxLineSpan) }) {
+                    GardenPanel {
+                        EmptyContent("暂时无法加载", state.errorMessage.orEmpty(), "📖")
+                        Button(onClick = { viewModel.load(userId) }) { Text("重新加载") }
                     }
                 }
-                Text(
-                    "已显示全部待认识的字",
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                    color = Color(0xFF879296),
-                    textAlign = TextAlign.Center,
-                    fontSize = 13.sp
-                )
+                state.characters.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                    EmptyContent("暂时没有待认识的字", "等待家长添加新的识字任务。", "📖")
+                }
+                else -> {
+                    items(state.characters, key = { it.id }) { character ->
+                        GardenCharacterTile(character.character, Modifier.fillMaxWidth().aspectRatio(1.04f),
+                            onClick = { viewModel.showPhonetics(character) }, fontSize = 48.sp * LocalGardenLayoutScale.current)
+                    }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        GardenMetricStrip("已显示全部待认识的字", LeafLight)
+                    }
+                }
             }
         }
     }
@@ -4087,46 +3845,34 @@ private fun PendingPhoneticDetailDialog(
     onDismiss: () -> Unit,
     onSave: (PhoneticAsset, List<String?>) -> Unit
 ) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Card(
-            modifier = Modifier.fillMaxWidth(.94f).fillMaxHeight(.9f).widthIn(max = 760.dp).padding(12.dp),
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
-        ) {
-            Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${detail.character.character} 的发音标注", style = MaterialTheme.typography.titleLarge, color = Ink, fontWeight = FontWeight.ExtraBold)
-                        Text("词句内容只读；可修正腾讯使用的数字拼音", color = Color(0xFF748184), fontSize = 13.sp)
-                    }
-                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "关闭") }
-                }
-                errorMessage?.let { Text(it, color = EvaluationErrorRed, fontSize = 13.sp) }
-                if (detail.assets.isEmpty()) {
-                    EmptyContent("暂时没有发音标注", "词句保存后会自动准备，请稍后再试。", "🔤")
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 4.dp)
-                    ) {
-                        items(detail.assets, key = { it.id }) { asset ->
-                            PendingPhoneticAssetCard(
-                                asset = asset,
-                                isSaving = savingAssetId == asset.id,
-                                onSave = { tokens -> onSave(asset, tokens) }
-                            )
+    GardenDialogFrame("${detail.character.character} 的发音标注", "词句内容只读；可逐字修正数字拼音", onDismiss, tint = LeafLight) {
+        item { errorMessage?.let { Text(it, color = EvaluationErrorRed) } }
+        item {
+            if (detail.assets.isEmpty()) EmptyContent("暂时没有发音标注", "词句保存后会自动准备，请稍后再试。", "🔤")
+            else BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val columns = gardenPhoneticColumns(maxWidth.value, LocalDensity.current.fontScale)
+                val words = detail.assets.filter { it.itemType == "word" }
+                val sentences = detail.assets.filter { it.itemType != "word" }
+                val section: @Composable (String, List<PhoneticAsset>, Color, Modifier) -> Unit = { title, assets, tint, modifier ->
+                    if (assets.isNotEmpty()) GardenPanel(modifier, tint) {
+                        Text(title, color = Ink, style = MaterialTheme.typography.titleLarge)
+                        assets.forEach { asset ->
+                            androidx.compose.runtime.key(asset.id) {
+                                PendingPhoneticAssetCard(asset, isSaving = savingAssetId == asset.id, onSave = { onSave(asset, it) })
+                            }
                         }
                     }
                 }
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F3F2), contentColor = Ink),
-                    shape = RoundedCornerShape(17.dp)
-                ) { Text("关闭") }
+                if (columns == 2) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    section("词语", words, WheatLight, Modifier.weight(1f))
+                    section("句子", sentences, SkyLight, Modifier.weight(1f))
+                } else Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    section("词语", words, WheatLight, Modifier.fillMaxWidth())
+                    section("句子", sentences, SkyLight, Modifier.fillMaxWidth())
+                }
             }
         }
+        item { Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Leaf)) { Text("关闭") } }
     }
 }
 
@@ -4159,20 +3905,20 @@ private fun PendingPhoneticAssetCard(
                         else -> "正在准备"
                     },
                     color = if (asset.status == "failed") EvaluationErrorRed else Color(0xFF748184),
-                    fontSize = 12.sp
+                    fontSize = 16.sp
                 )
             }
-            asset.lastError?.let { Text("自动生成：$it", color = EvaluationErrorRed, fontSize = 12.sp) }
+            asset.lastError?.let { Text("自动生成：$it", color = EvaluationErrorRed, fontSize = 16.sp) }
             if (characters.isEmpty()) {
-                Text("此内容没有可编辑的汉字", color = EvaluationErrorRed, fontSize = 13.sp)
+                Text("此内容没有可编辑的汉字", color = EvaluationErrorRed, fontSize = 16.sp)
             } else {
                 characters.forEachIndexed { index, character ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Surface(shape = CircleShape, color = WheatLight, modifier = Modifier.size(32.dp)) {
-                            Box(contentAlignment = Alignment.Center) { Text(character, color = Ink, fontWeight = FontWeight.ExtraBold) }
+                        Surface(shape = CircleShape, color = WheatLight, modifier = Modifier.size(56.dp * LocalDensity.current.fontScale.coerceAtLeast(1f))) {
+                            Box(contentAlignment = Alignment.Center) { Text(character, color = Ink, fontSize = 32.sp) }
                         }
                         if (drafts[index] == null) {
-                            Text("腾讯不支持指定轻声", color = Color(0xFF748184), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("腾讯不支持指定轻声", color = Color(0xFF748184), fontSize = 16.sp, modifier = Modifier.weight(1f))
                         } else {
                             OutlinedTextField(
                                 value = drafts[index].orEmpty(),
@@ -4191,7 +3937,7 @@ private fun PendingPhoneticAssetCard(
                     enabled = !isSaving,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = Sky),
-                    shape = RoundedCornerShape(13.dp)
+                    shape = CircleShape
                 ) {
                     if (isSaving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
                     else Text("保存发音标注")
@@ -4248,9 +3994,9 @@ private fun LibraryScreen(
     val visible = state.characters.filter { it.character.contains(query.trim()) }
     if (state.isRefreshing) {
         Dialog(onDismissRequest = {}) {
-            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Background)) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 36.dp, vertical = 30.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 36.dp, vertical = 30.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
@@ -4261,12 +4007,20 @@ private fun LibraryScreen(
             }
         }
     }
-    Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        val contentWidth = maxWidth.coerceAtMost(632.dp * LocalGardenLayoutScale.current)
+        val columns = gardenGridColumns(((contentWidth - 40.dp) / LocalGardenLayoutScale.current).value, LocalDensity.current.fontScale)
+        LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.width(contentWidth).fillMaxHeight(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+
         BackHeader("字库", "把认识的汉字收进我的小书架", onBack)
-        Spacer(Modifier.height(15.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+        GardenPanel {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Surface(shape = RoundedCornerShape(18.dp), color = WheatLight) { Text("本地字库  ${state.characters.size} 个字", color = Ink, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) }
-            Spacer(Modifier.width(10.dp))
             Button(
                 onClick = { viewModel.refresh(userId) },
                 enabled = !state.isLoading && !state.isRefreshing,
@@ -4277,7 +4031,6 @@ private fun LibraryScreen(
                 Spacer(Modifier.width(4.dp))
                 Text("更新字库")
             }
-            Spacer(Modifier.width(10.dp))
             Button(
                 onClick = { viewModel.prepareExport(exportStart, exportEnd) },
                 enabled = !state.isLoading && !state.isRefreshing && !state.isPreparingExport && state.pendingExportContent == null,
@@ -4289,7 +4042,7 @@ private fun LibraryScreen(
                 Text("导出字库")
             }
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(4.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -4348,44 +4101,29 @@ private fun LibraryScreen(
                 modifier = Modifier.padding(top = 8.dp)
             )
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(4.dp))
         OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("搜索汉字") }, leadingIcon = { Icon(Icons.Filled.Search, null, tint = Sky) }, shape = RoundedCornerShape(18.dp), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Sky, unfocusedBorderColor = Line, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(4.dp))
+        }
+        }
         when {
-            state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingContent() }
-            state.characters.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                if (state.hasLocalData) {
-                    EmptyContent("字库还没有汉字", "点击更新字库后会保存最新数据。", "📚")
-                } else {
-                    EmptyContent("本地暂无字库数据", "请点击“更新字库”下载并保存汉字。", "📚")
-                }
+            state.isLoading -> item(span = { GridItemSpan(maxLineSpan) }) { LoadingContent() }
+            state.characters.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                if (state.hasLocalData) EmptyContent("字库还没有汉字", "点击更新字库后会保存最新数据。", "📚")
+                else EmptyContent("本地暂无字库数据", "请点击“更新字库”下载并保存汉字。", "📚")
             }
-            visible.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            visible.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
                 EmptyContent("没有找到这个字", "换一个汉字试试看吧", "🔎")
             }
-            else -> Column(Modifier.fillMaxSize()) {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 58.dp),
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp)
-                ) {
-                    items(visible, key = { it.character }) { knownCharacter ->
-                        Surface(
-                            shape = RoundedCornerShape(18.dp),
-                            color = Color.White,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Line),
-                            modifier = Modifier.aspectRatio(1f)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(knownCharacter.character, fontSize = 28.sp, color = Ink, fontWeight = FontWeight.ExtraBold)
-                            }
-                        }
-                    }
+            else -> {
+                items(visible, key = { it.character }) { character ->
+                    GardenCharacterTile(character.character, Modifier.fillMaxWidth().aspectRatio(1.04f), fontSize = 48.sp * LocalGardenLayoutScale.current)
                 }
-                if (query.isBlank()) Text("已显示本地保存的全部字库", modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp), color = Color(0xFF879296), textAlign = TextAlign.Center, fontSize = 13.sp)
+                if (query.isBlank()) item(span = { GridItemSpan(maxLineSpan) }) {
+                    GardenMetricStrip("已显示本地保存的全部字库", LeafLight)
+                }
             }
+        }
         }
     }
 }
@@ -4395,6 +4133,20 @@ private fun SuccessNotice(message: String, onDismiss: () -> Unit) {
     Box(Modifier.fillMaxSize().padding(26.dp), contentAlignment = Alignment.TopCenter) {
         Surface(shape = RoundedCornerShape(18.dp), color = Leaf, shadowElevation = 8.dp, modifier = Modifier.clickable(onClick = onDismiss)) {
             Row(Modifier.padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.CheckCircle, null, tint = Color.White); Spacer(Modifier.width(8.dp)); Text(message, color = Color.White, fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+@Composable
+private fun ParentPassSnapshotPanel(snapshot: ParentPassStarSnapshot) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("通过前", color = Ink, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        val entries = listOf("字" to snapshot.character) + snapshot.words.map { "词" to it } + snapshot.sentences.map { "句" to it }
+        entries.forEach { (label, entry) ->
+            Text("$label·${entry.text} ${entry.earned}/${entry.required} " +
+                buildString { repeat(entry.required) { append(if (it < entry.earned) "★" else "☆") } },
+                color = Color(0xFF996000), fontSize = 13.sp)
         }
     }
 }
