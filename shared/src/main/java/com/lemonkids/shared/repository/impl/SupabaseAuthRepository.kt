@@ -3,6 +3,7 @@ package com.lemonkids.shared.repository.impl
 import android.util.Log
 import com.lemonkids.shared.model.User
 import com.lemonkids.shared.model.UserRole
+import com.lemonkids.shared.di.SupabaseEnvironment
 import com.lemonkids.shared.repository.AlreadyBoundException
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.BindingCodeInfo
@@ -14,6 +15,7 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.gotrue.Auth
 import io.github.jan.supabase.gotrue.providers.builtin.Email
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.storage.Storage
 import io.ktor.client.HttpClient
 import io.ktor.client.request.post
@@ -116,8 +118,13 @@ class SupabaseAuthRepository @Inject constructor(
             }
             val authUser = auth.currentUserOrNull()
                 ?: throw Exception("注册后未能获取用户信息")
-            val newUser = user.copy(uid = authUser.id)
-            postgrest.from("users").insert(newUser)
+            val newUser = if (SupabaseEnvironment.isLocal) {
+                require(user.role == UserRole.PARENT) { "本地注册仅支持家长账号" }
+                postgrest.rpc("create_local_parent_profile", mapOf("p_name" to user.name))
+                    .decodeSingle<User>()
+            } else {
+                user.copy(uid = authUser.id).also { postgrest.from("users").insert(it) }
+            }
             _currentUser.value = newUser
             newUser
         }
@@ -211,8 +218,8 @@ class SupabaseAuthRepository @Inject constructor(
     }
 
     private suspend fun rpcPost(function: String, params: Map<String, Any?>, authenticated: Boolean): String {
-        val url = "https://ebiikfxehhcrtrkioxqa.supabase.co/rest/v1/rpc/$function"
-        val apiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImViaWlrZnhlaGhjcnRya2lveHFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMjQxMTMsImV4cCI6MjA5NTkwMDExM30.PbYlbBiUN7CI4EFedzzEWANrcLI1gElvAjBTlGKi7Go"
+        val url = "${com.lemonkids.shared.di.SupabaseEnvironment.url}/rest/v1/rpc/$function"
+        val apiKey = com.lemonkids.shared.di.SupabaseEnvironment.anonKey
         val token = if (authenticated) auth.currentSessionOrNull()?.accessToken else null
 
         val bodyJson = buildJsonBody(params)
@@ -261,8 +268,16 @@ class SupabaseAuthRepository @Inject constructor(
     override fun observeCurrentUser(): Flow<User?> = _currentUser.asStateFlow()
 
     override suspend fun updateUser(user: User): Result<Unit> = runCatching {
-        postgrest.from("users").update(user) { filter { eq("uid", user.uid) } }
-        _currentUser.value = user
+        if (SupabaseEnvironment.isLocal) {
+            // 本地 RPC 已绑定家庭；再次提交资料时只更新允许自行修改的字段。
+            postgrest.from("users").update(mapOf("name" to user.name, "avatar_url" to user.avatarUrl)) {
+                filter { eq("uid", user.uid) }
+            }
+            _currentUser.value = loadCurrentUser(user.uid)
+        } else {
+            postgrest.from("users").update(user) { filter { eq("uid", user.uid) } }
+            _currentUser.value = user
+        }
     }
 
     override suspend fun createChildAccount(
@@ -270,6 +285,17 @@ class SupabaseAuthRepository @Inject constructor(
         familyId: String,
         inviteCode: String
     ): Result<ChildCredentials> = runCatching {
+        if (SupabaseEnvironment.isLocal) {
+            // 本地孩子账号由受限家长 RPC 建立；保留家长 Auth 会话。
+            val code = generateBindingCode(null, childName, "task").getOrThrow()
+            val binding = exchangeBindingCode(code, "parent-onboarding", "task").getOrThrow()
+            require(binding.familyId == familyId) { "新建孩子不属于当前家庭" }
+            return@runCatching ChildCredentials(
+                email = binding.email,
+                password = childPassword(binding.childUid),
+                childName = childName
+            )
+        }
         val email = "kid_${inviteCode.lowercase()}@lkids.local"
         val password = "kid${inviteCode.lowercase()}"
 

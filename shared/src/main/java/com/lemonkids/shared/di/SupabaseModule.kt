@@ -1,5 +1,7 @@
 package com.lemonkids.shared.di
 
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -19,10 +21,11 @@ object SupabaseModule {
 
     @Provides
     @Singleton
-    fun provideSupabaseClient(): SupabaseClient {
+    fun provideSupabaseClient(@ApplicationContext context: Context): SupabaseClient {
+        SupabaseEnvironment.initialize(context)
         return createSupabaseClient(
-            supabaseUrl = "https://ebiikfxehhcrtrkioxqa.supabase.co",
-            supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImViaWlrZnhlaGhjcnRya2lveHFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzMjQxMTMsImV4cCI6MjA5NTkwMDExM30.PbYlbBiUN7CI4EFedzzEWANrcLI1gElvAjBTlGKi7Go"
+            supabaseUrl = SupabaseEnvironment.url,
+            supabaseKey = SupabaseEnvironment.anonKey
         ) {
             install(Auth) {
                 // 默认内存会话会在进程被回收后丢失，孩子端会因此再次要求输入绑定码。

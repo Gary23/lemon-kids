@@ -74,7 +74,10 @@ object ParentRoutes {
 }
 
 @Composable
-fun ParentNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
+fun ParentNavGraph(
+    onLocalServerSettingsClick: () -> Unit = {},
+    authViewModel: AuthViewModel = hiltViewModel()
+) {
     val uiState by authViewModel.uiState.collectAsState()
 
     if (!uiState.isFirstCheckComplete) {
@@ -93,6 +96,7 @@ fun ParentNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
         composable(ParentRoutes.LOGIN) {
             ParentLoginScreen(
                 onRegisterClick = { navController.navigate(ParentRoutes.REGISTER) },
+                onLocalServerSettingsClick = onLocalServerSettingsClick,
                 onLoginSuccess = {
                     val dest = if (uiState.needsFamilySetup) ParentRoutes.CREATE_FAMILY else ParentRoutes.MAIN
                     navController.navigate(dest) { popUpTo(ParentRoutes.LOGIN) { inclusive = true } }
@@ -114,13 +118,13 @@ fun ParentNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
         }
 
         composable(ParentRoutes.MAIN) {
-            ParentMainScreen()
+            ParentMainScreen(onLocalServerSettingsClick)
         }
     }
 }
 
 @Composable
-private fun ParentMainScreen() {
+private fun ParentMainScreen(onLocalServerSettingsClick: () -> Unit) {
     val navController = rememberNavController()
     val tabs = listOf(ParentTab.Tasks, ParentTab.Alarm, ParentTab.Monitor, ParentTab.Profile)
 
@@ -179,7 +183,7 @@ private fun ParentMainScreen() {
             composable(ParentTab.Monitor.route) { MonitorScreen() }
             composable(ParentTab.Alarm.route) { AlarmScreen() }
             composable(ParentTab.Profile.route) {
-                ParentProfileScreen(onFamilyManageClick = {
+                ParentProfileScreen(onLocalServerSettingsClick = onLocalServerSettingsClick, onFamilyManageClick = {
                     navController.navigate("family_manage")
                 }, onTaskManageClick = {
                     navController.navigate("task_template_manage")

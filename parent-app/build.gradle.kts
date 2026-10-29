@@ -20,6 +20,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (providers.gradleProperty("localSupabase").orNull == "true") {
+                applicationIdSuffix = ".local"
+                versionNameSuffix = "-local"
+            }
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(

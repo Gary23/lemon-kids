@@ -235,6 +235,10 @@ fun KidTaskScreen(windowSizeClass: WindowSizeClass) {
 
 ## 三、Supabase 配置
 
+### 家长端本地地址配置
+
+显式本地 debug 构建通过 `SupabaseEnvironment` 为 Supabase SDK 与绑定码 RPC 提供统一 URL 和公开客户端 key。家长端在创建业务导航前完成地址设置，本地 URL 优先读取应用私有持久化值；普通 debug 和 release 保持线上配置。切换服务先检查可达性、清除旧会话并同步保存地址，再由家长端非导出的独立进程前台页面接管，结束旧主进程并启动新主进程，以重建 Hilt 单例客户端和仓库，避免 SDK 与 RPC 混用地址。同地址直接继续，不可达地址不保存、不重启。操作入口见家长端 README。
+
 ### 3.1 PostgreSQL 数据表
 
 ```sql

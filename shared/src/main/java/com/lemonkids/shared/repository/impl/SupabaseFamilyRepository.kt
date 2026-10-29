@@ -1,9 +1,11 @@
 package com.lemonkids.shared.repository.impl
 
 import com.lemonkids.shared.model.Family
+import com.lemonkids.shared.di.SupabaseEnvironment
 import com.lemonkids.shared.repository.FamilyRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.rpc
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,6 +17,10 @@ class SupabaseFamilyRepository @Inject constructor(
     private val postgrest get() = supabase.pluginManager.getPlugin(Postgrest)
 
     override suspend fun createFamily(name: String): Result<Family> = runCatching {
+        if (SupabaseEnvironment.isLocal) {
+            return@runCatching postgrest.rpc("create_local_family", mapOf("p_name" to name))
+                .decodeSingle<Family>()
+        }
         val code = (1..6).map { "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".random() }.joinToString("")
         val family = postgrest.from("families").insert(
             mapOf("name" to name, "invite_code" to code)

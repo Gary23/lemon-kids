@@ -90,3 +90,9 @@
 新增数据库变更时，应新增编号迁移文件、说明依赖/回滚/验证查询，并在临时 Supabase 项目完成从空库验证后再标记为可自动执行。完成基线整理前，请继续把本目录脚本视为人工审查对象。
 
 认字业务数据规则见 [学习与数据规则](../kid-literacy-app/docs/LEARNING-RULES.md)，评测云函数边界见 [评测云函数说明](../cloud-functions/evaluate-reading/README.md)，音频资产与清理运维见 [音频生成云函数说明](../cloud-functions/generate-literacy-audio/README.md)。
+
+## 家长端本地认证
+
+独立 `lemon-kids-local` 空库先审查执行 `sql/20261022_local_core_baseline.sql`，再执行 `sql/20261022_local_parent_onboarding.sql`；不得对已有生产库执行空库基线。前者提供家庭、用户、绑定码及隔离策略，后者提供受限家长资料注册和原子创建家庭 RPC，并保护角色、家庭与积分字段。客户端仅使用公开 key 及本人 Auth 会话，不能自行变更敏感字段或访问其他家庭。
+
+家长端显式本地 debug 包连接该独立服务，默认 API 端口为 `54421`；手机通过可互访 Wi-Fi 使用电脑私有 IP。账号属于所选本地数据库，不自动导入线上账号。应用配置及入口见 [家长端说明](../parent-app/README.md)。核心基线不代表任务、奖励、Storage 等其他业务域已完成迁移。

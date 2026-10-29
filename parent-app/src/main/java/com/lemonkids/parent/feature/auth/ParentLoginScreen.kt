@@ -15,12 +15,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.lemonkids.shared.di.SupabaseEnvironment
 import com.lemonkids.shared.ui.auth.AuthViewModel
 
 @Composable
 fun ParentLoginScreen(
     onRegisterClick: () -> Unit,
     onLoginSuccess: () -> Unit,
+    onLocalServerSettingsClick: () -> Unit,
     viewModel: AuthViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -118,6 +120,11 @@ fun ParentLoginScreen(
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
+        if (SupabaseEnvironment.isLocal) {
+            TextButton(onClick = onLocalServerSettingsClick) {
+                Text("本地服务地址", fontSize = 14.sp)
+            }
+        }
         TextButton(onClick = onRegisterClick) {
             Text("还没有账号？创建一个", fontSize = 14.sp)
         }

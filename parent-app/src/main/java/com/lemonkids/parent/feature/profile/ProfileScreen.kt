@@ -48,6 +48,7 @@ import com.lemonkids.shared.ui.auth.AuthViewModel
 
 @Composable
 fun ProfileScreen(
+    onLocalServerSettingsClick: () -> Unit = {},
     onFamilyManageClick: () -> Unit,
     onTaskManageClick: () -> Unit,
     onCategoryManageClick: () -> Unit,
@@ -289,6 +290,12 @@ fun ProfileScreen(
             }
 
             Spacer(Modifier.height(32.dp))
+
+            if (com.lemonkids.shared.di.SupabaseEnvironment.isLocal) {
+                TextButton(onClick = onLocalServerSettingsClick) {
+                    Text("本地服务地址")
+                }
+            }
 
             TextButton(onClick = { authViewModel.signOut() }) {
                 Text("退出登录", color = MaterialTheme.colorScheme.error)

@@ -54,6 +54,14 @@
 - 任务、积分、分类和监控数据均按 `family_id` 隔离。改查询或写入前检查 RLS 与共享 Repository。
 - 勋章进度依赖先部署 `../supabase/sql/20261005_parent_badge_progress.sql`；家长通过受控 RPC 按孩子设置绝对值并留下审计，孩子只读本人进度，其他家庭不可访问。级别规则由 `:shared` 的 `BadgeCatalog` 提供。
 
+## 本地测试包服务地址
+
+仅显式 `localSupabase=true` 构建的 `.local` 测试包提供本地地址设置，可从启动页、登录页或“我的”进入。普通 debug 与 release 使用线上配置。手机与电脑需处于可互访网络，填写目标本地服务的私有 IPv4 地址和端口；默认端口为 `54421`，USB 调试可使用对应端口的 ADB reverse 与 `127.0.0.1`。
+
+连接前会检查格式和服务可达性，失败时保留页面并提示。地址成功保存后持续保留；切换到不同服务会清除旧会话，经短暂切换页自动重新打开应用，再确认地址进入登录。相同地址且可达时直接继续。重启接管失败时显示错误或重试提示。测试账号属于对应的本地服务，健康检查成功不表示该服务存在同名账号。
+
+本地构建使用 `./gradlew :parent-app:assembleDebug -PlocalSupabase=true`，并在未提交的 `local.properties` 中设置 `localSupabaseUrl`、`localSupabaseAnonKey`，或通过同名 Gradle 参数、`LEMON_KIDS_LOCAL_SUPABASE_URL` / `LEMON_KIDS_LOCAL_SUPABASE_ANON_KEY` 环境变量提供；仅使用公开客户端 key，缺少配置时构建失败。先准备独立本地数据库核心基线和家长接入 RPC，见 Supabase README。登录会话可恢复，也可退出后重新登录；本地注册与建家庭使用受限 RPC。当前接入范围为认证、家庭和孩子绑定码，其他任务、奖励、闹钟及诊断业务需分别接入验收。
+
 ## 修改后验证
 
 ```bash
