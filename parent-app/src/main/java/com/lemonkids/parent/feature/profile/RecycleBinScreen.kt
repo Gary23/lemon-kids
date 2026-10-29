@@ -60,7 +60,8 @@ import javax.inject.Inject
 
 data class RecycleBinUiState(
     val deletedTasks: List<Task> = emptyList(),
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val loadError: String? = null
 )
 
 @HiltViewModel
@@ -72,16 +73,23 @@ class RecycleBinViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(RecycleBinUiState(isLoading = true))
     val uiState: StateFlow<RecycleBinUiState> = _uiState.asStateFlow()
 
-    init {
-        loadDeletedTasks()
-    }
+    private var loadJob: kotlinx.coroutines.Job? = null
 
-    private fun loadDeletedTasks() {
-        viewModelScope.launch {
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            val familyId = user.familyId ?: return@launch
+    init { loadDeletedTasks() }
+
+    fun loadDeletedTasks() {
+        loadJob?.cancel()
+        _uiState.value = _uiState.value.copy(isLoading = true, loadError = null)
+        loadJob = viewModelScope.launchProfileLoad(onError = {
+            _uiState.value = _uiState.value.copy(isLoading = false, loadError = "回收站加载失败，请检查网络和服务后重试")
+        }) {
+            val familyId = authRepository.observeCurrentUser().first()?.familyId
+            if (familyId.isNullOrBlank()) {
+                _uiState.value = _uiState.value.copy(isLoading = false, loadError = "未找到家庭信息，请重新登录后重试")
+                return@launchProfileLoad
+            }
             taskRepository.observeDeletedTasks(familyId).collect { tasks ->
-                _uiState.value = _uiState.value.copy(isLoading = false, deletedTasks = tasks)
+                _uiState.value = _uiState.value.copy(isLoading = false, deletedTasks = tasks, loadError = null)
             }
         }
     }
@@ -165,11 +173,17 @@ fun RecycleBinScreen(
                 windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp)
             )
 
+            uiState.loadError?.let { message ->
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = viewModel::loadDeletedTasks) { Text("重试") }
+                }
+            }
             if (uiState.isLoading && uiState.deletedTasks.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(36.dp))
                 }
-            } else if (uiState.deletedTasks.isEmpty()) {
+            } else if (uiState.deletedTasks.isEmpty() && uiState.loadError == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("回收站为空", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

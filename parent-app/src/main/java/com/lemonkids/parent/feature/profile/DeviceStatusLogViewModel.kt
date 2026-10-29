@@ -34,12 +34,17 @@ class DeviceStatusLogViewModel @Inject constructor(
 
     private var logsJob: Job? = null
 
+    private var childrenJob: Job? = null
+
     init {
         loadChildren()
     }
 
     private fun loadChildren() {
-        viewModelScope.launch {
+        childrenJob?.cancel()
+        childrenJob = viewModelScope.launchProfileLoad(onError = {
+            _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "加载孩子列表失败，请重试")
+        }) {
             val user = authRepository.observeCurrentUser().first()
             val familyId = user?.familyId
             if (familyId == null) {
@@ -47,7 +52,7 @@ class DeviceStatusLogViewModel @Inject constructor(
                     isLoading = false,
                     errorMessage = "未找到家庭信息"
                 )
-                return@launch
+                return@launchProfileLoad
             }
 
             authRepository.fetchChildUsers(familyId).fold(
@@ -62,6 +67,7 @@ class DeviceStatusLogViewModel @Inject constructor(
                     selected?.let { observeLogs(it.uid) }
                 },
                 onFailure = {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         errorMessage = "加载孩子列表失败"
@@ -77,18 +83,15 @@ class DeviceStatusLogViewModel @Inject constructor(
     }
 
     fun refresh() {
-        val childId = _uiState.value.selectedChild?.uid ?: return
-        viewModelScope.launch {
-            deviceStatusRepository.getStatusLogs(childId).fold(
-                onSuccess = { logs -> _uiState.value = _uiState.value.copy(logs = logs, errorMessage = null) },
-                onFailure = { _uiState.value = _uiState.value.copy(errorMessage = "刷新设备日志失败") }
-            )
-        }
+        val childId = _uiState.value.selectedChild?.uid
+        if (childId == null) loadChildren() else observeLogs(childId)
     }
 
     private fun observeLogs(childId: String) {
         logsJob?.cancel()
-        logsJob = viewModelScope.launch {
+        logsJob = viewModelScope.launchProfileLoad(onError = {
+            _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "设备日志加载失败，请重试")
+        }) {
             deviceStatusRepository.observeStatusLogs(childId).collect { logs ->
                 _uiState.value = _uiState.value.copy(logs = logs, errorMessage = null)
             }

@@ -65,6 +65,7 @@ import javax.inject.Inject
 data class TaskTemplateManageUiState(
     val templates: List<TaskTemplate> = emptyList(),
     val isLoading: Boolean = true,
+    val listError: String? = null,
     val isSaving: Boolean = false,
     val deletingTemplateId: String? = null,
     val errorMessage: String? = null
@@ -77,13 +78,23 @@ class TaskTemplateManageViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(TaskTemplateManageUiState())
     val uiState: StateFlow<TaskTemplateManageUiState> = _uiState.asStateFlow()
-    init {
-        viewModelScope.launch {
-            val familyId = authRepository.observeCurrentUser().first()?.familyId ?: return@launch
-            launch {
-                templateRepository.observeTemplates(familyId).collect { templates ->
-                    _uiState.value = _uiState.value.copy(templates = templates, isLoading = false)
-                }
+    private var listJob: kotlinx.coroutines.Job? = null
+
+    init { retryTemplates() }
+
+    fun retryTemplates() {
+        listJob?.cancel()
+        _uiState.value = _uiState.value.copy(isLoading = true, listError = null)
+        listJob = viewModelScope.launchProfileLoad(onError = {
+            _uiState.value = _uiState.value.copy(isLoading = false, listError = "任务库加载失败，请检查网络和服务后重试")
+        }) {
+            val familyId = authRepository.observeCurrentUser().first()?.familyId
+            if (familyId.isNullOrBlank()) {
+                _uiState.value = _uiState.value.copy(isLoading = false, listError = "未找到家庭信息，请重新登录后重试")
+                return@launchProfileLoad
+            }
+            templateRepository.observeTemplates(familyId).collect { templates ->
+                _uiState.value = _uiState.value.copy(templates = templates, isLoading = false, listError = null)
             }
         }
     }
@@ -164,14 +175,21 @@ fun TaskTemplateManageScreen(
             TopAppBar(
                 title = { Text("任务库") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } },
-                actions = { TextButton(onClick = { editing = TaskTemplate() }) { Text("＋ 新增") } },
+                actions = { TextButton(enabled = !uiState.isLoading && uiState.listError == null, onClick = { editing = TaskTemplate() }) { Text("＋ 新增") } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp)
             )
+            uiState.listError?.let { message ->
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = viewModel::retryTemplates) { Text("重试") }
+                }
+            }
             when {
-                uiState.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(36.dp)) }
+                uiState.listError != null && uiState.templates.isEmpty() -> Unit
+                uiState.isLoading && uiState.templates.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(36.dp)) }
                 uiState.templates.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("还没有任务\n点击右上角新增", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                else -> LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(uiState.templates, key = { it.id }) { template ->
                         Card(Modifier.fillMaxWidth()) {
                             Row(

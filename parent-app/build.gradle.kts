@@ -44,6 +44,8 @@ android {
         jvmTarget = "17"
     }
 
+    testOptions { unitTests.isReturnDefaultValues = true }
+
     buildFeatures {
         compose = true
     }
@@ -90,4 +92,5 @@ dependencies {
     implementation(libs.vico.compose.m3)
 
     testImplementation(libs.junit)
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
 }

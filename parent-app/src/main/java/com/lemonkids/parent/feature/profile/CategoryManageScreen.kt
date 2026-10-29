@@ -69,10 +69,18 @@ data class CategoryManageUiState(
     val templates: List<TaskTemplate> = emptyList(),
     val categoryTaskTemplates: List<CategoryTaskTemplate> = emptyList(),
     val isLoading: Boolean = false,
+    val templatesLoading: Boolean = true,
+    val assignmentsLoading: Boolean = true,
+    val categoriesError: String? = null,
+    val templatesError: String? = null,
+    val assignmentsError: String? = null,
     /** 乐观更新仍需给出请求进行中的反馈，避免用户重复提交。 */
     val isOperating: Boolean = false,
     val operationMessage: String? = null
-)
+) {
+    val canConfigureTasks: Boolean get() = !isLoading && !templatesLoading && !assignmentsLoading &&
+        categoriesError == null && templatesError == null && assignmentsError == null
+}
 
 @HiltViewModel
 class CategoryManageViewModel @Inject constructor(
@@ -84,30 +92,49 @@ class CategoryManageViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(CategoryManageUiState(isLoading = true))
     val uiState: StateFlow<CategoryManageUiState> = _uiState.asStateFlow()
 
-    init {
-        loadCategories()
-    }
+    private val loadJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+
+    init { loadCategories() }
+
+    fun retryLoads() = loadCategories()
 
     private fun loadCategories() {
-        viewModelScope.launch {
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            val familyId = user.familyId ?: return@launch
-            launch {
-                categoryRepository.observeCategories(familyId).collect { list ->
-                    _uiState.value = _uiState.value.copy(isLoading = false, categories = list)
-                }
-            }
-            launch {
-                taskTemplateRepository.observeTemplates(familyId).collect { templates ->
-                    _uiState.value = _uiState.value.copy(templates = templates)
-                }
-            }
-            launch {
-                categoryRepository.observeCategoryTaskTemplates(familyId).collect { assignments ->
-                    _uiState.value = _uiState.value.copy(categoryTaskTemplates = assignments)
-                }
+        loadSource("分类", { _uiState.value = _uiState.value.copy(isLoading = true, categoriesError = null) },
+            { _uiState.value = _uiState.value.copy(isLoading = false, categoriesError = it) }) { familyId ->
+            categoryRepository.observeCategories(familyId).collect {
+                _uiState.value = _uiState.value.copy(categories = it, isLoading = false, categoriesError = null)
             }
         }
+        loadSource("任务库", { _uiState.value = _uiState.value.copy(templatesLoading = true, templatesError = null) },
+            { _uiState.value = _uiState.value.copy(templatesLoading = false, templatesError = it) }) { familyId ->
+            taskTemplateRepository.observeTemplates(familyId).collect {
+                _uiState.value = _uiState.value.copy(templates = it, templatesLoading = false, templatesError = null)
+            }
+        }
+        loadSource("分类任务关联", { _uiState.value = _uiState.value.copy(assignmentsLoading = true, assignmentsError = null) },
+            { _uiState.value = _uiState.value.copy(assignmentsLoading = false, assignmentsError = it) }) { familyId ->
+            categoryRepository.observeCategoryTaskTemplates(familyId).collect {
+                _uiState.value = _uiState.value.copy(categoryTaskTemplates = it, assignmentsLoading = false, assignmentsError = null)
+            }
+        }
+    }
+
+    private fun loadSource(
+        name: String, onStart: () -> Unit, onError: (String) -> Unit,
+        collect: suspend (String) -> Unit
+    ) {
+        loadJobs.remove(name)?.cancel()
+        onStart()
+        loadJobs[name] = viewModelScope.launchProfileLoad(onError = { onError("${name}加载失败，请检查网络和服务后重试") }) {
+            val familyId = authRepository.observeCurrentUser().first()?.familyId
+            if (familyId.isNullOrBlank()) onError("未找到家庭信息，请重新登录后重试")
+            else collect(familyId)
+        }
+    }
+
+    private fun dependenciesReady(): Boolean = _uiState.value.let {
+        !it.isLoading && !it.templatesLoading && !it.assignmentsLoading &&
+            it.categoriesError == null && it.templatesError == null && it.assignmentsError == null
     }
 
     fun addCategory(name: String) {
@@ -170,9 +197,14 @@ class CategoryManageViewModel @Inject constructor(
     }
 
     fun deleteCategory(category: Category, onBlocked: (String) -> Unit) {
+        if (!dependenciesReady() || _uiState.value.isOperating) return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isOperating = true)
-            val pendingCount = categoryRepository.getPendingTaskCountByCategory(category.id).getOrNull() ?: 0
+            val pendingCount = categoryRepository.getPendingTaskCountByCategory(category.id).getOrElse {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                _uiState.value = _uiState.value.copy(isOperating = false, operationMessage = "无法核对待完成任务，请稍后重试")
+                return@launch
+            }
             if (pendingCount > 0) {
                 _uiState.value = _uiState.value.copy(isOperating = false)
                 onBlocked("该分类仍有 ${pendingCount} 个待完成任务，请先取消或完成这些任务")
@@ -198,6 +230,10 @@ class CategoryManageViewModel @Inject constructor(
     }
 
     fun saveCategoryTasks(category: Category, templateIds: List<String>) {
+        if (!dependenciesReady() || _uiState.value.isOperating) {
+            _uiState.value = _uiState.value.copy(operationMessage = "请等待分类、任务库和关联加载成功后重试")
+            return
+        }
         viewModelScope.launch {
             val orderedTemplateIds = templateIds.distinct()
             _uiState.value = _uiState.value.copy(isOperating = true)
@@ -264,7 +300,7 @@ fun CategoryManageScreen(
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     }
                     TextButton(
-                        enabled = !uiState.isOperating,
+                        enabled = !uiState.isOperating && !uiState.isLoading && uiState.categoriesError == null,
                         onClick = { dialogName = ""; showAddDialog = true }
                     ) {
                         Text("＋ 新增")
@@ -274,27 +310,36 @@ fun CategoryManageScreen(
                 windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp)
             )
 
-            if (uiState.isLoading) {
+            val loadErrors = listOfNotNull(uiState.categoriesError, uiState.templatesError, uiState.assignmentsError)
+            if (loadErrors.isNotEmpty()) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(loadErrors.joinToString("\n"), Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = viewModel::retryLoads) { Text("重试") }
+                }
+            }
+            if (uiState.isLoading && uiState.categories.isEmpty()) {
                 androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(36.dp))
                 }
-            } else if (uiState.categories.isEmpty()) {
+            } else if (uiState.categories.isEmpty() && uiState.categoriesError == null) {
                 androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("还没有分类\n点击右上角新增", color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     items(uiState.categories, key = { it.id }) { cat ->
                         CategoryItem(
                             category = cat,
-                            taskCount = uiState.categoryTaskTemplates.count { it.categoryId == cat.id },
+                            taskCount = if (uiState.assignmentsLoading || uiState.assignmentsError != null) null
+                                else uiState.categoryTaskTemplates.count { it.categoryId == cat.id },
+                            canConfigure = uiState.canConfigureTasks && !uiState.isOperating,
                             onConfigureTasks = { configuringTasks = cat },
                             onEdit = { dialogName = cat.name; showEditDialog = cat },
-                            onDelete = { showDeleteConfirm = cat }
+                            onDelete = { if (uiState.canConfigureTasks) showDeleteConfirm = cat }
                         )
                     }
                     item { Spacer(Modifier.height(16.dp)) }
@@ -383,7 +428,7 @@ fun CategoryManageScreen(
         )
     }
 
-    configuringTasks?.let { category ->
+    configuringTasks?.takeIf { uiState.canConfigureTasks }?.let { category ->
         val selectedIds = uiState.categoryTaskTemplates
             .filter { it.categoryId == category.id }
             .map { it.templateId }
@@ -405,7 +450,8 @@ fun CategoryManageScreen(
 @Composable
 private fun CategoryItem(
     category: Category,
-    taskCount: Int,
+    taskCount: Int?,
+    canConfigure: Boolean,
     onConfigureTasks: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
@@ -418,12 +464,12 @@ private fun CategoryItem(
         ) {
             Column {
                 Text(category.name, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                Text("已配置 $taskCount 个任务", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (taskCount == null) "任务关联暂不可用" else "已配置 $taskCount 个任务", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Row {
-                TextButton(modifier = Modifier.height(36.dp), onClick = onConfigureTasks) { Text("配置任务", fontSize = 13.sp) }
+                TextButton(modifier = Modifier.height(36.dp), enabled = canConfigure, onClick = onConfigureTasks) { Text("配置任务", fontSize = 13.sp) }
                 TextButton(modifier = Modifier.height(36.dp), onClick = onEdit) { Text("编辑", fontSize = 13.sp) }
-                TextButton(modifier = Modifier.height(36.dp), onClick = onDelete) {
+                TextButton(modifier = Modifier.height(36.dp), enabled = canConfigure, onClick = onDelete) {
                     Text("删除", fontSize = 13.sp, color = Color(0xFFEF5350))
                 }
             }

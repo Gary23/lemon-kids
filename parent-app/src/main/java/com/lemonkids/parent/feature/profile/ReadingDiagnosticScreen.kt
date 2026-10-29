@@ -134,19 +134,28 @@ class ReadingDiagnosticViewModel @Inject constructor(
     private var requestJob: Job? = null
     private var generation = 0
 
-    init {
-        viewModelScope.launch {
+    private var childrenJob: Job? = null
+    init { loadChildren() }
+
+    private fun loadChildren() {
+        childrenJob?.cancel()
+        childrenJob = viewModelScope.launchProfileLoad(onError = {
+            _state.value = _state.value.copy(loading = false, error = "加载孩子列表失败，请重试")
+        }) {
             val familyId = authRepository.observeCurrentUser().first()?.familyId
-            if (familyId == null) {
+            if (familyId.isNullOrBlank()) {
                 _state.value = _state.value.copy(loading = false, error = "未找到家庭信息")
-                return@launch
+                return@launchProfileLoad
             }
             authRepository.fetchChildUsers(familyId).fold(
                 onSuccess = { children ->
-                    _state.value = _state.value.copy(children = children, child = children.firstOrNull(), loading = false)
-                    refresh()
+                    _state.value = _state.value.copy(children = children, child = children.firstOrNull(), loading = false, error = null)
+                    if (children.isNotEmpty()) refresh()
                 },
-                onFailure = { _state.value = _state.value.copy(loading = false, error = "加载孩子列表失败") }
+                onFailure = {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    _state.value = _state.value.copy(loading = false, error = "加载孩子列表失败")
+                }
             )
         }
     }
@@ -159,7 +168,7 @@ class ReadingDiagnosticViewModel @Inject constructor(
     }
 
     fun refresh() {
-        val childId = _state.value.child?.uid ?: return
+        val childId = _state.value.child?.uid ?: run { loadChildren(); return }
         if (requestJob?.isActive == true) return
         val ticket = generation
         requestJob = viewModelScope.launch {
@@ -170,6 +179,7 @@ class ReadingDiagnosticViewModel @Inject constructor(
                         error = null, refreshedAt = displayDiagnosticTime(Instant.now().toString()))
                 },
                 onFailure = { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
                     if (ticket == generation) _state.value = _state.value.copy(loading = false,
                         error = error.message ?: "查询失败，请重试")
                 }

@@ -58,6 +58,8 @@ class RewardManageViewModel @Inject constructor(
     val uiState: StateFlow<RewardManageUiState> = _uiState.asStateFlow()
     private val cleanupPrefs = context.getSharedPreferences("reward_image_cleanup", Context.MODE_PRIVATE)
 
+    private var loadJob: kotlinx.coroutines.Job? = null
+
     init { refresh() }
 
     fun clearError() {
@@ -110,7 +112,12 @@ class RewardManageViewModel @Inject constructor(
         }
     }
 
-    fun refresh() = viewModelScope.launch { load(showLoading = _uiState.value.rewards.isEmpty()) }
+    fun refresh() {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launchProfileLoad(onError = {
+            _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = "加载奖励失败，请重试")
+        }) { load(showLoading = _uiState.value.rewards.isEmpty()) }
+    }
 
     private suspend fun load(showLoading: Boolean) {
         if (showLoading) _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
@@ -139,6 +146,7 @@ class RewardManageViewModel @Inject constructor(
                 retryPendingCleanup(familyId, rewards)
             },
             onFailure = { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     errorMessage = "加载奖励失败：${error.message ?: "请检查网络后重试"}"

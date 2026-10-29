@@ -88,7 +88,14 @@ class BadgeProgressViewModel @Inject constructor(
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(BadgeProgressUiState())
     val state: StateFlow<BadgeProgressUiState> = mutableState.asStateFlow()
-    init { viewModelScope.launch { loadChildren() } }
+    private var childrenJob: kotlinx.coroutines.Job? = null
+    init { loadChildrenSafely() }
+    private fun loadChildrenSafely() {
+        childrenJob?.cancel()
+        childrenJob = viewModelScope.launchProfileLoad(onError = {
+            mutableState.value = mutableState.value.copy(isLoading = false, error = "读取孩子列表失败，请重试")
+        }) { loadChildren() }
+    }
 
     private suspend fun loadChildren() {
         val familyId = authRepository.observeCurrentUser().first()?.familyId
@@ -101,26 +108,35 @@ class BadgeProgressViewModel @Inject constructor(
                 mutableState.value = mutableState.value.copy(children = children, isLoading = false)
                 children.firstOrNull()?.let { selectChild(it.uid) }
             },
-            onFailure = { mutableState.value = mutableState.value.copy(isLoading = false, error = "读取孩子列表失败，请重试") }
+            onFailure = {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                mutableState.value = mutableState.value.copy(isLoading = false, error = "读取孩子列表失败，请重试")
+            }
         )
     }
 
     fun selectChild(childId: String) {
         if (mutableState.value.isSaving || mutableState.value.children.none { it.uid == childId }) return
         mutableState.value = mutableState.value.copy(selectedChildId = childId, records = emptyList(), isLoading = true, error = null, saveError = null)
-        viewModelScope.launch { reload(childId) }
+        viewModelScope.launchProfileLoad(onError = {
+            mutableState.value = mutableState.value.copy(isLoading = false, error = "读取进度失败，请重试")
+        }) { reload(childId) }
     }
 
     fun refresh() {
-        val childId = mutableState.value.selectedChildId ?: return
+        val childId = mutableState.value.selectedChildId ?: run { loadChildrenSafely(); return }
         mutableState.value = mutableState.value.copy(isLoading = true, error = null, saveError = null)
-        viewModelScope.launch { reload(childId) }
+        viewModelScope.launchProfileLoad(onError = {
+            mutableState.value = mutableState.value.copy(isLoading = false, error = "读取进度失败，请重试")
+        }) { reload(childId) }
     }
 
     private suspend fun reload(childId: String) {
         progressRepository.getForChild(childId).fold(
             onSuccess = { if (mutableState.value.selectedChildId == childId) mutableState.value = mutableState.value.copy(records = it, isLoading = false, error = null) },
-            onFailure = { if (mutableState.value.selectedChildId == childId) mutableState.value = mutableState.value.copy(isLoading = false, error = "读取进度失败，请重试") }
+            onFailure = {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                if (mutableState.value.selectedChildId == childId) mutableState.value = mutableState.value.copy(isLoading = false, error = "读取进度失败，请重试") }
         )
     }
 
