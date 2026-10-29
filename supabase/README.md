@@ -95,4 +95,29 @@
 
 独立 `lemon-kids-local` 空库先审查执行 `sql/20261022_local_core_baseline.sql`，再执行 `sql/20261022_local_parent_onboarding.sql`；不得对已有生产库执行空库基线。前者提供家庭、用户、绑定码及隔离策略，后者提供受限家长资料注册和原子创建家庭 RPC，并保护角色、家庭与积分字段。客户端仅使用公开 key 及本人 Auth 会话，不能自行变更敏感字段或访问其他家庭。
 
-家长端显式本地 debug 包连接该独立服务，默认 API 端口为 `54421`；手机通过可互访 Wi-Fi 使用电脑私有 IP。账号属于所选本地数据库，不自动导入线上账号。应用配置及入口见 [家长端说明](../parent-app/README.md)。核心基线不代表任务、奖励、Storage 等其他业务域已完成迁移。
+家长端显式本地 debug 包连接该独立服务，默认 API 端口为 `54421`；手机通过可互访 Wi-Fi 使用电脑私有 IP。账号属于所选本地数据库，不自动导入线上账号。应用配置及入口见 [家长端说明](../parent-app/README.md)。核心基线仅提供认证与家庭能力；家长端业务能力还依赖下述本地增量迁移。
+
+## 家长端本地业务迁移
+
+`lemon-kids-local` 的家长端业务基线支持首页任务、任务库、分类任务包、取消/恢复与受限清理、每日描述与成长领域、任务用时汇总和明细、奖励目录与兑换依赖、勋章进度、设备日志及应用统计/限制。没有记录时返回真实空数据，不自动生成分类、奖励或历史记录。设备日志和应用统计仍依赖设备实际上报；外部腾讯云 SCF 诊断需单独配置。
+
+迁移前必须已有 `families`、`users`、`binding_codes`、基础 `tasks` 四表和 `20261022_local_parent_onboarding.sql` 提供的本地注册入口。本方案是现有本地库的增量升级，不是空库初始化入口。先在目标环境预检，并在隔离副本执行验证：
+
+```sh
+python3 supabase/tests/apply_local_parent_business.py
+python3 supabase/tests/verify_local_parent_business.py
+```
+
+脚本固定目标容器 `supabase_db_lemon-kids-local`，Docker 路径及环境见 [本地部署核对](LOCAL_REVIEW.md)。隔离验证复制源数据库及角色到临时容器，仅在副本生成测试数据，结束后清理。需要先启动本地 Docker 服务并保证临时端口可用。
+
+自动验证通过且取得应用确认后运行：
+
+```sh
+python3 supabase/tests/apply_local_parent_business.py --apply
+```
+
+应用入口在同一事务内依次执行 `20261029_local_parent_business_prerequisites.sql`、`20261029_local_parent_business_baseline.sql` 和 `20261029_local_parent_business_storage.sql`，显式切换管理员与普通 postgres 角色，安装 pg_cron、创建业务结构及私有奖励图片策略。不要绕过入口分别执行 SQL。事务内锁定原四表并比较全部原字段，任何变更使整笔迁移回滚；提交后再次核验并将 SQL SHA256、数量和保留结果写入 `/tmp/lemon-parent-business-deployment.json`。
+
+分类关联通过受控 RPC 原子替换，家长写操作和孩子读取均校验家庭权限；勋章更新使用版本冲突检测。奖励图片保存在私有 `reward-images` bucket，按家庭路径隔离，禁止覆盖对象或删除被奖励引用的图片。任务取消保留历史，用时记录清理由单个 pg_cron 任务调度。共享的计时和兑换接口具备隔离测试覆盖，其他应用仍需各自完成客户端验收。
+
+本地迁移已应用，家长端首页及“我的”核心菜单已通过手机人工验收。后续目标库仍需独立预检和部署确认；不得对生产环境直接套用。详细支持边界、权限与验证范围见 [本地部署核对](LOCAL_REVIEW.md)。
