@@ -1,0 +1,19 @@
+{
+  "source_root": "/Volumes/pan/lemon-kids-local-supabase",
+  "archive": "验收源码.tar.gz",
+  "archive_sha256": "99a8291ed90be0b34be6db990892a9934b924965d3828a727a7434adf1c73790",
+  "files": {
+    "scripts/service-control.py": "5874d4c345fc6c3bcfa7eac2edbb2d2a9278182673ca56b59a74bb2d1f5e02ca",
+    "web/index.html": "7c37726934587ab206cad5eece318d21b9ed31a5d5c52a1619190dd513af85cb",
+    "web/app.js": "b47dd62bcd28b7f9339767e46e204200fb0762eae1c91ede2b03ff8533450da5",
+    "web/style.css": "75239a080899d9f9ee7a2be6ae55dbbfb1778d6564773a355ea887ee23f25077",
+    "tests/test_control.py": "e3006b12ed424ce41b16b80696a0c363b4c2b3b6d50fc1eb2c0586eee9d7aa43",
+    "tests/test_http.py": "eb0da97967f6482c31701540124a5970046722c843584e296a449f32f09157e5",
+    "tests/test_ui.js": "4277ade2575706e625c8a87ff340d6c93a9632c9966c1d07c96b5a31e9b4d17d",
+    "tests/preview.py": "d09818e593500c1c0dff6a032a0eccaf781963d528263c25b6c111178d6e3a8a",
+    "tests/README.md": "cb3c5afcd3f200617b28c812669376a993b8548d4322b17c060eddc2d08341df",
+    "本地控制台-使用说明.md": "89565c6efe5706778294b612f41291ab633d8bdec74be2f904b3992151aaa093",
+    "apps/lemon-kids/README.md": "200e805137e44264af934a1a7f3b0f44c09709b40a3724731614474155c9eaf7",
+    "打开本地服务控制台.command": "0b17408a695ba61d112dce65cc0e30d896f1fdd72c162907a73d32ade0b040bb"
+  }
+}
