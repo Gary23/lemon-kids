@@ -118,7 +118,7 @@ fun HomeScreen(
             uiState.actionError?.let { error ->
                 AlertDialog(
                     onDismissRequest = viewModel::dismissActionError,
-                    title = { Text("无法撤销任务") },
+                    title = { Text("操作失败") },
                     text = { Text(error) },
                     confirmButton = { TextButton(onClick = viewModel::dismissActionError) { Text("知道了") } }
                 )
