@@ -25,6 +25,7 @@ node_modules/
 **/node_modules/
 .next/
 **/.next/
+/ui/app/next-env.d.ts
 
 # 环境变量与凭据
 .env
