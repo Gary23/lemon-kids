@@ -100,8 +100,6 @@ CREATE TABLE IF NOT EXISTS public.device_status_logs (
 
 
 alter table public.tasks add column if not exists end_date date;
-alter table public.tasks add column if not exists timer_enabled boolean not null default false;
-alter table public.task_templates add column if not exists timer_enabled boolean not null default false;
 
 
 -- 电子日历核心：重复任务系列与家长驳回的事务性积分回滚。
@@ -1311,58 +1309,7 @@ grant execute on function public.update_daily_task_description(uuid, text) to au
 
 
 
--- 来源：20261020_parent_task_timing_management.sql
--- 任务库计时开关及已安排任务同步。先于孩子端计时迁移执行。
-
-alter table public.task_templates add column if not exists timer_enabled boolean not null default false;
-alter table public.tasks add column if not exists timer_enabled boolean not null default false;
-
--- 修改模板时同步未完成实例；已完成实例的快照不再变化。
-create or replace function public.sync_template_timer_enabled()
-returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
-begin
-  if new.timer_enabled is distinct from old.timer_enabled then
-    if to_regclass('public.task_timer_sessions') is not null and not new.timer_enabled then
-      -- 会话表在第二份迁移后出现；其 trigger 会在本次更新后处理运行态。
-      execute 'update public.task_timer_sessions set status = ''paused'', accumulated_seconds = least(21600, accumulated_seconds + greatest(0, extract(epoch from least(now(), last_heartbeat) - running_since))::integer), running_since = null, updated_at = now() where source_template_id = $1 and status = ''running''' using new.id;
-    end if;
-    update public.tasks set timer_enabled = new.timer_enabled
-    where source_template_id = new.id and status = 'pending' and deleted_at is null;
-  end if;
-  return new;
-end $$;
-drop trigger if exists task_template_timer_sync on public.task_templates;
-create trigger task_template_timer_sync after update of timer_enabled on public.task_templates
-for each row execute function public.sync_template_timer_enabled();
-
--- 回收站还原时重新采用当前模板开关，避免已取消任务保留过期快照。
-create or replace function public.sync_restored_task_timer_enabled()
-returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
-begin
-  if old.deleted_at is not null and new.deleted_at is null and new.source_template_id is not null then
-    select t.timer_enabled into new.timer_enabled from public.task_templates t
-      where t.id = new.source_template_id and t.family_id = new.family_id;
-    if not found then new.timer_enabled := false; end if;
-  end if;
-  return new;
-end $$;
-drop trigger if exists task_timer_restore_sync on public.tasks;
-create trigger task_timer_restore_sync before update of deleted_at on public.tasks
-for each row execute function public.sync_restored_task_timer_enabled();
-
-create or replace function public.disable_orphan_task_timer()
-returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
-begin
-  if old.source_template_id is not null and new.source_template_id is null then
-    new.timer_enabled := false;
-  end if;
-  return new;
-end $$;
-drop trigger if exists task_timer_orphan_disable on public.tasks;
-create trigger task_timer_orphan_disable before update of source_template_id on public.tasks
-for each row execute function public.disable_orphan_task_timer();
-
--- 保留 20261010 的八参数/七参数创建接口，额外复制计时开关。
+-- 保留 20261010 的八参数/七参数创建接口。
 
 create or replace function public.create_tasks_from_selection(
     p_child_id uuid, p_category_id uuid, p_template_id uuid,
@@ -1441,12 +1388,12 @@ begin
         loop
             insert into public.tasks(
                 family_id, title, description, child_id, created_by, status, category,
-                source_category_id, source_template_id, growth_domain, timer_enabled, due_date, due_time,
+                source_category_id, source_template_id, growth_domain, due_date, due_time,
                 reward_points, penalty_points, recurrence_series_id, recurrence_type,
                 recurrence_weekdays, recurrence_end_date
             ) values (
                 v_family_id, v_template.title, '', p_child_id, auth.uid(), 'pending', v_category_name,
-                p_category_id, v_template.id, coalesce(v_template.growth_domain, 'other'), v_template.timer_enabled, v_date, null,
+                p_category_id, v_template.id, coalesce(v_template.growth_domain, 'other'), v_date, null,
                 v_template.reward_points, v_template.penalty_points, v_series_id, p_recurrence_type,
                 coalesce(p_recurrence_weekdays, '{}'::integer[]),
                 case when p_recurrence_type = 'none' then null else p_end_date end
@@ -1479,271 +1426,8 @@ revoke all on function public.create_tasks_from_selection(uuid, uuid, uuid, date
 grant execute on function public.create_tasks_from_selection(uuid, uuid, uuid, date, date, text, integer[]) to authenticated;
 
 
--- 来源：20261020_kid_task_timer.sql
--- 首页计时：会话互斥、有效用时及原子完成。依赖 20261020_parent_task_timing_management.sql。
 
-create table if not exists public.task_timer_sessions (
-  id uuid primary key default gen_random_uuid(),
-  family_id uuid not null references public.families(id),
-  child_id uuid not null references public.users(uid),
-  task_id uuid not null references public.tasks(id) on delete cascade,
-  source_template_id uuid references public.task_templates(id) on delete set null,
-  mode text not null check (mode in ('countup','countdown')),
-  target_seconds integer check (target_seconds between 60 and 3600 and target_seconds % 60 = 0),
-  status text not null check (status in ('running','paused','finished','abandoned')),
-  accumulated_seconds integer not null default 0 check (accumulated_seconds between 0 and 21600),
-  running_since timestamptz,
-  last_heartbeat timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint countdown_has_target check ((mode = 'countdown') = (target_seconds is not null))
-);
-create unique index if not exists task_timer_one_open_per_child
-  on public.task_timer_sessions(child_id) where status in ('running','paused');
-create index if not exists task_timer_task_created on public.task_timer_sessions(task_id, created_at desc);
-
-create table if not exists public.task_duration_records (
-  id uuid primary key default gen_random_uuid(),
-  task_id uuid not null unique references public.tasks(id) on delete cascade,
-  family_id uuid not null references public.families(id),
-  child_id uuid not null references public.users(uid),
-  source_template_id uuid references public.task_templates(id) on delete set null,
-  task_title text not null,
-  completed_at timestamptz not null default now(),
-  duration_seconds integer not null check (duration_seconds between 1 and 21600),
-  previous_average_seconds integer,
-  previous_sample_count integer not null default 0
-);
-create index if not exists task_duration_child_template_date
-  on public.task_duration_records(child_id, source_template_id, completed_at desc);
-create index if not exists task_duration_family_template_date
-  on public.task_duration_records(family_id, source_template_id, completed_at desc);
-
--- 日历打卡、家长取消等旧入口若改变任务状态，立即释放未结束会话。
-create or replace function public.close_unavailable_task_timer()
-returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
-begin
-  if (new.status <> 'pending' or new.deleted_at is not null) and
-      (old.status = 'pending' and old.deleted_at is null) then
-    update public.task_timer_sessions set status = 'abandoned', running_since = null,
-      updated_at = now() where task_id = new.id and status in ('running','paused');
-  elsif old.source_template_id is not null and new.source_template_id is null then
-    update public.task_timer_sessions set status='paused', running_since=null,
-      accumulated_seconds=least(21600, accumulated_seconds +
-        greatest(0, extract(epoch from least(now(), last_heartbeat) - running_since))::integer),
-      updated_at=now() where task_id=new.id and status='running';
-  end if;
-  return new;
-end $$;
-drop trigger if exists task_timer_task_unavailable on public.tasks;
-create trigger task_timer_task_unavailable after update of status, deleted_at, source_template_id on public.tasks
-for each row execute function public.close_unavailable_task_timer();
-
-alter table public.task_timer_sessions enable row level security;
-alter table public.task_duration_records enable row level security;
-drop policy if exists timer_session_child_read on public.task_timer_sessions;
-create policy timer_session_child_read on public.task_timer_sessions for select to authenticated
-using (child_id = auth.uid());
-drop policy if exists duration_family_read on public.task_duration_records;
-create policy duration_family_read on public.task_duration_records for select to authenticated
-using (exists (select 1 from public.users u where u.uid = auth.uid()
-  and u.family_id = task_duration_records.family_id
-  and (u.role = 'parent' or u.uid = task_duration_records.child_id)));
-revoke all on public.task_timer_sessions, public.task_duration_records from anon, authenticated;
-grant select on public.task_timer_sessions, public.task_duration_records to authenticated;
-
--- 运行会话若失去心跳，按最后一次心跳结算并自动暂停。
-create or replace function public.settle_task_timer(p_session_id uuid, p_force_pause boolean default false)
-returns void language plpgsql security definer set search_path = public, pg_temp as $$
-declare s public.task_timer_sessions%rowtype; v_stop timestamptz; v_seconds integer;
-begin
-  select * into s from public.task_timer_sessions where id = p_session_id for update;
-  if not found or s.status <> 'running' then return; end if;
-  if s.last_heartbeat < now() - interval '30 seconds' then
-    v_stop := s.last_heartbeat;
-    p_force_pause := true;
-  else
-    v_stop := now();
-  end if;
-  v_seconds := greatest(0, floor(extract(epoch from v_stop - s.running_since))::integer);
-  if s.accumulated_seconds + v_seconds >= 21600 then
-    v_seconds := greatest(0, 21600 - s.accumulated_seconds);
-    p_force_pause := true;
-  end if;
-  if p_force_pause then
-    update public.task_timer_sessions set accumulated_seconds = accumulated_seconds + v_seconds,
-      status = 'paused', running_since = null, updated_at = now() where id = s.id;
-  end if;
-end $$;
-revoke all on function public.settle_task_timer(uuid, boolean) from public, anon, authenticated;
-
--- start / heartbeat / pause / resume / finish / abandon。返回服务端会话快照。
-create or replace function public.task_timer_action(
-  p_task_id uuid, p_action text, p_mode text default null, p_target_seconds integer default null
-) returns setof public.task_timer_sessions language plpgsql security definer set search_path = public, pg_temp as $$
-declare t public.tasks%rowtype; s public.task_timer_sessions%rowtype;
-  v_duration integer; v_average integer; v_count integer;
-begin
-  if not exists(select 1 from public.users where uid = auth.uid() and role = 'child') then
-    raise exception 'Only children can use task timers';
-  end if;
-  -- 串行化同一孩子的新建和操作，唯一索引也负责最后防线。
-  perform pg_advisory_xact_lock(hashtextextended(auth.uid()::text, 12020));
-  select * into t from public.tasks where id = p_task_id and child_id = auth.uid() and deleted_at is null for update;
-  if not found then raise exception 'Task is not available'; end if;
-  select * into s from public.task_timer_sessions
-    where child_id = auth.uid() and status in ('running','paused') order by created_at desc limit 1 for update;
-  if found then perform public.settle_task_timer(s.id); select * into s from public.task_timer_sessions where id = s.id; end if;
-  if p_action = 'start' then
-    if s.id is not null then
-      if s.task_id <> p_task_id then raise exception 'Another task is already timed'; end if;
-      return next s; return;
-    end if;
-    if t.status <> 'pending' or not t.timer_enabled or t.source_template_id is null then
-      raise exception 'Task timing is disabled';
-    end if;
-    if p_mode not in ('countup','countdown') or
-       (p_mode = 'countdown' and (p_target_seconds is null or p_target_seconds < 60 or p_target_seconds > 3600 or p_target_seconds % 60 <> 0)) or
-       (p_mode = 'countup' and p_target_seconds is not null) then
-      raise exception 'Invalid timer mode or target';
-    end if;
-    insert into public.task_timer_sessions(family_id, child_id, task_id, source_template_id, mode,
-      target_seconds, status, running_since, last_heartbeat)
-    values(t.family_id, t.child_id, t.id, t.source_template_id, p_mode, p_target_seconds,
-      'running', now(), now()) returning * into s;
-    return next s; return;
-  end if;
-  if p_action = 'finish' and t.status <> 'pending' then
-    select * into s from public.task_timer_sessions
-      where child_id = auth.uid() and task_id = p_task_id and status = 'finished'
-      order by updated_at desc limit 1;
-    if found then return next s; return; end if;
-  end if;
-  if s.id is null or s.task_id <> p_task_id then raise exception 'Active timer not found'; end if;
-  if p_action = 'heartbeat' then
-    if s.status = 'running' then
-      update public.task_timer_sessions set last_heartbeat = now(), updated_at = now() where id = s.id returning * into s;
-    end if;
-  elsif p_action = 'pause' then
-    perform public.settle_task_timer(s.id, true);
-    select * into s from public.task_timer_sessions where id = s.id;
-  elsif p_action = 'resume' then
-    if t.status <> 'pending' or not t.timer_enabled or s.accumulated_seconds >= 21600 then
-      raise exception 'Timer cannot resume';
-    end if;
-    if s.status = 'paused' then
-      update public.task_timer_sessions set status = 'running', running_since = now(),
-        last_heartbeat = now(), updated_at = now() where id = s.id returning * into s;
-    end if;
-  elsif p_action = 'abandon' then
-    update public.task_timer_sessions set status = 'abandoned', running_since = null,
-      updated_at = now() where id = s.id returning * into s;
-  elsif p_action = 'finish' then
-    if t.status <> 'pending' then raise exception 'Task is not pending'; end if;
-    perform public.settle_task_timer(s.id, true);
-    select * into s from public.task_timer_sessions where id = s.id;
-    v_duration := s.accumulated_seconds;
-    if v_duration < 1 then raise exception 'Timer must run for at least one second'; end if;
-    select count(*), round(avg(duration_seconds))::integer into v_count, v_average
-      from public.task_duration_records
-      where child_id = t.child_id and source_template_id = t.source_template_id
-        and completed_at >= now() - interval '30 days';
-    -- complete_task is the latest verified reward transaction; any error rolls this entire RPC back.
-    perform public.complete_task(t.id, t.child_id);
-    insert into public.task_duration_records(task_id, family_id, child_id, source_template_id,
-      task_title, duration_seconds, previous_average_seconds, previous_sample_count)
-    values(t.id, t.family_id, t.child_id, t.source_template_id, t.title, v_duration, v_average, v_count);
-    update public.task_timer_sessions set status = 'finished', updated_at = now() where id = s.id returning * into s;
-  else
-    raise exception 'Unknown timer action';
-  end if;
-  return next s;
-end $$;
-revoke all on function public.task_timer_action(uuid, text, text, integer) from public, anon;
-grant execute on function public.task_timer_action(uuid, text, text, integer) to authenticated;
-
-create or replace function public.get_task_duration_averages(p_family_id uuid, p_child_id uuid default null)
-returns table(source_template_id uuid, child_id uuid, average_seconds integer, sample_count integer)
-language plpgsql stable security definer set search_path = public, pg_temp as $$
-begin
-  if not exists(select 1 from public.users u where u.uid = auth.uid() and u.family_id = p_family_id
-    and (u.role = 'parent' or (u.role = 'child' and p_child_id = auth.uid()))) then
-    raise exception 'Family is not available';
-  end if;
-  return query select d.source_template_id, case when p_child_id is null then null::uuid else d.child_id end,
-    round(avg(d.duration_seconds))::integer,
-    count(*)::integer from public.task_duration_records d
-    where d.family_id = p_family_id and d.source_template_id is not null
-      and d.completed_at >= now() - interval '30 days'
-      and (p_child_id is null or d.child_id = p_child_id)
-    group by d.source_template_id, case when p_child_id is null then null::uuid else d.child_id end;
-end $$;
-revoke all on function public.get_task_duration_averages(uuid, uuid) from public, anon;
-grant execute on function public.get_task_duration_averages(uuid, uuid) to authenticated;
-
-create or replace function public.get_task_duration_records(p_family_id uuid, p_template_id uuid)
-returns setof public.task_duration_records language plpgsql stable security definer set search_path = public, pg_temp as $$
-begin
-  if not exists(select 1 from public.users where uid = auth.uid() and family_id = p_family_id and role = 'parent') then
-    raise exception 'Only family parents can read duration details';
-  end if;
-  return query select * from public.task_duration_records
-    where family_id = p_family_id and source_template_id = p_template_id
-      and completed_at >= now() - interval '30 days' order by completed_at desc;
-end $$;
-revoke all on function public.get_task_duration_records(uuid, uuid) from public, anon;
-grant execute on function public.get_task_duration_records(uuid, uuid) to authenticated;
-
-create or replace function public.get_child_task_duration_records(p_child_id uuid)
-returns setof public.task_duration_records language plpgsql stable security definer set search_path = public, pg_temp as $$
-begin
-  if auth.uid() is distinct from p_child_id or
-      not exists(select 1 from public.users where uid = p_child_id and role = 'child') then
-    raise exception 'Only the child can read own durations';
-  end if;
-  return query select * from public.task_duration_records
-    where child_id = p_child_id and completed_at >= now() - interval '30 days'
-    order by completed_at desc;
-end $$;
-revoke all on function public.get_child_task_duration_records(uuid) from public, anon;
-grant execute on function public.get_child_task_duration_records(uuid) to authenticated;
-
-create or replace function public.delete_task_duration_record(p_record_id uuid)
-returns void language plpgsql security definer set search_path = public, pg_temp as $$
-begin
-  delete from public.task_duration_records d where d.id = p_record_id
-    and exists(select 1 from public.users u where u.uid = auth.uid() and u.role = 'parent' and u.family_id = d.family_id);
-  if not found then raise exception 'Duration record not available'; end if;
-end $$;
-revoke all on function public.delete_task_duration_record(uuid) from public, anon;
-grant execute on function public.delete_task_duration_record(uuid) to authenticated;
-
--- 由数据库调度或运维定时调用；查询始终过滤窗口，清理延迟不影响统计。
-create or replace function public.prune_task_duration_records()
-returns integer language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_deleted integer;
-begin
-  if auth.role() is distinct from 'service_role' and current_user <> 'postgres' then
-    raise exception 'Service role required'; end if;
-  delete from public.task_duration_records where completed_at < now() - interval '30 days';
-  get diagnostics v_deleted = row_count;
-  delete from public.task_timer_sessions where status in ('finished','abandoned') and updated_at < now() - interval '30 days';
-  return v_deleted;
-end $$;
-revoke all on function public.prune_task_duration_records() from public, anon, authenticated;
-grant execute on function public.prune_task_duration_records() to service_role;
-
--- Supabase pg_cron 每小时清理；迁移若无法启用扩展会失败，避免只过滤查询却长期存储旧用时。
--- 超级用户扩展安装由 prerequisites 脚本负责；业务函数仍归 postgres。
-do $$ begin
- if not exists(select 1 from pg_extension where extname='pg_cron') then
-  raise exception 'Apply local parent business prerequisites as supabase_admin first';
- end if;
-end $$;
-select cron.schedule('task-duration-prune-hourly', '0 * * * *',
-  'select public.prune_task_duration_records();');
-
--- 沿用 20260930 的“积分不足不能撤销”规则，并删除本次用时。
+-- 沿用 20260930 的“积分不足不能撤销”规则。
 create or replace function public.undo_task_completion(p_task_id uuid, p_child_id uuid)
 returns void language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_task public.tasks%rowtype; v_record public.point_records%rowtype; v_balance integer;
@@ -1762,7 +1446,6 @@ begin
   update public.tasks set status = 'pending', completed_at = null, verified_at = null where id = p_task_id;
   update public.users set total_points = v_balance - v_record.amount where uid = p_child_id;
   delete from public.point_records where id = v_record.id;
-  delete from public.task_duration_records where task_id = p_task_id;
 end $$;
 
 

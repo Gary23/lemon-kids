@@ -56,7 +56,7 @@ for table in ['categories','task_templates','category_task_templates','rewards',
  expect(request(REST,'/'+table)[0] in (401,403),table+' anonymous access must be denied')
 mark('all management table reads and anonymous denial')
 cat=call(P,'/categories',{'family_id':fa,'name':'verify category'},prefer='return=representation')[0]['id']
-template=call(P,'/task_templates',{'family_id':fa,'title':'verify task','growth_domain':'reading','timer_enabled':True},prefer='return=representation')[0]['id']
+template=call(P,'/task_templates',{'family_id':fa,'title':'verify task','growth_domain':'reading'},prefer='return=representation')[0]['id']
 other=call(B,'/task_templates',{'family_id':fb,'title':'other family'},prefer='return=representation')[0]['id']
 call(P,'/rpc/set_category_task_templates',{'p_category_id':cat,'p_template_ids':[template]})
 expect(call(B,'/categories')==[],'cross-family category read')
@@ -69,7 +69,7 @@ mark('catalogue CRUD, atomic associations and family/child boundaries')
 future=(date.today()+timedelta(days=2)).isoformat()
 args={'p_child_id':ca[0],'p_category_id':cat,'p_template_id':None,'p_start_date':future,'p_end_date':future,'p_recurrence_type':'none','p_recurrence_weekdays':[],'p_selected_template_ids':[template]}
 task=call(P,'/rpc/create_tasks_from_selection',args)[0]
-expect(task['description']=='' and task['timer_enabled'],'task source snapshot')
+expect(task['description']=='','task source snapshot')
 call(P,'/rpc/update_daily_task_description',{'p_task_id':task['id'],'p_description':'daily content'})
 call(P,'/rpc/create_tasks_from_selection',args)
 expect(call(P,'/tasks?id=eq.'+task['id'])[0]['description']=='daily content','idempotent scheduling must preserve daily description')
@@ -83,25 +83,15 @@ call(P,'/rpc/restore_cancelled_task',{'p_task_id':task['id']})
 expect(call(P,'/tasks?id=eq.'+task['id'])[0]['deleted_at'] is None,'restore preserves task')
 expect(request(REST,'/tasks?id=eq.'+task['id'],{'deleted_at':'2030-01-01T00:00:00Z'},token=P,method='PATCH')[0]>=400,'direct history bypass rejected')
 mark('task scheduling/deduplication, description, rename, cancellation and restore')
-expect(call(P,'/rpc/get_task_duration_averages',{'p_family_id':fa})==[],'empty duration aggregate')
-expect(call(P,'/rpc/get_task_duration_records',{'p_family_id':fa,'p_template_id':template})==[],'empty duration details')
-call(C,'/rpc/task_timer_action',{'p_task_id':task['id'],'p_action':'start','p_mode':'countup','p_target_seconds':None})
-psql(db,f"update public.task_timer_sessions set running_since=now()-interval '5 seconds',last_heartbeat=now() where task_id='{task['id']}';")
-call(C,'/rpc/task_timer_action',{'p_task_id':task['id'],'p_action':'finish','p_mode':None,'p_target_seconds':None})
-rows=call(P,'/rpc/get_task_duration_averages',{'p_family_id':fa})
-expect(len(rows)==1 and rows[0]['sample_count']==1,'timer completion aggregate')
-expect(call(S,'/task_duration_records')==[],'sibling duration privacy')
-expect(request(REST,'/rpc/get_task_duration_averages',{'p_family_id':fa},token=B)[0]>=400,'foreign aggregate forbidden')
-record=call(P,'/rpc/get_task_duration_records',{'p_family_id':fa,'p_template_id':template})[0]
-call(P,'/rpc/delete_task_duration_record',{'p_record_id':record['id']})
-expect(call(P,'/rpc/get_task_duration_averages',{'p_family_id':fa})==[],'duration deletion recalculates aggregate')
+call(C,'/rpc/complete_task',{'p_task_id':task['id'],'p_child_id':ca[0]})
+expect(call(P,'/tasks?id=eq.'+task['id'])[0]['status']=='verified','completion snapshot')
+expect(request(REST,'/rpc/complete_task',{'p_task_id':task['id'],'p_child_id':ca[0]},token=C)[0]>=400,'completed task cannot complete twice')
 expect(request(REST,'/rpc/cancel_task',{'p_task_id':task['id']},token=P)[0]>=400,'completed task history retained')
 call(C,'/rpc/undo_task_completion',{'p_task_id':task['id'],'p_child_id':ca[0]})
 call(P,'/rpc/cancel_task',{'p_task_id':task['id']})
 call(P,'/rpc/permanently_delete_recyclable_task',{'p_task_id':task['id']})
 expect(call(P,'/tasks?id=eq.'+task['id'])==[],'recyclable task deletion')
-expect(psql(db,"select count(*) from cron.job where jobname='task-duration-prune-hourly';").strip()=='1','single scheduled pruning job')
-mark('timer completion/points transaction, privacy, deletion and history constraints')
+mark('task completion/points transaction, undo and history constraints')
 progress={'p_child_id':ca[0],'p_badge_key':'reading','p_segment':'','p_value':12,'p_expected_version':0}
 row=call(P,'/rpc/set_badge_progress',progress)
 expect(row['version']==1 and row['value']==12,'badge versioned save')

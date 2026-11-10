@@ -19,6 +19,7 @@ ENV = dict(os.environ, DOCKER_HOST='unix:///Volumes/LemonKidsContainer/colima/de
            DOCKER_CONFIG='/Volumes/LemonKidsContainer/docker-config')
 SOURCE = 'supabase_db_lemon-kids-local'
 SQL = ROOT / 'supabase/sql/20261029_local_parent_business_baseline.sql'
+PUBLIC_OBJECTS = "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind in ('r','v','m','f');"
 
 def docker(*args, data=None, check=True):
     p = subprocess.run([DOCKER, *args], env=ENV, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -161,6 +162,7 @@ def main():
         dump=docker('exec',SOURCE,'pg_dump','-U','postgres','-d','postgres','--clean','--if-exists')
         docker('exec','-i',db,'psql','-X','-v','ON_ERROR_STOP=1','-U','verify_bootstrap','-d','postgres',data=dump)
         compare_snapshot(db,before)
+        objects_before=psql(db,PUBLIC_OBJECTS).strip()
         failed=False
         try:
             psql(db,migration_bundle().replace(CORE_VERIFY, "update public.tasks set title=title || ' rollback probe';\n"+CORE_VERIFY),user='supabase_admin')
@@ -168,7 +170,9 @@ def main():
             if 'Migration changed original core data' not in str(error): raise
             failed=True
         assert failed, 'Failure probe must abort the migration'
-        assert psql(db,"select to_regclass('public.categories') is null;").strip()=='t', 'Failed migration left new business schema behind'
+        # 源库已应用过基线，不能再用“业务表不存在”判断回滚；改为比较 public 关系数量并检查探针数据未落库。
+        assert psql(db,PUBLIC_OBJECTS).strip()==objects_before, 'Failed migration left new business schema behind'
+        assert psql(db,"select count(*) from public.tasks where title like '% rollback probe';").strip()=='0', 'Failed migration committed probe data'
         compare_snapshot(db,before)
         print('transaction rollback probe: all DDL and original data preserved',flush=True)
         apply(db); compare_snapshot(db,before)
