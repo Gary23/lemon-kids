@@ -1,0 +1,14 @@
+{
+  "passed_groups": [
+    "rollback/idempotency/data preservation",
+    "real parent onboarding, task binding, multi-device login and child refresh",
+    "growth empty response, role restriction and empty business reads",
+    "home/calendar/future tasks, completion/undo, points and family isolation",
+    "timer start/pause/resume/heartbeat/finish, durations and atomic points",
+    "redemption/refund/use, idempotency and real growth milestones",
+    "real private Storage upload, child signing/download and foreign/child write denial",
+    "usage reporting/replacement and own-family scope"
+  ],
+  "source_unchanged": true,
+  "sql_sha256": "9bb5f1915ea3bfce10bf7a1ca1c6c7952eb534f224bc10a59ae6983f31b82d4e"
+}

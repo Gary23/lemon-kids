@@ -1,0 +1,18 @@
+{
+  "model": "BZT3-AL00",
+  "android_sdk": "29",
+  "package": "com.lemonkids.kidtask.local",
+  "version_name": "1.0.0-local",
+  "apk_sha256": "b131b4a531d4825e2505038c784bba83937d54b992d69b50c94b41f7b808dfad",
+  "installed_at": "2026-11-10T09:59:49+08:00",
+  "install_result": "Success",
+  "launch_result": "monkey 启动成功，MainActivity 处于前台",
+  "original_package_still_present": true,
+  "process_running": true,
+  "local_address_screen_visible": true,
+  "prefilled_address": "10.230.114.212:54421",
+  "effective_address": "127.0.0.1:54421",
+  "effective_address_note": "当前 Wi-Fi 下 Pad 直连电脑 10.230.114.212:54421 不可达（Pad 浏览器访问同一健康接口也无法打开），已执行 adb reverse tcp:54421 tcp:54421 并将应用地址保存为 127.0.0.1:54421；健康检查通过，经切换页重启后进入绑定码登录页。测试期间需保持 USB 连接。",
+  "binding_login_reached": true,
+  "business_data_touched": false
+}

@@ -1,0 +1,9 @@
+{
+  "package": "com.lemonkids.kidtask.local",
+  "version_code": "1",
+  "version_name": "1.0.0-local",
+  "built_at": "2026-11-10T01:56:15.684654+00:00",
+  "api_url": "http://10.230.114.212:54421",
+  "apk": "/Users/yupengjun/lemon-kids/kid-task-app/build/outputs/apk/local-debug/kid-task-app-local-debug.apk",
+  "sha256": "b131b4a531d4825e2505038c784bba83937d54b992d69b50c94b41f7b808dfad"
+}

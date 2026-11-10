@@ -21,6 +21,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (providers.gradleProperty("localSupabase").orNull == "true") {
+                applicationIdSuffix = ".local"
+                versionNameSuffix = "-local"
+                resValue("string", "app_name", "柠檬任务·本地")
+            }
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(

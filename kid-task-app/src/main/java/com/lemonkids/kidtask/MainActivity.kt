@@ -7,12 +7,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.lemonkids.kidtask.feature.local.LocalServerScreen
+import com.lemonkids.shared.di.SupabaseEnvironment
 import com.lemonkids.kidtask.navigation.KidTaskNavGraph
 import com.lemonkids.kidtask.ui.theme.KidTaskTheme
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private var showLocalServerSettings by mutableStateOf(true)
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -23,7 +29,11 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermission()
         setContent {
             KidTaskTheme {
-                KidTaskNavGraph()
+                if (SupabaseEnvironment.isLocal && showLocalServerSettings) {
+                    LocalServerScreen(onContinue = { showLocalServerSettings = false })
+                } else {
+                    KidTaskNavGraph(onLocalServerSettingsClick = { showLocalServerSettings = true })
+                }
             }
         }
     }

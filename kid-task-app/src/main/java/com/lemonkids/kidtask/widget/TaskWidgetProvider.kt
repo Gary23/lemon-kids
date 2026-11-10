@@ -73,6 +73,17 @@ class TaskWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
+        /** Do not initialize repositories in the short-lived restart helper process. */
+        fun showLocalUnbound(context: Context) {
+            val manager = AppWidgetManager.getInstance(context)
+            manager.getAppWidgetIds(ComponentName(context, TaskWidgetProvider::class.java)).forEach { id ->
+                manager.updateAppWidget(id, buildRemoteViews(context, id, emptyList()).apply {
+                    setTextViewText(R.id.widget_subtitle, "请打开本地测试包，连接服务并输入绑定码")
+                })
+                manager.notifyAppWidgetViewDataChanged(id, R.id.widget_task_list)
+            }
+        }
+
         fun updateAll(context: Context, onFinished: (() -> Unit)? = null) {
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, TaskWidgetProvider::class.java)

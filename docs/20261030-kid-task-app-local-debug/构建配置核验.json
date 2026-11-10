@@ -1,0 +1,14 @@
+[
+  {
+    "variant": "debug",
+    "package": "com.lemonkids.kidtask",
+    "is_local": false,
+    "api_url": "https://ebiikfxehhcrtrkioxqa.supabase.co"
+  },
+  {
+    "variant": "release",
+    "package": "com.lemonkids.kidtask",
+    "is_local": false,
+    "api_url": "https://ebiikfxehhcrtrkioxqa.supabase.co"
+  }
+]

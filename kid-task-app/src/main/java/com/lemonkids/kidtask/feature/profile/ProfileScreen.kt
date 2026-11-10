@@ -73,6 +73,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.lemonkids.kidtask.ui.components.StatusBadge
 import com.lemonkids.kidtask.ui.components.childNameLabel
+import com.lemonkids.kidtask.feature.local.LocalServerSettingsLink
 import com.lemonkids.kidtask.ui.theme.Butter
 import com.lemonkids.kidtask.ui.theme.Lemon
 import com.lemonkids.kidtask.ui.theme.LemonBorder
@@ -130,7 +131,8 @@ fun ProfileScreen(
     pointsUnavailable: Boolean,
     onPlanClick: () -> Unit,
     viewModel: ProfileViewModel = hiltViewModel(),
-    authViewModel: AuthViewModel = hiltViewModel()
+    authViewModel: AuthViewModel = hiltViewModel(),
+    onLocalServerSettingsClick: () -> Unit = {}
 ) {
     val profile by viewModel.uiState.collectAsStateWithLifecycle()
     var category by remember { mutableStateOf(MedalCategory.ALL) }
@@ -194,7 +196,7 @@ fun ProfileScreen(
                     )
                     key(snapshot.childId) { MilestoneSection(snapshot.events) }
                 }
-                SettingsSection(profile, onPlanClick) { showSwitchDialog = true }
+                SettingsSection(profile, onPlanClick, onLocalServerSettingsClick) { showSwitchDialog = true }
             }
         }
     }
@@ -469,10 +471,12 @@ private fun MilestoneSection(events: List<GrowthEvent>) {
 }
 
 @Composable
-private fun SettingsSection(profile: KidProfileUiState, onPlanClick: () -> Unit, onSwitchClick: () -> Unit) {
+private fun SettingsSection(profile: KidProfileUiState, onPlanClick: () -> Unit,
+                            onLocalServerSettingsClick: () -> Unit, onSwitchClick: () -> Unit) {
     GrowthPanel(Color.White) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Text("设置与账户", fontSize = 21.sp, fontWeight = FontWeight.ExtraBold, color = SlateInk)
+            LocalServerSettingsLink(onLocalServerSettingsClick)
             SettingsAction(Icons.Filled.CalendarMonth, "计划", "查看未来任务安排", onPlanClick)
             SettingsAction(Icons.Filled.Lock, "使用限制", if (profile.appLimits.isEmpty()) "当前没有已配置的使用限制" else profile.appLimits.joinToString(" · ") { "${it.appName} ${it.dailyLimitMinutes}分钟/天" }, null)
             SettingsAction(Icons.AutoMirrored.Filled.Logout, "切换账号", "重新输入绑定码", onSwitchClick)

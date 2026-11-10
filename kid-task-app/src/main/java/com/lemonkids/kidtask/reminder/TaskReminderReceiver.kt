@@ -7,9 +7,12 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
 import com.lemonkids.kidtask.R
+import com.lemonkids.shared.di.SupabaseEnvironment
 
 class TaskReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (SupabaseEnvironment.isLocal && !isCurrentLocalReminder(
+                TaskReminderScheduler.localEnvironmentToken(context), intent.getStringExtra(EXTRA_ENVIRONMENT))) return
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
         if (title.isBlank()) return
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -29,6 +32,7 @@ class TaskReminderReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        const val EXTRA_ENVIRONMENT = "local_supabase_environment"
         const val CHANNEL_ID = "task_reminders"
         const val EXTRA_TITLE = "title"
         const val EXTRA_NOTIFICATION_ID = "notification_id"

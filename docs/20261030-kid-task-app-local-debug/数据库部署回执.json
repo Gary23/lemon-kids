@@ -1,0 +1,35 @@
+{
+  "timestamp": "2026-10-30T05:54:57.127002+00:00",
+  "container": "supabase_db_lemon-kids-local",
+  "sql": "20261030_local_kid_task_support.sql",
+  "sha256": "9bb5f1915ea3bfce10bf7a1ca1c6c7952eb534f224bc10a59ae6983f31b82d4e",
+  "public_data_unchanged": true,
+  "table_counts": {
+    "tasks": 14,
+    "users": 40,
+    "rewards": 0,
+    "families": 21,
+    "app_usage": 0,
+    "app_limits": 0,
+    "categories": 2,
+    "binding_codes": 19,
+    "point_records": 0,
+    "badge_progress": 0,
+    "task_templates": 3,
+    "device_status_logs": 0,
+    "reward_redemptions": 0,
+    "task_timer_sessions": 0,
+    "badge_progress_audit": 0,
+    "task_duration_records": 0,
+    "category_task_templates": 3,
+    "task_growth_domain_audit": 0
+  },
+  "post_deploy_checks": {
+    "growth_rpc_present": true,
+    "own_usage_delete_policy_present": true,
+    "authenticated_growth_execute": true,
+    "anon_growth_execute": false,
+    "loopback_auth_http": 200,
+    "lan_auth_http": 200
+  }
+}

@@ -3,6 +3,8 @@ package com.lemonkids.kidtask.navigation
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -69,6 +71,8 @@ import com.lemonkids.kidtask.ui.theme.SlateInk
 import com.lemonkids.kidtask.ui.theme.SlateMuted
 import com.lemonkids.shared.ui.auth.AuthViewModel
 import com.lemonkids.shared.ui.auth.BindingCodeScreen
+import com.lemonkids.kidtask.feature.local.LocalServerSettingsLink
+import com.lemonkids.shared.di.SupabaseEnvironment
 
 sealed class KidTaskTab(
     val route: String,
@@ -87,19 +91,20 @@ object KidTaskRoutes {
 }
 
 @Composable
-fun KidTaskNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
+fun KidTaskNavGraph(onLocalServerSettingsClick: () -> Unit = {}, authViewModel: AuthViewModel = hiltViewModel()) {
     val uiState by authViewModel.uiState.collectAsState()
     val context = LocalContext.current
     val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
 
     if (!uiState.isFirstCheckComplete) {
-        KidTaskWelcomeScreen()
+        KidTaskWelcomeScreen(onLocalServerSettingsClick)
         if (uiState.requiresSessionRecovery) {
             TaskSessionRecoveryDialog(
                 isRecovering = uiState.isRecoveringSession,
                 message = uiState.sessionRecoveryMessage,
                 onRetryRefresh = authViewModel::retrySessionRefresh,
-                onRestoreWithBinding = authViewModel::restoreSavedBindingCodeFromDialog
+                onRestoreWithBinding = authViewModel::restoreSavedBindingCodeFromDialog,
+                onLocalServerSettingsClick = onLocalServerSettingsClick
             )
         }
         return
@@ -110,19 +115,28 @@ fun KidTaskNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
 
     NavHost(navController = navController, startDestination = startDest) {
         composable(KidTaskRoutes.BINDING_CODE) {
-            BindingCodeScreen(
-                type = "task",
-                deviceId = deviceId,
-                onSuccess = {
-                    navController.navigate(KidTaskRoutes.MAIN) {
-                        popUpTo(0) { inclusive = true }
-                    }
+            Column(Modifier.fillMaxSize()) {
+                LocalServerSettingsLink(onLocalServerSettingsClick)
+                val scrollState = rememberScrollState()
+                val contentModifier = Modifier.weight(1f).let {
+                    if (SupabaseEnvironment.isLocal) it.verticalScroll(scrollState) else it
                 }
-            )
+                Box(contentModifier) {
+                    BindingCodeScreen(
+                        type = "task",
+                        deviceId = deviceId,
+                        onSuccess = {
+                            navController.navigate(KidTaskRoutes.MAIN) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        }
+                    )
+                }
+            }
         }
 
         composable(KidTaskRoutes.MAIN) {
-            KidTaskMainScreen(authViewModel)
+            KidTaskMainScreen(authViewModel, onLocalServerSettingsClick)
         }
     }
 
@@ -132,7 +146,8 @@ fun KidTaskNavGraph(authViewModel: AuthViewModel = hiltViewModel()) {
             isRecovering = uiState.isRecoveringSession,
             message = uiState.sessionRecoveryMessage,
             onRetryRefresh = authViewModel::retrySessionRefresh,
-            onRestoreWithBinding = authViewModel::restoreSavedBindingCodeFromDialog
+            onRestoreWithBinding = authViewModel::restoreSavedBindingCodeFromDialog,
+            onLocalServerSettingsClick = onLocalServerSettingsClick
         )
     }
 }
@@ -142,7 +157,8 @@ private fun TaskSessionRecoveryDialog(
     isRecovering: Boolean,
     message: String?,
     onRetryRefresh: () -> Unit,
-    onRestoreWithBinding: () -> Unit
+    onRestoreWithBinding: () -> Unit,
+    onLocalServerSettingsClick: () -> Unit
 ) {
     Dialog(
         onDismissRequest = {},
@@ -175,6 +191,7 @@ private fun TaskSessionRecoveryDialog(
                 message?.let {
                     Text(it, color = Color(0xFFE53935), fontSize = 13.sp)
                 }
+                LocalServerSettingsLink(onLocalServerSettingsClick)
                 if (isRecovering) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -214,7 +231,7 @@ private fun TaskSessionRecoveryDialog(
 }
 
 @Composable
-fun KidTaskMainScreen(authViewModel: AuthViewModel) {
+fun KidTaskMainScreen(authViewModel: AuthViewModel, onLocalServerSettingsClick: () -> Unit = {}) {
     val navController = rememberNavController()
     val tabs = listOf(KidTaskTab.Home, KidTaskTab.Calendar, KidTaskTab.Reward, KidTaskTab.Profile)
     val authState by authViewModel.uiState.collectAsState()
@@ -248,7 +265,7 @@ fun KidTaskMainScreen(authViewModel: AuthViewModel) {
                 ?.let { GrowthRules.level(it.totalExp).number },
             onSelect = onSelect
         )
-        KidTaskContent(navController, homeViewModel, profileViewModel, Modifier.weight(1f))
+        KidTaskContent(navController, homeViewModel, profileViewModel, Modifier.weight(1f), onLocalServerSettingsClick)
     }
 }
 
@@ -319,7 +336,8 @@ private fun KidTaskSidebar(
 
 @Composable
 private fun KidTaskContent(navController: NavHostController, homeViewModel: HomeViewModel,
-                           profileViewModel: ProfileViewModel, modifier: Modifier) {
+                           profileViewModel: ProfileViewModel, modifier: Modifier,
+                           onLocalServerSettingsClick: () -> Unit) {
     NavHost(navController = navController, startDestination = KidTaskTab.Home.route, modifier = modifier) {
         composable(KidTaskTab.Home.route) { HomeScreen(viewModel = homeViewModel) }
         composable(KidTaskTab.Calendar.route) { CalendarScreen() }
@@ -334,7 +352,8 @@ private fun KidTaskContent(navController: NavHostController, homeViewModel: Home
                 realPoints = homeState.points.takeIf { homeState.isPointsLoaded },
                 pointsUnavailable = homeState.isPointsLoadTimedOut,
                 onPlanClick = { navController.navigate("plan") },
-                viewModel = profileViewModel
+                viewModel = profileViewModel,
+                onLocalServerSettingsClick = onLocalServerSettingsClick
             )
         }
         composable("plan") { PlanScreen(onBack = { navController.popBackStack() }) }
@@ -342,7 +361,7 @@ private fun KidTaskContent(navController: NavHostController, homeViewModel: Home
 }
 
 @Composable
-private fun KidTaskWelcomeScreen() {
+private fun KidTaskWelcomeScreen(onLocalServerSettingsClick: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(text = "\uD83C\uDF4B", fontSize = 56.sp)
@@ -352,6 +371,7 @@ private fun KidTaskWelcomeScreen() {
             Text("正在准备你的小世界...", fontSize = 14.sp, color = Color.Gray)
             Spacer(Modifier.height(24.dp))
             CircularProgressIndicator(Modifier.size(32.dp))
+            LocalServerSettingsLink(onLocalServerSettingsClick)
         }
     }
 }

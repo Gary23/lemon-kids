@@ -9,6 +9,7 @@ import com.lemonkids.shared.model.Family
 import com.lemonkids.shared.model.User
 import com.lemonkids.shared.model.UserRole
 import com.lemonkids.shared.auth.SessionRecoveryCoordinator
+import com.lemonkids.shared.auth.ChildBindingStore
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.AlreadyBoundException
 import com.lemonkids.shared.repository.BindingCodeInfo
@@ -62,12 +63,12 @@ class AuthViewModel @Inject constructor(
 
     private val bindingCodePreferences by lazy {
         context.getSharedPreferences(
-            if (isLiteracyApp) LITERACY_BINDING_PREFERENCES else TASK_BINDING_PREFERENCES,
+            if (isLiteracyApp) LITERACY_BINDING_PREFERENCES else ChildBindingStore.TASK_PREFERENCES,
             Context.MODE_PRIVATE
         )
     }
     private val isLiteracyApp get() = context.packageName == LITERACY_APP_PACKAGE
-    private val isTaskApp get() = context.packageName == TASK_APP_PACKAGE
+    private val isTaskApp get() = ChildBindingStore.isTaskApplication(context.packageName)
     /** 认字、任务端均以 task 码换取儿童会话，监控端不适用此恢复方式。 */
     private val supportsBindingCodeRecovery get() = isLiteracyApp || isTaskApp
 
@@ -663,9 +664,7 @@ class AuthViewModel @Inject constructor(
 }
 
 private const val LITERACY_BINDING_PREFERENCES = "literacy_binding"
-private const val TASK_BINDING_PREFERENCES = "task_binding"
-private const val BINDING_CODE_KEY = "binding_code"
+private const val BINDING_CODE_KEY = ChildBindingStore.CODE_KEY
 private const val BINDING_CODE_TYPE = "task"
 private const val BINDING_CODE_LENGTH = 6
 private const val LITERACY_APP_PACKAGE = "com.lemonkids.kidliteracy"
-private const val TASK_APP_PACKAGE = "com.lemonkids.kidtask"

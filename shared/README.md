@@ -29,6 +29,8 @@
 
 `SupabaseModule.kt` 与 `SupabaseAuthRepository.kt` 当前包含项目 URL 和 anon key。它们不是 service-role 密钥，但新代码不得提交任何管理员密钥、账号或个人环境配置。若改为注入式配置，必须同时覆盖所有 Android 应用的构建配置。
 
+本地调试环境由 `di/SupabaseEnvironment.kt` 和构建参数 `-PlocalSupabase=true` 决定：仅该开关下的 `debug` 包使用本地地址，启动时优先读取应用内保存的地址，其次 `local.properties` 与同名 Gradle 参数/环境变量；`assembleDebug`、`assembleRelease` 仍指向线上。包名识别集中在 `auth/ChildBindingStore.kt`，必须同时覆盖线上与本地任务包（`com.lemonkids.kidtask`、`com.lemonkids.kidtask.local`），并让会话、绑定码缓存按完整包名精确匹配；切换环境要清理旧会话与绑定缓存，不得静默沿用旧绑定码。
+
 ## 验证
 
 ```bash
