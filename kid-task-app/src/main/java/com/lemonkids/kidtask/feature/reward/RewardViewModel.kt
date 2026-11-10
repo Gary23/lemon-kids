@@ -130,6 +130,7 @@ class RewardViewModel @Inject constructor(
         val state = _uiState.value
         val snapshot = state.snapshot ?: return
         val reward = snapshot.rewards.firstOrNull { it.id == rewardId } ?: return
+        if (!snapshot.isVisibleForRedemption(reward)) return
         if (state.submitting || state.error != null || state.pendingRequestId != null && state.pendingRewardId != rewardId) return
         if (reward.redemptionBlockReason(snapshot.balance, snapshot.unavailableOneTimeIds) != null) return
         _uiState.value = state.copy(confirmation = RewardConfirmation(RewardAction.REDEEM, rewardId, reward.title, reward.cost))
