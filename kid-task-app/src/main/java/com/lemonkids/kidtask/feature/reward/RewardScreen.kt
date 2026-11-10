@@ -141,7 +141,8 @@ fun RewardScreen(
                         CircularProgressIndicator()
                     }
                 } else if (snapshot != null) {
-                    val featured = snapshot.rewards.firstOrNull { it.isFeatured }
+                    val display = snapshot.rewardDisplay()
+                    val featured = display.featured
                     if (featured != null) {
                         SectionHeading("正在攒星星的心愿", "特别心愿 · 冲刺中")
                         BigWishCard(featured, state.imageUrls[featured.id], balance ?: 0,
@@ -149,7 +150,7 @@ fun RewardScreen(
                             !state.submitting && state.error == null && (state.pendingRequestId == null || state.pendingRewardId == featured.id),
                             onCalendarClick, { viewModel.confirmRedeem(featured.id) })
                     }
-                    val ordinary = snapshot.rewards.filter { it.id != featured?.id }
+                    val ordinary = display.smallWishes
                     val redeemableCount = ordinary.count { reward ->
                         reward.redemptionBlockReason(balance, snapshot.unavailableOneTimeIds) == null
                     }
