@@ -13,6 +13,7 @@ import com.lemonkids.shared.repository.KnownCharacterRepository
 import com.lemonkids.shared.repository.ChildLiteracyCharacterRepository
 import com.lemonkids.shared.repository.RecognizedCharacterRepository
 import com.lemonkids.shared.repository.RewardRepository
+import com.lemonkids.shared.repository.PomodoroRepository
 import com.lemonkids.shared.repository.RemoteAlarmRepository
 import com.lemonkids.shared.repository.TaskRepository
 import com.lemonkids.shared.repository.TaskTemplateRepository
@@ -26,6 +27,7 @@ import com.lemonkids.shared.repository.impl.SupabaseGrowthRepository
 import com.lemonkids.shared.repository.impl.SupabaseKnownCharacterRepository
 import com.lemonkids.shared.repository.impl.SupabaseChildLiteracyCharacterRepository
 import com.lemonkids.shared.repository.impl.SupabaseRecognizedCharacterRepository
+import com.lemonkids.shared.repository.impl.SupabasePomodoroRepository
 import com.lemonkids.shared.repository.impl.SupabaseRewardRepository
 import com.lemonkids.shared.repository.impl.SupabaseRemoteAlarmRepository
 import com.lemonkids.shared.repository.impl.SupabaseTaskRepository
@@ -84,4 +86,7 @@ abstract class SharedRepositoryModule {
 
     @Binds
     abstract fun bindRemoteAlarmRepository(impl: SupabaseRemoteAlarmRepository): RemoteAlarmRepository
+
+    @Binds
+    abstract fun bindPomodoroRepository(impl: SupabasePomodoroRepository): PomodoroRepository
 }

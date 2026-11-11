@@ -93,6 +93,7 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.coil.compose)
     implementation(libs.lottie.compose)
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

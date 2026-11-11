@@ -33,8 +33,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,6 +61,9 @@ import com.lemonkids.kidtask.feature.calendar.CalendarScreen
 import com.lemonkids.kidtask.feature.home.HomeScreen
 import com.lemonkids.kidtask.feature.home.HomeViewModel
 import com.lemonkids.kidtask.feature.plan.PlanScreen
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroAlert
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroOverlay
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroViewModel
 import com.lemonkids.kidtask.feature.profile.ProfileScreen
 import com.lemonkids.kidtask.feature.profile.ProfileViewModel
 import com.lemonkids.kidtask.feature.profile.GrowthRules
@@ -239,6 +246,12 @@ fun KidTaskMainScreen(authViewModel: AuthViewModel, onLocalServerSettingsClick: 
     val homeState by homeViewModel.uiState.collectAsState()
     val profileViewModel: ProfileViewModel = hiltViewModel()
     val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
+    val pomodoroViewModel: PomodoroViewModel = hiltViewModel()
+    val pomodoroState by pomodoroViewModel.uiState.collectAsStateWithLifecycle()
+    var showPomodoro by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(pomodoroState.alert) {
+        if (pomodoroState.alert != PomodoroAlert.NONE) showPomodoro = true
+    }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val selectedTab = if (currentRoute == "plan") KidTaskTab.Profile.route else currentRoute
@@ -250,22 +263,40 @@ fun KidTaskMainScreen(authViewModel: AuthViewModel, onLocalServerSettingsClick: 
         }
     }
 
-    Row(modifier = Modifier.fillMaxSize().background(Canvas)) {
-        KidTaskSidebar(
-            tabs = tabs,
-            selectedRoute = selectedTab,
-            points = homeState.points.takeIf { homeState.isPointsLoaded },
-            pointsUnavailable = homeState.isPointsLoadTimedOut,
-            streakDays = homeState.streakDays,
-            userName = authState.currentUser?.name.orEmpty(),
-            hasUser = authState.currentUser != null,
-            avatarUrl = authState.currentUser?.avatarUrl,
-            levelNumber = profileState.growth
-                ?.takeIf { it.childId == authState.currentUser?.uid }
-                ?.let { GrowthRules.level(it.totalExp).number },
-            onSelect = onSelect
-        )
-        KidTaskContent(navController, homeViewModel, profileViewModel, Modifier.weight(1f), onLocalServerSettingsClick)
+    Box(modifier = Modifier.fillMaxSize()) {
+        Row(modifier = Modifier.fillMaxSize().background(Canvas)) {
+            KidTaskSidebar(
+                tabs = tabs,
+                selectedRoute = selectedTab,
+                points = homeState.points.takeIf { homeState.isPointsLoaded },
+                pointsUnavailable = homeState.isPointsLoadTimedOut,
+                streakDays = homeState.streakDays,
+                userName = authState.currentUser?.name.orEmpty(),
+                hasUser = authState.currentUser != null,
+                avatarUrl = authState.currentUser?.avatarUrl,
+                levelNumber = profileState.growth
+                    ?.takeIf { it.childId == authState.currentUser?.uid }
+                    ?.let { GrowthRules.level(it.totalExp).number },
+                onSelect = onSelect
+            )
+            KidTaskContent(
+                navController, homeViewModel, profileViewModel, Modifier.weight(1f),
+                onLocalServerSettingsClick,
+                onPomodoroClick = { showPomodoro = true }
+            )
+        }
+        if (showPomodoro) {
+            PomodoroOverlay(
+                state = pomodoroState,
+                onClose = { showPomodoro = false },
+                onStart = pomodoroViewModel::startFocus,
+                onNextRound = pomodoroViewModel::startNextRound,
+                onStopAlert = pomodoroViewModel::stopAlert,
+                onEndCycle = pomodoroViewModel::endCycle,
+                onSaveSettings = pomodoroViewModel::setDurations,
+                onRefresh = pomodoroViewModel::refreshCounts
+            )
+        }
     }
 }
 
@@ -337,9 +368,12 @@ private fun KidTaskSidebar(
 @Composable
 private fun KidTaskContent(navController: NavHostController, homeViewModel: HomeViewModel,
                            profileViewModel: ProfileViewModel, modifier: Modifier,
-                           onLocalServerSettingsClick: () -> Unit) {
+                           onLocalServerSettingsClick: () -> Unit,
+                           onPomodoroClick: () -> Unit) {
     NavHost(navController = navController, startDestination = KidTaskTab.Home.route, modifier = modifier) {
-        composable(KidTaskTab.Home.route) { HomeScreen(viewModel = homeViewModel) }
+        composable(KidTaskTab.Home.route) {
+            HomeScreen(viewModel = homeViewModel, onPomodoroClick = onPomodoroClick)
+        }
         composable(KidTaskTab.Calendar.route) { CalendarScreen() }
         composable(KidTaskTab.Reward.route) {
             RewardScreen(

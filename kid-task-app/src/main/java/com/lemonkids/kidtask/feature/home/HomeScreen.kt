@@ -42,6 +42,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.lemonkids.kidtask.di.KidTtsEntryPoint
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroViewModel
 import com.lemonkids.kidtask.ui.components.TaskConfirmDialog
 import com.lemonkids.kidtask.ui.components.UndoConfirmDialog
 import com.lemonkids.kidtask.ui.theme.Canvas
@@ -53,9 +54,12 @@ import kotlin.math.roundToInt
 
 @Composable
 fun HomeScreen(
-    viewModel: HomeViewModel = hiltViewModel()
+    viewModel: HomeViewModel = hiltViewModel(),
+    pomodoroViewModel: PomodoroViewModel = hiltViewModel(),
+    onPomodoroClick: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val pomodoroState by pomodoroViewModel.uiState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val ttsManager = remember {
@@ -65,7 +69,9 @@ fun HomeScreen(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshAfterForeground()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshAfterForeground()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -81,6 +87,8 @@ fun HomeScreen(
             HomeDashboard(
                 state = uiState,
                 playingTaskId = playingTaskId,
+                pomodoro = pomodoroState,
+                onPomodoroClick = onPomodoroClick,
                 onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
                 onMarkDone = viewModel::markTaskDone,
                 onUndo = viewModel::markTaskUndo,

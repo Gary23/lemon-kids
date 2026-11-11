@@ -3,6 +3,7 @@ package com.lemonkids.kidtask.feature.home
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,9 +20,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -31,10 +31,17 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroAlert
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroPhase
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroRules
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroUiState
 import com.lemonkids.kidtask.ui.components.StatusBadge
 import com.lemonkids.kidtask.ui.components.TaskCard
 import com.lemonkids.kidtask.ui.components.TaskUiItem
@@ -47,12 +54,15 @@ import com.lemonkids.kidtask.ui.theme.LemonBorder
 import com.lemonkids.kidtask.ui.theme.SlateInk
 import com.lemonkids.kidtask.ui.theme.SlateMuted
 import com.lemonkids.kidtask.ui.theme.Strawberry
+import com.lemonkids.kidtask.ui.theme.StrawberrySoft
 import com.lemonkids.kidtask.ui.theme.KidTaskTheme
 
 @Composable
 fun HomeDashboard(
     state: HomeUiState,
     playingTaskId: String?,
+    pomodoro: PomodoroUiState,
+    onPomodoroClick: () -> Unit,
     onSpeak: (TaskUiItem) -> Unit,
     onMarkDone: (String) -> Unit,
     onUndo: (String) -> Unit,
@@ -70,7 +80,7 @@ fun HomeDashboard(
             }
         } else {
             val layout = buildHomeTaskLayout(state.todayTasks, state.categories.map { it.name }, state.pendingOrderIds)
-            ProgressHero(state.todayTasks.size, layout)
+            ProgressHero(state.todayTasks.size, layout, pomodoro, onPomodoroClick)
 
             if (state.allTasksDoneToday && state.todayTasks.isNotEmpty()) {
                 Surface(shape = RoundedCornerShape(28.dp), color = FreshMintSoft, border = BorderStroke(1.dp, FreshMint)) {
@@ -105,7 +115,12 @@ fun HomeDashboard(
 }
 
 @Composable
-private fun ProgressHero(total: Int, layout: HomeTaskLayout) {
+private fun ProgressHero(
+    total: Int,
+    layout: HomeTaskLayout,
+    pomodoro: PomodoroUiState,
+    onPomodoroClick: () -> Unit
+) {
     val completed = layout.completed.size
     val progress = layout.progressPercent / 100f
     Surface(
@@ -124,7 +139,7 @@ private fun ProgressHero(total: Int, layout: HomeTaskLayout) {
                 Text(if (total == 0) "今天还没有安排任务" else if (completed == total) "太棒啦，今天的成长任务全部完成！"
                     else "再完成 ${total - completed} 个任务，就能点亮更多星星！", color = Color(0xFF4D4632), fontSize = 15.sp)
             }
-            MysteryBox()
+            PomodoroEntry(pomodoro, onPomodoroClick)
         }
     }
 }
@@ -142,16 +157,48 @@ private fun ProgressRing(progress: Float, completed: Int, total: Int, modifier: 
 }
 
 @Composable
-private fun MysteryBox() {
-    Surface(shape = CircleShape, color = Color.White, border = BorderStroke(1.dp, LemonBorder)) {
-        Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            Icon(Icons.Filled.CardGiftcard, contentDescription = null, tint = Strawberry, modifier = Modifier.size(22.dp))
-            Column {
-                Text("神秘盲盒", color = SlateInk, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Text("即将开放", color = Strawberry, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+private fun PomodoroEntry(state: PomodoroUiState, onClick: () -> Unit) {
+    val alerting = state.alert != PomodoroAlert.NONE
+    val status = when {
+        state.alert == PomodoroAlert.FOCUS_END -> "🔔 提醒中 · 专注完成"
+        state.alert == PomodoroAlert.BREAK_END -> "🔔 提醒中 · 休息结束"
+        state.phase == PomodoroPhase.FOCUS -> "专注中 · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
+        state.phase == PomodoroPhase.BREAK -> "休息中 · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
+        state.phase == PomodoroPhase.WAITING -> "休息完成 · 开始下一轮"
+        else -> "今日收获 ${state.todayCount?.let { "$it 个" } ?: "暂无"}"
+    }
+    val running = state.phase == PomodoroPhase.FOCUS || state.phase == PomodoroPhase.BREAK
+    val accent = if (alerting || running) Strawberry else SlateMuted
+    Surface(
+        modifier = Modifier
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "打开番茄钟，$status" },
+        shape = RoundedCornerShape(20.dp),
+        color = Color.White,
+        border = BorderStroke(1.dp, LemonBorder)
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(shape = CircleShape, color = StrawberrySoft) {
+                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                    Text("🍅", fontSize = 22.sp)
+                }
             }
-            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = Lemon, modifier = Modifier.size(19.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("番茄钟", color = SlateInk, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(status, color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    if (running || alerting) {
+                        Text(state.todayCount?.let { "· 今日 $it 个" } ?: "· 今日 暂无",
+                            color = SlateMuted, fontSize = 10.sp, maxLines = 1)
+                    }
+                }
+            }
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = SlateMuted,
+                modifier = Modifier.size(19.dp))
         }
     }
 }
@@ -229,7 +276,10 @@ private fun HomeDashboardPreviewContent() {
     KidTaskTheme {
         HomeDashboard(
             state = HomeUiState(todayTasks = previewTasks, points = 18, streakDays = 3, isInitialDataReady = true),
-            playingTaskId = null, onSpeak = {}, onMarkDone = {}, onUndo = {}
+            playingTaskId = null,
+            pomodoro = PomodoroUiState().let { it.copy(countsByDate = mapOf(it.todayDate to 3)) },
+            onPomodoroClick = {},
+            onSpeak = {}, onMarkDone = {}, onUndo = {}
         )
     }
 }
