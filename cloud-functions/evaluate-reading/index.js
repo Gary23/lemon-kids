@@ -1786,7 +1786,7 @@ async function handler(event) {
       childHash: diagnosticChildHash(childId), attemptId: body.attemptId, targetType: target.targetType,
       targetText: target.targetText, contentSource: target.contentSource, itemOrder: body.itemOrder,
       wrongCharacterIndexes: diagnostic.wrongCharacterIndexes, failureReason: diagnostic.failureReason,
-      decisionVersion: 'match-tag-0-pron-accuracy-60-50-30-v2', textMode: body.textMode,
+      decisionVersion: 'match-tag-0-pron-accuracy-50-50-30-v3', textMode: body.textMode,
       evaluationTextLength: body.evaluationTextLength, words: diagnostic.words,
       rawEvaluationStatus: diagnostic.rawEvaluationStatus,
       ...(diagnostic.rawEvaluation ? { rawEvaluation: diagnostic.rawEvaluation } : {}) }));

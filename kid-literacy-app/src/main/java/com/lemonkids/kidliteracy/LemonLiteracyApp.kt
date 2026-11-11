@@ -2695,9 +2695,8 @@ private fun JsonElement.firstTencentWords(): List<JsonObject>? = when (this) {
 }
 
 internal fun readingPronunciationThreshold(targetType: String): Double = when (targetType) {
-    "word" -> 50.0
     "sentence" -> 30.0
-    else -> 60.0
+    else -> 50.0
 }
 
 internal fun JsonObject.isPronunciationWrong(targetType: String): Boolean {

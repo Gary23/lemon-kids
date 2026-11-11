@@ -16,12 +16,20 @@ class ReadingEvaluationRulesTest {
     }
 
     @Test fun thresholdsApplyAtBoundariesOnlyAfterMatching() {
-        for ((type, threshold) in listOf("character" to 60, "word" to 50, "sentence" to 30)) {
+        for ((type, threshold) in listOf("character" to 50, "word" to 50, "sentence" to 30)) {
             assertTrue(word("${threshold - 1}").isPronunciationWrong(type))
             assertFalse(word("$threshold").isPronunciationWrong(type))
             assertFalse(word("${threshold / 100.0}").isPronunciationWrong(type))
             assertTrue(word("99", "3").isPronunciationWrong(type))
         }
+    }
+
+    @Test fun characterThresholdMatchesWordThreshold() {
+        assertEquals(50.0, readingPronunciationThreshold("character"), 0.0)
+        assertEquals(50.0, readingPronunciationThreshold("word"), 0.0)
+        assertEquals(30.0, readingPronunciationThreshold("sentence"), 0.0)
+        assertTrue(word("49").isPronunciationWrong("character"))
+        assertFalse(word("50").isPronunciationWrong("character"))
     }
 
     @Test fun missingOrInvalidMatchTagFailsAndMissingScoreUsesMatchFallback() {
