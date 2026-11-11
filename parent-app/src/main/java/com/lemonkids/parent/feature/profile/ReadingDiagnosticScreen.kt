@@ -77,7 +77,7 @@ private fun diagnosticType(value: String) = when (value) {
 
 private fun diagnosticReason(value: String) = when (value) {
     "missing_words" -> "没有可用的腾讯逐项结果"
-    "low_pron_accuracy" -> "至少一项发音准确度低于 60（含特殊值 -1）"
+    "low_pron_accuracy" -> "至少一项发音准确度低于通过线（字、词 50 分，句 30 分；含特殊值 -1）"
     "match_tag_fallback" -> "没有可用分数，依据腾讯匹配标记判定"
     "unreturned_expected_characters" -> "返回的汉字少于目标文本"
     "mapping_uncertain" -> "返回内容与目标文本难以对齐"

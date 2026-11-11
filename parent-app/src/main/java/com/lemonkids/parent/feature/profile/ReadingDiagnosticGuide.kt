@@ -55,7 +55,7 @@ private val structureFields = listOf(
 
 private val appFields = listOf(
     GuideEntry("missing_words", "柠檬认字没有解析到非空的 Words 对象数组。可能是字段缺失、数组为空或回调结构无法解析；不能据此断定孩子没读。"),
-    GuideEntry("low_pron_accuracy", "柠檬认字发现至少一个逐项 PronAccuracy 数值低于 60。当前规则也把 -1 归入此项；-1 应按腾讯的“完全不匹配”理解。"),
+    GuideEntry("low_pron_accuracy", "柠檬认字发现至少一个逐项 PronAccuracy 数值低于该次朗读的通过线：字 50、词 50、句 30（更早版本客户端的单字通过线为 60，历史记录按当时规则解释）。当前规则也把 -1 归入此项；-1 应按腾讯的“完全不匹配”理解。"),
     GuideEntry("match_tag_fallback", "逐项没有可用的 PronAccuracy 数值时，柠檬认字改用非 0 的 MatchTag 判为未通过。"),
     GuideEntry("unreturned_expected_characters", "腾讯逐项 Word 中的汉字数量少于目标文本中的汉字数量。"),
     GuideEntry("mapping_uncertain", "腾讯逐项 Word 含目标文本中找不到的汉字，柠檬认字无法可靠对齐。"),
