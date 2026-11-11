@@ -19,7 +19,7 @@
 1. 修改跨端数据、认证、Repository 或 RPC 前，先读 `shared/README.md` 和 `supabase/README.md`；不要在应用模块复制模型或网络逻辑。
 2. 文档中的“已实现”必须能在源码中找到；“规划/待接入”不是实现依据。页面、路由、权限以对应模块源码为准。
 3. 变更数据库表、RLS、RPC 或绑定码协议时，必须同时评估三个 Android 应用和 `shared` 的调用链。
-4. Android 构建从根目录运行：`./gradlew :<module>:assembleDebug`。改动后至少构建受影响模块。
+4. Android 构建从根目录运行：`GRADLE_USER_HOME="$PWD/.gradle-system" ./gradlew :<module>:assembleDebug`。改动后至少构建受影响模块。Gradle 用户目录固定为仓库内的 `.gradle-system/`（已被 Git 忽略），避免写入 `~/.gradle` 触发沙箱越界审批。
 5. 所有新需求的文档、确认门禁和交付流程遵循 [需求开发流程](docs/README.md)；每个应用使用独立流程目录。
 
 ## 跨模块规范
