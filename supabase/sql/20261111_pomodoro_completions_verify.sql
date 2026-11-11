@@ -15,6 +15,7 @@ do $$
 declare
     v_child uuid := auth.uid();
     v_session uuid := gen_random_uuid();
+    v_paused_session uuid := gen_random_uuid();
     v_started timestamptz := '2026-03-01 15:55:00+00';
     v_completed timestamptz := v_started + interval '25 minutes';
     v_date date;
@@ -37,6 +38,42 @@ begin
     select count(*) into v_row_count from public.pomodoro_completions
     where child_id = v_child and session_id = v_session;
     if v_row_count <> 1 then raise exception 'Duplicate completion rows: %', v_row_count; end if;
+
+    -- 暂停跨上海午夜：有效专注25分钟，真实经过40分钟；不得伪造开始时间。
+    select completed_date, inserted into v_date, v_inserted
+    from public.record_pomodoro_completion(v_paused_session, 25, 5,
+        '2026-03-01 15:30:00+00', '2026-03-01 16:10:00+00');
+    if not v_inserted or v_date <> date '2026-03-02' then
+        raise exception 'Paused completion or actual completion date attribution failed';
+    end if;
+    if not exists (
+        select 1 from public.pomodoro_completions c
+        where c.child_id = v_child and c.session_id = v_paused_session
+            and c.started_at = timestamptz '2026-03-01 15:30:00+00'
+            and c.completed_at = timestamptz '2026-03-01 16:10:00+00'
+    ) then raise exception 'Paused completion real timestamps were altered'; end if;
+    select inserted into v_inserted
+    from public.record_pomodoro_completion(v_paused_session, 25, 5,
+        '2026-03-01 15:30:00+00', '2026-03-01 16:10:00+00');
+    if v_inserted then raise exception 'Paused retry inserted a duplicate'; end if;
+    begin
+        perform public.record_pomodoro_completion(v_paused_session, 25, 5,
+            '2026-03-01 15:30:00+00', '2026-03-01 16:11:00+00');
+        raise exception 'Paused session accepted a changed real completion time';
+    exception when unique_violation then null;
+    end;
+    begin
+        perform public.record_pomodoro_completion(gen_random_uuid(), 25, 5,
+            v_started, v_completed - interval '1 millisecond');
+        raise exception 'Short completion was accepted';
+    exception when invalid_parameter_value then null;
+    end;
+    begin
+        perform public.record_pomodoro_completion(gen_random_uuid(), 25, 5,
+            '-infinity'::timestamptz, v_completed);
+        raise exception 'Infinite start time was accepted';
+    exception when invalid_parameter_value then null;
+    end;
 
     v_denied := false;
     begin

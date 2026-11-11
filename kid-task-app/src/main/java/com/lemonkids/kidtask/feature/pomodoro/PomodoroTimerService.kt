@@ -55,13 +55,14 @@ class PomodoroTimerService : Service() {
                     return@collect
                 }
                 val text = when (state.phase) {
-                    PomodoroPhase.FOCUS -> "专注中 · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
-                    PomodoroPhase.BREAK -> "休息中 · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
+                    PomodoroPhase.FOCUS -> "${if (state.isPaused) "专注已暂停" else "专注中"} · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
+                    PomodoroPhase.READY_FOR_BREAK -> "专注完成，等待手动开始休息"
+                    PomodoroPhase.BREAK -> "${if (state.isPaused) "休息已暂停" else "休息中"} · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
                     PomodoroPhase.WAITING -> "休息完成，等待开始下一轮"
                     PomodoroPhase.SETUP -> "番茄钟准备中"
                 }
                 val alertText = when (state.alert) {
-                    PomodoroAlert.FOCUS_END -> "专注完成，开始休息啦"
+                    PomodoroAlert.FOCUS_END -> "专注完成，准备好后开始休息"
                     PomodoroAlert.BREAK_END -> "休息结束，准备好再出发"
                     PomodoroAlert.NONE -> null
                 }
@@ -87,7 +88,7 @@ class PomodoroTimerService : Service() {
 
     /** 用户从最近任务划掉 App：运行时随任务结束；不涉及任何持久记录。 */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        manager.releaseRuntime()
+        manager.unbind()
         stopSelf()
         super.onTaskRemoved(rootIntent)
     }

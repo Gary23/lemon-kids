@@ -11,6 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,8 +26,10 @@ import javax.inject.Singleton
 
 data class PomodoroUiState(
     val isBound: Boolean = false,
+    val bindingGeneration: Long = 0L,
     val phase: PomodoroPhase = PomodoroPhase.SETUP,
     val sessionId: String? = null,
+    val isPaused: Boolean = false,
     val focusMinutes: Int = PomodoroRules.DEFAULT_FOCUS_MINUTES,
     val breakMinutes: Int = PomodoroRules.DEFAULT_BREAK_MINUTES,
     val remainingMillis: Long = PomodoroRules.DEFAULT_FOCUS_MINUTES * PomodoroRules.MINUTE_MILLIS,
@@ -37,17 +41,20 @@ data class PomodoroUiState(
     val pendingCount: Int = 0,
     val isRefreshingCounts: Boolean = false,
     val syncError: String? = null,
+    val countReadError: String? = null,
+    val completionUploadError: String? = null,
     val storageError: String? = null
 ) {
     val isRunning: Boolean get() = phase == PomodoroPhase.FOCUS || phase == PomodoroPhase.BREAK
     val todayCount: Int? get() = countsByDate[todayDate]
+    val hasUnfinishedRound: Boolean get() = isRunning || phase == PomodoroPhase.READY_FOR_BREAK
 }
 
 /**
  * 应用内唯一番茄钟协调器。
  *
  * - 阶段与提醒分离；停止提醒只释放声音/震动，不推进阶段。
- * - 专注到点先本地补记一次完成，再切休息；同一 sessionId 最多入账一次。
+ * - 专注到点先本地补记一次完成，再等待手动开始休息；同一 sessionId 最多入账一次。
  * - 所有状态变更在应用主线程串行；进行中的计时只保存在内存，不写磁盘。
  * - 关闭 App 即结束当前轮；切后台、回前台不做任何特殊处理，交给系统自然运行。
  * - 网络只影响待同步标记和远端数量，不阻塞下一轮计时。
@@ -64,6 +71,7 @@ class PomodoroManager @Inject constructor(
     val state: StateFlow<PomodoroUiState> = _state.asStateFlow()
 
     private var childId: String? = null
+    private var bindingGeneration = 0L
     private var data = PomodoroStoredData()
     private var ticker: Job? = null
     private var syncJob: Job? = null
@@ -76,6 +84,9 @@ class PomodoroManager @Inject constructor(
             return
         }
         this.childId = childId
+        bindingGeneration++
+        _state.value = PomodoroUiState()
+        pendingRefresh = null
         cancelAlertTimeout()
         alertPlayer.stop()
         ticker?.cancel()
@@ -98,7 +109,7 @@ class PomodoroManager @Inject constructor(
 
     fun setDurations(focusMinutes: Int, breakMinutes: Int) {
         val session = data.session
-        if (session != null && (session.phase == PomodoroPhase.FOCUS || session.phase == PomodoroPhase.BREAK)) return
+        if (session != null && session.phase != PomodoroPhase.WAITING) return
         val sanitized = PomodoroRules.sanitizeSettings(focusMinutes, breakMinutes)
         data = data.copy(settings = sanitized)
         persist()
@@ -109,7 +120,7 @@ class PomodoroManager @Inject constructor(
     fun startFocus() {
         if (childId == null) return
         val session = data.session
-        if (session != null && (session.phase == PomodoroPhase.FOCUS || session.phase == PomodoroPhase.BREAK)) return
+        if (session != null && session.phase != PomodoroPhase.WAITING) return
         cancelAlertTimeout()
         alertPlayer.stop()
         val now = System.currentTimeMillis()
@@ -127,6 +138,41 @@ class PomodoroManager @Inject constructor(
     }
 
     fun startNextRound() = startFocus()
+
+    fun startBreak() {
+        val session = data.session ?: return
+        val now = System.currentTimeMillis()
+        val started = PomodoroRules.startBreak(session, now)
+        if (started == session) return
+        cancelAlertTimeout()
+        alertPlayer.stop()
+        data = data.copy(session = started)
+        publish(now)
+        ensureTicker()
+        startService()
+    }
+
+    fun pauseResume() {
+        // 先结算临界点，避免暂停吞掉专注完成事件。
+        tick()
+        val session = data.session ?: return
+        val now = System.currentTimeMillis()
+        val changed = if (session.pausedRemainingMillis == null) {
+            PomodoroRules.pause(session, now)
+        } else {
+            PomodoroRules.resume(session, now)
+        }
+        data = data.copy(session = changed)
+        publish(now)
+        ensureTicker()
+    }
+
+    fun unbind() {
+        releaseRuntime()
+        childId = null
+        data = PomodoroStoredData()
+        _state.value = PomodoroUiState()
+    }
 
     /** 停止声音和震动，只清除提醒；休息或等待阶段保持不变。 */
     fun stopAlert() {
@@ -159,6 +205,7 @@ class PomodoroManager @Inject constructor(
      * 避免同一进程内再次打开时读到旧的运行状态。
      */
     fun releaseRuntime() {
+        bindingGeneration++
         cancelAlertTimeout()
         alertPlayer.stop()
         ticker?.cancel()
@@ -167,6 +214,7 @@ class PomodoroManager @Inject constructor(
         syncJob = null
         pendingRefresh = null
         data = data.copy(session = null)
+        _state.update { it.copy(isRefreshingCounts = false) }
         publish(System.currentTimeMillis())
         stopService()
     }
@@ -179,13 +227,17 @@ class PomodoroManager @Inject constructor(
             pendingRefresh = fromDate to toDate
             return
         }
+        val generation = bindingGeneration
         syncJob = scope.launch {
             _state.update { it.copy(isRefreshingCounts = true, syncError = null) }
             var uploadError: String? = null
+            var readError: String? = null
             val accepted = mutableSetOf<String>()
             val pending = data.completions.filterNot { it.synced }
             var stopUploads = false
             for (completion in pending) {
+                coroutineContext.ensureActive()
+                if (generation != bindingGeneration || childId != child) return@launch
                 val result = repository.recordCompletion(
                     sessionId = completion.sessionId,
                     focusMinutes = completion.focusMinutes,
@@ -193,51 +245,59 @@ class PomodoroManager @Inject constructor(
                     startedAt = Instant.ofEpochMilli(completion.startedAtMillis).toString(),
                     completedAt = Instant.ofEpochMilli(completion.completedAtMillis).toString()
                 )
+                coroutineContext.ensureActive()
+                if (generation != bindingGeneration || childId != child) return@launch
                 result.onSuccess { accepted += completion.sessionId }
                     .onFailure {
-                        uploadError = friendlyError(it)
+                        Log.w(TAG, "番茄完成记录上传失败 (${it.javaClass.simpleName}): ${diagnosticCode(it)}")
+                        uploadError = friendlyError(it, uploading = true)
                         if (isServiceUnavailable(it)) stopUploads = true
                     }
                 if (stopUploads) break
             }
-            if (childId != child) {
-                _state.update { it.copy(isRefreshingCounts = false) }
-                return@launch
-            }
-            val counts = repository.getDailyCounts(fromDate.toString(), toDate.toString())
-            if (childId != child) {
-                _state.update { it.copy(isRefreshingCounts = false) }
-                return@launch
-            }
-            counts.fold(
-                onSuccess = { daily ->
-                    val merged = data.cachedCounts.toMutableMap()
-                    val rangeDates = mutableSetOf<String>()
-                    var date = fromDate
-                    while (!date.isAfter(toDate)) {
-                        merged[date.toString()] = 0
-                        rangeDates += date.toString()
-                        date = date.plusDays(1)
-                    }
-                    daily.forEach { merged[it.date] = it.count }
-                    data = data.copy(
-                        completions = data.completions.map {
-                            if (it.sessionId in accepted && it.completedDate in rangeDates) {
-                                it.copy(synced = true)
-                            } else {
-                                it
-                            }
-                        },
-                        cachedCounts = merged,
-                        countsFetchedAtMillis = System.currentTimeMillis()
-                    )
-                    persist()
-                },
-                onFailure = {
-                    if (uploadError == null) uploadError = friendlyError(it)
+            coroutineContext.ensureActive()
+            if (generation != bindingGeneration || childId != child) return@launch
+            val unconfirmed = pending.filter { it.sessionId !in accepted }
+            if (unconfirmed.isNotEmpty() && !stopUploads) {
+                // 上传可能已落库但响应丢失：只读确认同一 sessionId 后再合并聚合。
+                val recorded = repository.getRecordedSessionIds(unconfirmed.map { it.sessionId })
+                coroutineContext.ensureActive()
+                if (generation != bindingGeneration || childId != child) return@launch
+                recorded.onSuccess { accepted += it }.onFailure {
+                    Log.w(TAG, "番茄上传结果确认失败 (${it.javaClass.simpleName}): ${diagnosticCode(it)}")
                 }
-            )
-            _state.update { it.copy(isRefreshingCounts = false, syncError = uploadError) }
+                if (pending.all { it.sessionId in accepted }) uploadError = null
+            }
+            val ranges = mutableListOf(fromDate to toDate)
+            pending.filter { it.sessionId in accepted }
+                .map { LocalDate.parse(it.completedDate) }.distinct()
+                .filter { it.isBefore(fromDate) || it.isAfter(toDate) }
+                .forEach { ranges += it to it }
+            for ((from, to) in ranges) {
+                coroutineContext.ensureActive()
+                if (generation != bindingGeneration || childId != child) return@launch
+                val counts = repository.getDailyCounts(from.toString(), to.toString())
+                coroutineContext.ensureActive()
+                if (generation != bindingGeneration || childId != child) return@launch
+                counts.fold(
+                    onSuccess = { daily ->
+                        data = PomodoroSyncRules.reconcile(data, daily, accepted, from, to, System.currentTimeMillis())
+                        persist()
+                    },
+                    onFailure = {
+                        Log.w(TAG, "番茄每日数量读取失败 (${it.javaClass.simpleName}): ${diagnosticCode(it)}")
+                        readError = friendlyError(it, uploading = false)
+                    }
+                )
+            }
+            _state.update {
+                it.copy(
+                    isRefreshingCounts = false,
+                    countReadError = readError,
+                    completionUploadError = uploadError,
+                    syncError = readError ?: uploadError
+                )
+            }
             publish(System.currentTimeMillis())
             val next = pendingRefresh
             pendingRefresh = null
@@ -266,7 +326,8 @@ class PomodoroManager @Inject constructor(
                 startAlert()
                 startService()
             }
-            if (result.session.phase == PomodoroPhase.WAITING) {
+            if (result.session.phase == PomodoroPhase.WAITING ||
+                result.session.phase == PomodoroPhase.READY_FOR_BREAK) {
                 ticker?.cancel()
                 ticker = null
             }
@@ -309,8 +370,10 @@ class PomodoroManager @Inject constructor(
         val counts = displayCounts()
         _state.value = _state.value.copy(
             isBound = childId != null,
+            bindingGeneration = bindingGeneration,
             phase = session?.phase ?: PomodoroPhase.SETUP,
             sessionId = session?.sessionId,
+            isPaused = session?.pausedRemainingMillis != null,
             focusMinutes = data.settings.focusMinutes,
             breakMinutes = data.settings.breakMinutes,
             remainingMillis = if (session == null) {
@@ -344,7 +407,7 @@ class PomodoroManager @Inject constructor(
 
     private fun ensureTicker() {
         val session = data.session
-        val shouldTick = session != null &&
+        val shouldTick = session != null && session.pausedRemainingMillis == null &&
             (session.phase == PomodoroPhase.FOCUS || session.phase == PomodoroPhase.BREAK)
         if (!shouldTick) {
             ticker?.cancel()
@@ -373,17 +436,27 @@ class PomodoroManager @Inject constructor(
         runCatching { context.stopService(Intent(context, PomodoroTimerService::class.java)) }
     }
 
-    private fun friendlyError(error: Throwable): String {
+    private fun friendlyError(error: Throwable, uploading: Boolean): String {
         val text = error.message.orEmpty()
         return when {
-            text.contains("PGRST202") || text.contains("does not exist") ||
-                text.contains("Could not find the function") || text.contains("schema cache") ||
-                text.contains("record_pomodoro_completion") ->
-                "记录服务未就绪，已暂存本机"
+            isServiceUnavailable(error) -> if (uploading) "记录服务未就绪，已暂存本机" else "数量服务未就绪，点击重试"
             text.contains("Failed to connect") || text.contains("Unable to resolve host") ||
-                text.contains("timeout", ignoreCase = true) -> "网络不可用，番茄记录待同步"
-            else -> "番茄数量更新失败，点击重试"
+                text.contains("timeout", ignoreCase = true) ->
+                if (uploading) "网络不可用，番茄记录待同步" else "网络不可用，数量读取失败，点击重试"
+            else -> if (uploading) "番茄记录上传失败，已暂存，点击重试" else "番茄数量读取失败，点击重试"
         }
+    }
+
+    /** 仅记录可定位的错误类型/代码，不把请求头、用户信息或完整响应写入日志。 */
+    private fun diagnosticCode(error: Throwable): String {
+        val text = error.message.orEmpty()
+        return Regex("PGRST\\d{3}|(?:SQLSTATE|Code)\\s*[:=]?\\s*[A-Z0-9]{5}|HTTP\\s*\\d{3}")
+            .find(text)?.value ?: when {
+                text.contains("Serializer", ignoreCase = true) -> "serialization"
+                text.contains("timeout", ignoreCase = true) -> "timeout"
+                text.contains("Unable to resolve host") -> "dns"
+                else -> "未分类错误"
+            }
     }
 
     private fun isServiceUnavailable(error: Throwable): Boolean {

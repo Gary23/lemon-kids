@@ -7,7 +7,7 @@ import java.time.ZoneId
 import java.util.UUID
 import kotlin.math.ceil
 
-enum class PomodoroPhase { SETUP, FOCUS, BREAK, WAITING }
+enum class PomodoroPhase { SETUP, FOCUS, READY_FOR_BREAK, BREAK, WAITING }
 
 /** 到点提醒与计时阶段相互独立：停止提醒不会改变阶段，也不会启动下一轮。 */
 enum class PomodoroAlert { NONE, FOCUS_END, BREAK_END }
@@ -25,7 +25,9 @@ data class PomodoroSession(
     val focusEndsAtMillis: Long,
     val breakEndsAtMillis: Long,
     val alert: PomodoroAlert = PomodoroAlert.NONE,
-    val focusCompletionRecorded: Boolean = false
+    val focusCompletionRecorded: Boolean = false,
+    /** 暂停时冻结的剩余时间；null 表示未暂停，截止时间在继续时重建。 */
+    val pausedRemainingMillis: Long? = null
 )
 
 data class FocusCompletion(
@@ -102,17 +104,15 @@ object PomodoroRules {
             breakMinutes = breakMinutes,
             focusStartedAtMillis = nowMillis,
             focusEndsAtMillis = focusEnds,
-            breakEndsAtMillis = focusEnds + breakMinutes * MINUTE_MILLIS,
+            breakEndsAtMillis = 0L,
             alert = PomodoroAlert.NONE,
             focusCompletionRecorded = false
         )
     }
 
-    /**
-     * 推进到 `nowMillis`。跨过专注终点时最多产生一次完成事件；若一次跨过专注和休息
-     * 两个终点，直接停在等待下一轮，并只保留休息结束提醒，不补跑循环。
-     */
+    /** 推进到当前时间；专注终点只记一次完成，必须手动开始休息。暂停不推进。 */
     fun advance(session: PomodoroSession, nowMillis: Long): AdvanceResult {
+        if (session.pausedRemainingMillis != null) return AdvanceResult(session)
         var current = session
         var completion: FocusCompletion? = null
         if (current.phase == PomodoroPhase.FOCUS && nowMillis >= current.focusEndsAtMillis) {
@@ -126,7 +126,7 @@ object PomodoroRules {
                 )
             }
             current = current.copy(
-                phase = PomodoroPhase.BREAK,
+                phase = PomodoroPhase.READY_FOR_BREAK,
                 alert = PomodoroAlert.FOCUS_END,
                 focusCompletionRecorded = true
             )
@@ -137,7 +137,42 @@ object PomodoroRules {
         return AdvanceResult(current, completion)
     }
 
-    fun remainingMillis(session: PomodoroSession, nowMillis: Long): Long = when (session.phase) {
+    /** 调用者先处理 advance 的完成事件，临界点暂停不会吞掉番茄或启动休息。 */
+    fun pause(session: PomodoroSession, nowMillis: Long): PomodoroSession {
+        if (session.pausedRemainingMillis != null ||
+            session.phase !in listOf(PomodoroPhase.FOCUS, PomodoroPhase.BREAK)) return session
+        val remaining = remainingMillis(session, nowMillis)
+        if (remaining <= 0L) return session
+        return session.copy(pausedRemainingMillis = remaining)
+    }
+
+    fun resume(session: PomodoroSession, nowMillis: Long): PomodoroSession {
+        val remaining = session.pausedRemainingMillis ?: return session
+        return when (session.phase) {
+            PomodoroPhase.FOCUS -> session.copy(
+                focusEndsAtMillis = nowMillis + remaining, pausedRemainingMillis = null
+            )
+            PomodoroPhase.BREAK -> session.copy(
+                breakEndsAtMillis = nowMillis + remaining, pausedRemainingMillis = null
+            )
+            else -> session
+        }
+    }
+
+    fun startBreak(session: PomodoroSession, nowMillis: Long): PomodoroSession {
+        if (session.phase != PomodoroPhase.READY_FOR_BREAK) return session
+        return session.copy(
+            phase = PomodoroPhase.BREAK,
+            breakEndsAtMillis = nowMillis + session.breakMinutes * MINUTE_MILLIS,
+            pausedRemainingMillis = null,
+            alert = PomodoroAlert.NONE
+        )
+    }
+
+    fun remainingMillis(session: PomodoroSession, nowMillis: Long): Long =
+        session.pausedRemainingMillis ?: runningRemainingMillis(session, nowMillis)
+
+    private fun runningRemainingMillis(session: PomodoroSession, nowMillis: Long): Long = when (session.phase) {
         PomodoroPhase.FOCUS -> (session.focusEndsAtMillis - nowMillis).coerceAtLeast(0L)
         PomodoroPhase.BREAK -> (session.breakEndsAtMillis - nowMillis).coerceAtLeast(0L)
         else -> 0L
@@ -151,12 +186,13 @@ object PomodoroRules {
 
     fun fraction(session: PomodoroSession, nowMillis: Long): Float {
         val total = totalMillis(session)
-        if (total <= 0L) return 1f
+        if (total <= 0L) return 0f
         return (remainingMillis(session, nowMillis).toDouble() / total).toFloat().coerceIn(0f, 1f)
     }
 
     /** 专注先按剩余比例取色；休息、等待和准备态固定海洋蓝。 */
     fun band(session: PomodoroSession?, fraction: Float): PomodoroBand = when {
+        session?.phase == PomodoroPhase.READY_FOR_BREAK -> PomodoroBand.ALERT_RED
         session == null || session.phase != PomodoroPhase.FOCUS -> PomodoroBand.OCEAN_BLUE
         fraction > 0.5f -> PomodoroBand.CALM_GREEN
         fraction > 0.25f -> PomodoroBand.WARM_GOLD

@@ -61,9 +61,7 @@ import com.lemonkids.kidtask.feature.calendar.CalendarScreen
 import com.lemonkids.kidtask.feature.home.HomeScreen
 import com.lemonkids.kidtask.feature.home.HomeViewModel
 import com.lemonkids.kidtask.feature.plan.PlanScreen
-import com.lemonkids.kidtask.feature.pomodoro.PomodoroAlert
-import com.lemonkids.kidtask.feature.pomodoro.PomodoroOverlay
-import com.lemonkids.kidtask.feature.pomodoro.PomodoroViewModel
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroUiState
 import com.lemonkids.kidtask.feature.profile.ProfileScreen
 import com.lemonkids.kidtask.feature.profile.ProfileViewModel
 import com.lemonkids.kidtask.feature.profile.GrowthRules
@@ -98,7 +96,12 @@ object KidTaskRoutes {
 }
 
 @Composable
-fun KidTaskNavGraph(onLocalServerSettingsClick: () -> Unit = {}, authViewModel: AuthViewModel = hiltViewModel()) {
+fun KidTaskNavGraph(
+    onLocalServerSettingsClick: () -> Unit = {},
+    authViewModel: AuthViewModel = hiltViewModel(),
+    pomodoroState: PomodoroUiState = PomodoroUiState(),
+    onPomodoroClick: () -> Unit = {}
+) {
     val uiState by authViewModel.uiState.collectAsState()
     val context = LocalContext.current
     val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
@@ -143,7 +146,7 @@ fun KidTaskNavGraph(onLocalServerSettingsClick: () -> Unit = {}, authViewModel: 
         }
 
         composable(KidTaskRoutes.MAIN) {
-            KidTaskMainScreen(authViewModel, onLocalServerSettingsClick)
+            KidTaskMainScreen(authViewModel, onLocalServerSettingsClick, pomodoroState, onPomodoroClick)
         }
     }
 
@@ -238,7 +241,12 @@ private fun TaskSessionRecoveryDialog(
 }
 
 @Composable
-fun KidTaskMainScreen(authViewModel: AuthViewModel, onLocalServerSettingsClick: () -> Unit = {}) {
+fun KidTaskMainScreen(
+    authViewModel: AuthViewModel,
+    onLocalServerSettingsClick: () -> Unit = {},
+    pomodoroState: PomodoroUiState = PomodoroUiState(),
+    onPomodoroClick: () -> Unit = {}
+) {
     val navController = rememberNavController()
     val tabs = listOf(KidTaskTab.Home, KidTaskTab.Calendar, KidTaskTab.Reward, KidTaskTab.Profile)
     val authState by authViewModel.uiState.collectAsState()
@@ -246,12 +254,6 @@ fun KidTaskMainScreen(authViewModel: AuthViewModel, onLocalServerSettingsClick: 
     val homeState by homeViewModel.uiState.collectAsState()
     val profileViewModel: ProfileViewModel = hiltViewModel()
     val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
-    val pomodoroViewModel: PomodoroViewModel = hiltViewModel()
-    val pomodoroState by pomodoroViewModel.uiState.collectAsStateWithLifecycle()
-    var showPomodoro by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(pomodoroState.alert) {
-        if (pomodoroState.alert != PomodoroAlert.NONE) showPomodoro = true
-    }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val selectedTab = if (currentRoute == "plan") KidTaskTab.Profile.route else currentRoute
@@ -282,19 +284,8 @@ fun KidTaskMainScreen(authViewModel: AuthViewModel, onLocalServerSettingsClick: 
             KidTaskContent(
                 navController, homeViewModel, profileViewModel, Modifier.weight(1f),
                 onLocalServerSettingsClick,
-                onPomodoroClick = { showPomodoro = true }
-            )
-        }
-        if (showPomodoro) {
-            PomodoroOverlay(
-                state = pomodoroState,
-                onClose = { showPomodoro = false },
-                onStart = pomodoroViewModel::startFocus,
-                onNextRound = pomodoroViewModel::startNextRound,
-                onStopAlert = pomodoroViewModel::stopAlert,
-                onEndCycle = pomodoroViewModel::endCycle,
-                onSaveSettings = pomodoroViewModel::setDurations,
-                onRefresh = pomodoroViewModel::refreshCounts
+                pomodoroState = pomodoroState,
+                onPomodoroClick = onPomodoroClick
             )
         }
     }
@@ -369,10 +360,11 @@ private fun KidTaskSidebar(
 private fun KidTaskContent(navController: NavHostController, homeViewModel: HomeViewModel,
                            profileViewModel: ProfileViewModel, modifier: Modifier,
                            onLocalServerSettingsClick: () -> Unit,
+                           pomodoroState: PomodoroUiState,
                            onPomodoroClick: () -> Unit) {
     NavHost(navController = navController, startDestination = KidTaskTab.Home.route, modifier = modifier) {
         composable(KidTaskTab.Home.route) {
-            HomeScreen(viewModel = homeViewModel, onPomodoroClick = onPomodoroClick)
+            HomeScreen(viewModel = homeViewModel, pomodoroState = pomodoroState, onPomodoroClick = onPomodoroClick)
         }
         composable(KidTaskTab.Calendar.route) { CalendarScreen() }
         composable(KidTaskTab.Reward.route) {

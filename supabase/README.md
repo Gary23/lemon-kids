@@ -23,7 +23,8 @@
 | `sql/20261008_parent_daily_task_description.sql` | 单条任务每日描述更新 RPC；新排程任务描述初始为空且重复创建不覆盖已发布描述 | 先于新版家长端每日描述功能部署；保留旧任务实例和旧模板描述，执行状态须在目标环境核实 |
 | `sql/20261010_parent_task_package_selection.sql` | 扩展 `create_tasks_from_selection`，按家长勾选的分类任务模板原子排程；保留旧七参数入口的全选行为 | 已有分类任务包迁移；新版家长端安装前执行。用户已反馈在目标项目执行完成 |
 | `sql/20261111_pomodoro_completions.sql` | 孩子端番茄完成记录表、RLS、幂等 `record_pomodoro_completion` 和按日聚合 `get_pomodoro_daily_counts` | 已有 `users`、`families`；已在目标环境执行，加法迁移不影响任务、积分和旧计时表 |
-| `sql/20261111_pomodoro_completions_verify.sql` | 事务内验证番茄写入、幂等、上海日期、非法载荷、直接写表拒绝、聚合和匿名拒绝，末尾 `rollback` | 上述迁移已部署且目标环境有孩子账号；无副作用 |
+| `sql/20261111_pomodoro_pause_compatibility.sql` | 已有番茄环境暂停兼容增量，放宽真实经过时长为不小于专注时长，同时拒绝无限时间，保留身份、未来时间及幂等校验 | 原番茄迁移已部署；单事务，短暂获取表锁。已交付用户，目标环境部署未确认 |
+| `sql/20261111_pomodoro_completions_verify.sql` | 事务内验证番茄写入、暂停真实耗时、幂等、上海日期/跨午夜、过短或无限时间等非法载荷、直接写表拒绝、聚合和匿名拒绝，末尾 `rollback` | 新版原迁移或暂停兼容增量已部署且目标环境有孩子账号；测试数据回滚 |
 | `sql/20260906_category_task_bundles.sql` | 分类任务包：模板与分类多对多、原子排程、同日同模板去重及分类改名同步 | **破坏性**：清空孩子积分/积分流水、任务、任务模板和分类；依赖任务模板与任务历史迁移 |
 | `sql/20260906_remote_alarms.sql` | 远程闹钟表、Pad 下发回执/审计、最小权限 RLS 与监控设备查询 RPC | 已有 `binding_codes`（含 `device_id`）、监控绑定 RPC、`families`、`users`；不清空业务数据 |
 | `sql/20260914_alarm_background_music_storage.sql` | 私有 `alarm-background-music` bucket、运营曲目目录、下架兼容校验、受控短时下载与 Pad 缓存状态 | 已执行远程闹钟及语音/音乐字段迁移；上线前必须以临时项目核验 RLS，且先上传经授权曲目 |
@@ -69,6 +70,8 @@
 4. 不要在客户端、SQL 或文档提交 service-role 密钥；RLS 变更必须以最小权限为目标。
 
 ## 当前人工操作
+
+- 番茄暂停兼容：原番茄迁移曾已部署不代表本次增量已生效；新版原脚本供新环境使用，不应以重跑原脚本替代已有环境升级。已有环境在 SQL Editor 审查并执行 `sql/20261111_pomodoro_pause_compatibility.sql`，随后运行番茄验证脚本。客户端人工测试已通过，增量 SQL 已交付用户，但尚无目标库执行/验证回执；未部署时暂停后的完成记录可能被旧等式校验拒绝并在本机等待上传。迁移不删除历史记录、不增加客户端权限；回滚前须检查暂停记录，不能直接恢复旧等式约束。
 
 - 番茄钟迁移 `sql/20261111_pomodoro_completions.sql` 已在目标环境执行，创建 `pomodoro_completions`、RLS 及两个受控 RPC；授权探针确认 `record_pomodoro_completion` 和 `get_pomodoro_daily_counts` 存在，匿名调用返回 `42501`；以孩子会话提交非法专注时长返回 `22023`，确认修正后的函数体已生效。部署后验证脚本为 `_verify.sql`，全部写入在事务末尾回滚。函数内输出参数与表列同名曾触发 `session_id` 歧义，已用 `#variable_conflict use_column` 和具名唯一约束修正。
 - 家长端奖励目录迁移 `sql/20260930_parent_reward_catalog.sql` 与孩子端兑换事务迁移 `sql/20260930_kid_real_rewards.sql` 均已由用户报告在目标 Supabase 执行成功。后者替换旧 `redeem_reward`，增加兑换记录及原子使用、取消退款接口；孩子端真实兑换已在 Pad 人工验收。

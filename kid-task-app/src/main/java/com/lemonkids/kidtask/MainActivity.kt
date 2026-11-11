@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.lemonkids.kidtask.feature.local.LocalServerScreen
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroHost
 import com.lemonkids.shared.di.SupabaseEnvironment
 import com.lemonkids.kidtask.navigation.KidTaskNavGraph
 import com.lemonkids.kidtask.ui.theme.KidTaskTheme
@@ -29,10 +30,16 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermission()
         setContent {
             KidTaskTheme {
-                if (SupabaseEnvironment.isLocal && showLocalServerSettings) {
-                    LocalServerScreen(onContinue = { showLocalServerSettings = false })
-                } else {
-                    KidTaskNavGraph(onLocalServerSettingsClick = { showLocalServerSettings = true })
+                PomodoroHost { pomodoroState, onOpenPomodoro ->
+                    if (SupabaseEnvironment.isLocal && showLocalServerSettings) {
+                        LocalServerScreen(onContinue = { showLocalServerSettings = false })
+                    } else {
+                        KidTaskNavGraph(
+                            onLocalServerSettingsClick = { showLocalServerSettings = true },
+                            pomodoroState = pomodoroState,
+                            onPomodoroClick = onOpenPomodoro
+                        )
+                    }
                 }
             }
         }

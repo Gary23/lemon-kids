@@ -37,17 +37,17 @@ class PomodoroRulesTest {
     }
 
     @Test
-    fun `default session runs focus then break back to back`() {
+    fun `default session starts focus without scheduling break`() {
         val session = PomodoroRules.startSession(25, 5, start, "session-1")
 
         assertEquals(PomodoroPhase.FOCUS, session.phase)
         assertEquals(start + 25 * 60_000L, session.focusEndsAtMillis)
-        assertEquals(start + 30 * 60_000L, session.breakEndsAtMillis)
+        assertEquals(0L, session.breakEndsAtMillis)
         assertEquals("25:00", PomodoroRules.formatRemaining(PomodoroRules.remainingMillis(session, start)))
     }
 
     @Test
-    fun `focus end switches to break and records exactly one completion`() {
+    fun `focus end waits for manual break and records exactly one completion`() {
         val session = PomodoroRules.startSession(25, 5, start, "session-2")
 
         val before = PomodoroRules.advance(session, session.focusEndsAtMillis - 1)
@@ -55,7 +55,7 @@ class PomodoroRulesTest {
         assertNull(before.completion)
 
         val ended = PomodoroRules.advance(session, session.focusEndsAtMillis)
-        assertEquals(PomodoroPhase.BREAK, ended.session.phase)
+        assertEquals(PomodoroPhase.READY_FOR_BREAK, ended.session.phase)
         assertEquals(PomodoroAlert.FOCUS_END, ended.session.alert)
         assertEquals("session-2", ended.completion?.sessionId)
         assertEquals(25, ended.completion?.focusMinutes ?: -1)
@@ -66,31 +66,83 @@ class PomodoroRulesTest {
     }
 
     @Test
-    fun `stopping the alert does not change phase or stop the break`() {
+    fun `stopping alert does not start break and manual start grants full duration`() {
         val focusEnded = PomodoroRules.advance(
             PomodoroRules.startSession(10, 3, start, "session-3"),
             start + 10 * 60_000L
         ).session
         val alertStopped = focusEnded.copy(alert = PomodoroAlert.NONE)
-
-        val breakEnded = PomodoroRules.advance(alertStopped, start + 13 * 60_000L)
+        val waited = PomodoroRules.advance(alertStopped, start + 60 * 60_000L)
+        assertEquals(PomodoroPhase.READY_FOR_BREAK, waited.session.phase)
+        assertNull(waited.completion)
+        val breakStart = start + 60 * 60_000L
+        val resting = PomodoroRules.startBreak(waited.session, breakStart)
+        assertEquals(PomodoroPhase.BREAK, resting.phase)
+        assertEquals(3 * 60_000L, PomodoroRules.remainingMillis(resting, breakStart))
+        assertEquals(PomodoroAlert.NONE, resting.alert)
+        assertEquals(resting, PomodoroRules.startBreak(resting, breakStart + 1000))
+        val breakEnded = PomodoroRules.advance(resting, resting.breakEndsAtMillis)
         assertEquals(PomodoroPhase.WAITING, breakEnded.session.phase)
         assertEquals(PomodoroAlert.BREAK_END, breakEnded.session.alert)
         assertNull(breakEnded.completion)
     }
 
     @Test
-    fun `waiting after both deadlines keeps only break end alert and one completion`() {
+    fun `long delayed focus tick still waits for manual break with one completion`() {
         val session = PomodoroRules.startSession(10, 3, start, "session-4")
 
         val caughtUp = PomodoroRules.advance(session, start + 60 * 60_000L)
-        assertEquals(PomodoroPhase.WAITING, caughtUp.session.phase)
-        assertEquals(PomodoroAlert.BREAK_END, caughtUp.session.alert)
+        assertEquals(PomodoroPhase.READY_FOR_BREAK, caughtUp.session.phase)
+        assertEquals(PomodoroAlert.FOCUS_END, caughtUp.session.alert)
         assertNotNull(caughtUp.completion)
 
         val again = PomodoroRules.advance(caughtUp.session, start + 120 * 60_000L)
-        assertEquals(PomodoroPhase.WAITING, again.session.phase)
+        assertEquals(PomodoroPhase.READY_FOR_BREAK, again.session.phase)
         assertNull(again.completion)
+    }
+
+    @Test
+    fun `focus pause freezes progress and preserves real completion time`() {
+        val session = PomodoroRules.startSession(10, 3, start)
+        val pausedAt = start + 2 * 60_000L
+        val paused = PomodoroRules.pause(session, pausedAt)
+        assertEquals(8 * 60_000L, paused.pausedRemainingMillis)
+        assertEquals(paused, PomodoroRules.pause(paused, pausedAt + 1000))
+        assertEquals(paused, PomodoroRules.advance(paused, start + 100 * 60_000L).session)
+        assertNull(PomodoroRules.advance(paused, start + 100 * 60_000L).completion)
+        assertEquals(PomodoroRules.fraction(paused, pausedAt), PomodoroRules.fraction(paused, start + 100 * 60_000L), 0f)
+        val resumed = PomodoroRules.resume(paused, start + 7 * 60_000L)
+        assertEquals(start + 15 * 60_000L, resumed.focusEndsAtMillis)
+        assertEquals(resumed, PomodoroRules.resume(resumed, start + 8 * 60_000L))
+        val ended = PomodoroRules.advance(resumed, resumed.focusEndsAtMillis)
+        assertEquals(start, ended.completion?.startedAtMillis)
+        assertEquals(start + 15 * 60_000L, ended.completion?.completedAtMillis)
+        assertEquals(PomodoroPhase.READY_FOR_BREAK, ended.session.phase)
+    }
+
+    @Test
+    fun `break pause freezes and resumes remaining without another tomato`() {
+        val ended = PomodoroRules.advance(PomodoroRules.startSession(10, 3, start), start + 10 * 60_000L).session
+        val resting = PomodoroRules.startBreak(ended, start + 20 * 60_000L)
+        val paused = PomodoroRules.pause(resting, start + 21 * 60_000L)
+        assertEquals(2 * 60_000L, PomodoroRules.remainingMillis(paused, start + 100 * 60_000L))
+        val resumed = PomodoroRules.resume(paused, start + 30 * 60_000L)
+        assertEquals(start + 32 * 60_000L, resumed.breakEndsAtMillis)
+        val finished = PomodoroRules.advance(resumed, resumed.breakEndsAtMillis)
+        assertEquals(PomodoroPhase.WAITING, finished.session.phase)
+        assertNull(finished.completion)
+    }
+
+    @Test
+    fun `pause at focus deadline settles completion rather than pausing nonexistent break`() {
+        val session = PomodoroRules.startSession(10, 3, start)
+        val advanced = PomodoroRules.advance(session, session.focusEndsAtMillis)
+        val paused = PomodoroRules.pause(advanced.session, session.focusEndsAtMillis)
+        assertNotNull(advanced.completion)
+        assertEquals(PomodoroPhase.READY_FOR_BREAK, paused.phase)
+        assertNull(paused.pausedRemainingMillis)
+        assertEquals(PomodoroBand.ALERT_RED, PomodoroRules.band(paused, 0f))
+        assertEquals(0f, PomodoroRules.fraction(paused, session.focusEndsAtMillis), 0f)
     }
 
     @Test

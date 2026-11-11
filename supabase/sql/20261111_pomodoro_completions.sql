@@ -15,7 +15,8 @@ create table if not exists public.pomodoro_completions (
     received_at timestamptz not null default now(),
     constraint pomodoro_completions_session_key unique (child_id, session_id),
     constraint pomodoro_completions_duration_check
-        check (completed_at = started_at + make_interval(mins => focus_minutes))
+        check (isfinite(started_at) and isfinite(completed_at)
+            and completed_at >= started_at + make_interval(mins => focus_minutes))
 );
 create index if not exists pomodoro_completions_child_date_idx
     on public.pomodoro_completions(child_id, completed_date);
@@ -70,8 +71,11 @@ begin
     if p_started_at is null or p_completed_at is null then
         raise exception 'Pomodoro start and completion time are required' using errcode = '22023';
     end if;
-    if p_completed_at <> p_started_at + make_interval(mins => p_focus_minutes) then
-        raise exception 'Pomodoro completion does not match focus duration' using errcode = '22023';
+    if not isfinite(p_started_at) or not isfinite(p_completed_at) then
+        raise exception 'Pomodoro start and completion time must be finite' using errcode = '22023';
+    end if;
+    if p_completed_at < p_started_at + make_interval(mins => p_focus_minutes) then
+        raise exception 'Pomodoro completion is shorter than focus duration' using errcode = '22023';
     end if;
     if p_completed_at > now() + interval '5 minutes' then
         raise exception 'Pomodoro completion cannot be in the future' using errcode = '22023';

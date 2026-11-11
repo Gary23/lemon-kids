@@ -162,8 +162,9 @@ private fun PomodoroEntry(state: PomodoroUiState, onClick: () -> Unit) {
     val status = when {
         state.alert == PomodoroAlert.FOCUS_END -> "🔔 提醒中 · 专注完成"
         state.alert == PomodoroAlert.BREAK_END -> "🔔 提醒中 · 休息结束"
-        state.phase == PomodoroPhase.FOCUS -> "专注中 · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
-        state.phase == PomodoroPhase.BREAK -> "休息中 · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
+        state.phase == PomodoroPhase.READY_FOR_BREAK -> "专注完成 · 开始休息"
+        state.phase == PomodoroPhase.FOCUS -> "${if (state.isPaused) "专注已暂停" else "专注中"} · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
+        state.phase == PomodoroPhase.BREAK -> "${if (state.isPaused) "休息已暂停" else "休息中"} · ${PomodoroRules.formatRemaining(state.remainingMillis)}"
         state.phase == PomodoroPhase.WAITING -> "休息完成 · 开始下一轮"
         else -> "今日收获 ${state.todayCount?.let { "$it 个" } ?: "暂无"}"
     }

@@ -42,7 +42,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.lemonkids.kidtask.di.KidTtsEntryPoint
-import com.lemonkids.kidtask.feature.pomodoro.PomodoroViewModel
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroUiState
 import com.lemonkids.kidtask.ui.components.TaskConfirmDialog
 import com.lemonkids.kidtask.ui.components.UndoConfirmDialog
 import com.lemonkids.kidtask.ui.theme.Canvas
@@ -55,11 +55,10 @@ import kotlin.math.roundToInt
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
-    pomodoroViewModel: PomodoroViewModel = hiltViewModel(),
+    pomodoroState: PomodoroUiState = PomodoroUiState(),
     onPomodoroClick: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val pomodoroState by pomodoroViewModel.uiState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val ttsManager = remember {

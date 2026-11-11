@@ -1,13 +1,12 @@
 package com.lemonkids.kidtask.feature.pomodoro
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,7 +31,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -46,7 +44,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -75,7 +72,6 @@ import androidx.compose.ui.window.DialogProperties
 import com.lemonkids.kidtask.ui.theme.Lemon
 import com.lemonkids.kidtask.ui.theme.SlateInk
 import com.lemonkids.kidtask.ui.theme.SlateMuted
-import com.lemonkids.kidtask.ui.theme.Strawberry
 import com.lemonkids.kidtask.ui.theme.StrawberrySoft
 
 private val CalmGreen = Color(0xFF20B271)
@@ -90,6 +86,8 @@ fun PomodoroOverlay(
     state: PomodoroUiState,
     onClose: () -> Unit,
     onStart: () -> Unit,
+    onPauseResume: () -> Unit,
+    onStartBreak: () -> Unit,
     onNextRound: () -> Unit,
     onStopAlert: () -> Unit,
     onEndCycle: () -> Unit,
@@ -99,10 +97,7 @@ fun PomodoroOverlay(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showEndConfirm by rememberSaveable { mutableStateOf(false) }
     val canOpenSettings = state.phase == PomodoroPhase.SETUP || state.phase == PomodoroPhase.WAITING
-    val requestClose = {
-        if (state.alert != PomodoroAlert.NONE) onStopAlert()
-        onClose()
-    }
+    val requestClose = onClose
 
     Dialog(
         onDismissRequest = requestClose,
@@ -134,6 +129,8 @@ fun PomodoroOverlay(
                         PomodoroBody(
                             state = state,
                             onStart = onStart,
+                            onPauseResume = onPauseResume,
+                            onStartBreak = onStartBreak,
                             onNextRound = onNextRound,
                             onStopAlert = onStopAlert,
                             onEndCycle = { showEndConfirm = true }
@@ -167,7 +164,7 @@ fun PomodoroOverlay(
                 }) { Text("结束本轮", color = AlertRed) }
             },
             dismissButton = {
-                TextButton(onClick = { showEndConfirm = false }) { Text("继续计时") }
+                TextButton(onClick = { showEndConfirm = false }) { Text("取消") }
             }
         )
     }
@@ -255,29 +252,25 @@ private fun SyncLabel(state: PomodoroUiState, onRefresh: () -> Unit) {
 private fun PomodoroBody(
     state: PomodoroUiState,
     onStart: () -> Unit,
+    onPauseResume: () -> Unit,
+    onStartBreak: () -> Unit,
     onNextRound: () -> Unit,
     onStopAlert: () -> Unit,
     onEndCycle: () -> Unit
 ) {
-    val fraction = fractionFor(state)
-    val band = bandFor(state, fraction)
-    val targetColor = when (band) {
-        PomodoroBand.CALM_GREEN -> CalmGreen
-        PomodoroBand.WARM_GOLD -> WarmGold
-        PomodoroBand.ALERT_RED -> AlertRed
-        PomodoroBand.OCEAN_BLUE -> OceanBlue
-    }
-    val ringColor by animateColorAsState(targetValue = targetColor, animationSpec = tween(250))
+    val band = PomodoroPresentationRules.band(state)
     val phaseLabel = when (state.phase) {
         PomodoroPhase.SETUP -> "准备开始"
-        PomodoroPhase.FOCUS -> "任务时间"
-        PomodoroPhase.BREAK -> "休息时间"
+        PomodoroPhase.FOCUS -> if (state.isPaused) "专注已暂停" else "任务时间"
+        PomodoroPhase.READY_FOR_BREAK -> "专注完成"
+        PomodoroPhase.BREAK -> if (state.isPaused) "休息已暂停" else "休息时间"
         PomodoroPhase.WAITING -> "休息完成"
     }
     val description = when (state.phase) {
-        PomodoroPhase.SETUP -> "准备好后开始一段 ${state.focusMinutes} 分钟专注，结束后自动进入 ${state.breakMinutes} 分钟休息。"
-        PomodoroPhase.FOCUS -> focusHint(band)
-        PomodoroPhase.BREAK -> "休息一下，结束后需要你手动开始下一轮。"
+        PomodoroPhase.SETUP -> "准备好后开始一段 ${state.focusMinutes} 分钟专注，结束后可手动开始 ${state.breakMinutes} 分钟休息。"
+        PomodoroPhase.FOCUS -> if (state.isPaused) "准备好后点击继续，剩余专注时间保持不变。" else focusHint(band)
+        PomodoroPhase.READY_FOR_BREAK -> "番茄已经记下啦，准备好后点击开始休息。"
+        PomodoroPhase.BREAK -> if (state.isPaused) "休息已暂停，准备好后点击继续。" else "休息一下，结束后需要你手动开始下一轮。"
         PomodoroPhase.WAITING -> "准备好再开始下一轮，番茄数已经记下啦。"
     }
 
@@ -291,151 +284,134 @@ private fun PomodoroBody(
             contentAlignment = Alignment.Center
         ) {
             val ringSize: Dp = minOf(maxWidth * 0.46f, maxHeight * 0.92f).coerceIn(190.dp, 430.dp)
-            key(state.sessionId, state.phase) {
-                val animatedFraction by animateFloatAsState(
-                    targetValue = fraction,
-                    animationSpec = tween(durationMillis = 450, easing = LinearEasing)
-                )
-                Box(contentAlignment = Alignment.Center) {
-                    Canvas(Modifier.size(ringSize)) {
-                        val strokeWidth = size.minDimension * 0.062f
-                        drawArc(
-                            color = RingTrack,
-                            startAngle = 0f,
-                            sweepAngle = 360f,
-                            useCenter = false,
-                            topLeft = Offset(strokeWidth / 2, strokeWidth / 2),
-                            size = androidx.compose.ui.geometry.Size(
-                                size.width - strokeWidth,
-                                size.height - strokeWidth
-                            ),
-                            style = Stroke(width = strokeWidth)
-                        )
-                        drawArc(
-                            color = ringColor,
-                            startAngle = -90f,
-                            sweepAngle = 360f * animatedFraction.coerceIn(0f, 1f),
-                            useCenter = false,
-                            topLeft = Offset(strokeWidth / 2, strokeWidth / 2),
-                            size = androidx.compose.ui.geometry.Size(
-                                size.width - strokeWidth,
-                                size.height - strokeWidth
-                            ),
-                            style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                        )
-                    }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            phaseLabel,
-                            color = SlateMuted,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
-                        )
-                        Text(
-                            PomodoroRules.formatRemaining(state.remainingMillis),
-                            color = ringColor,
-                            fontSize = (ringSize.value * 0.18f).sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            "专注 ${state.focusMinutes} 分 · 休息 ${state.breakMinutes} 分",
-                            color = SlateMuted,
-                            fontSize = 11.sp
-                        )
-                    }
-                }
-            }
+            PomodoroDial(state, ringSize, phaseLabel = phaseLabel)
         }
+
         Text(description, color = SlateMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
         if (state.storageError != null) {
             Text(state.storageError, color = AlertRed, fontSize = 12.sp)
         }
-        if (state.alert != PomodoroAlert.NONE) {
-            AlertBar(state.alert, onStopAlert)
-        }
-        ActionRow(state, onStart, onNextRound, onEndCycle)
+        ActionRow(state, onStart, onPauseResume, onStartBreak, onNextRound, onStopAlert, onEndCycle)
     }
 }
 
+/** 只包含表盘和时间，唯一交互为打开大窗；定位由全局宿主负责。 */
 @Composable
-private fun AlertBar(alert: PomodoroAlert, onStop: () -> Unit) {
-    val text = when (alert) {
-        PomodoroAlert.FOCUS_END -> "提醒中 · 专注完成，已自动开始休息"
-        PomodoroAlert.BREAK_END -> "提醒中 · 休息结束，准备好再出发"
-        PomodoroAlert.NONE -> ""
-    }
+fun PomodoroMiniOverlay(
+    state: PomodoroUiState,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = Color(0xFFFFF1F2),
-        border = BorderStroke(1.dp, Color(0xFFFECDD3))
+        modifier = modifier.size(96.dp)
+            .clickable(role = Role.Button, onClickLabel = "打开番茄钟", onClick = onOpen)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "番茄钟，剩余 ${PomodoroPresentationRules.remainingText(state)}，点击打开大窗"
+            },
+        shape = RoundedCornerShape(24.dp),
+        color = Color.White,
+        shadowElevation = 8.dp
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text("🔔", fontSize = 22.sp)
-                Text(text, modifier = Modifier.weight(1f), color = Color(0xFF9F1239), fontSize = 15.sp,
-                    fontWeight = FontWeight.ExtraBold)
+        Box(contentAlignment = Alignment.Center) {
+            PomodoroDial(state, 80.dp, compact = true)
+        }
+    }
+}
+
+/** 两种窗口共用相同的颜色和进度；直接绘制剩余比例，暂停时不会有补间动画继续移动。 */
+@Composable
+private fun PomodoroDial(
+    state: PomodoroUiState,
+    ringSize: Dp,
+    phaseLabel: String = "",
+    compact: Boolean = false
+) {
+    val ringColor by animateColorAsState(
+        targetValue = colorFor(PomodoroPresentationRules.band(state)), animationSpec = tween(250)
+    )
+    val fraction = PomodoroPresentationRules.fraction(state)
+    Box(contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(ringSize)) {
+            val strokeWidth = size.minDimension * 0.062f
+            val origin = Offset(strokeWidth / 2, strokeWidth / 2)
+            val arcSize = androidx.compose.ui.geometry.Size(size.width - strokeWidth, size.height - strokeWidth)
+            drawArc(
+                color = RingTrack, startAngle = 0f, sweepAngle = 360f, useCenter = false,
+                topLeft = origin, size = arcSize, style = Stroke(width = strokeWidth)
+            )
+            drawArc(
+                color = ringColor, startAngle = -90f, sweepAngle = 360f * fraction,
+                useCenter = false, topLeft = origin, size = arcSize,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+            )
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (!compact) {
+                Text(
+                    phaseLabel, color = SlateMuted, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
             }
-            Button(
-                onClick = onStop,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE84A5F))
-            ) {
-                Text("停止响铃和震动", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+            Text(
+                PomodoroPresentationRules.remainingText(state), color = ringColor,
+                fontSize = if (compact) 19.sp else (ringSize.value * 0.18f).sp,
+                fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace
+            )
+            if (!compact) {
+                Text("专注 ${state.focusMinutes} 分 · 休息 ${state.breakMinutes} 分", color = SlateMuted, fontSize = 11.sp)
             }
         }
     }
+}
+
+private fun colorFor(band: PomodoroBand): Color = when (band) {
+    PomodoroBand.CALM_GREEN -> CalmGreen
+    PomodoroBand.WARM_GOLD -> WarmGold
+    PomodoroBand.ALERT_RED -> AlertRed
+    PomodoroBand.OCEAN_BLUE -> OceanBlue
 }
 
 @Composable
 private fun ActionRow(
     state: PomodoroUiState,
     onStart: () -> Unit,
+    onPauseResume: () -> Unit,
+    onStartBreak: () -> Unit,
     onNextRound: () -> Unit,
+    onStopAlert: () -> Unit,
     onEndCycle: () -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        when (state.phase) {
-            PomodoroPhase.SETUP -> Button(
-                onClick = onStart,
-                shape = RoundedCornerShape(20.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Lemon)
-            ) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = SlateInk)
-                Spacer(Modifier.width(8.dp))
-                Text("开始专注", color = SlateInk, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+        PomodoroPresentationRules.actions(state).forEach { action ->
+            val onClick = when (action) {
+                PomodoroAction.START -> onStart
+                PomodoroAction.PAUSE, PomodoroAction.RESUME -> onPauseResume
+                PomodoroAction.START_BREAK -> onStartBreak
+                PomodoroAction.NEXT_ROUND -> onNextRound
+                PomodoroAction.STOP_ALERT -> onStopAlert
+                PomodoroAction.END_CYCLE -> onEndCycle
             }
-
-            PomodoroPhase.FOCUS, PomodoroPhase.BREAK -> OutlinedButton(
-                onClick = onEndCycle,
-                shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0))
-            ) {
-                Text("结束本轮", color = SlateMuted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            }
-
-            PomodoroPhase.WAITING -> Button(
-                onClick = onNextRound,
-                shape = RoundedCornerShape(20.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Lemon)
-            ) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = SlateInk)
-                Spacer(Modifier.width(8.dp))
-                Text("下一轮", color = SlateInk, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+            if (action == PomodoroAction.END_CYCLE) {
+                OutlinedButton(
+                    onClick = onClick, modifier = Modifier.height(48.dp),
+                    shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                ) {
+                    Text(action.label, color = SlateMuted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                val isStop = action == PomodoroAction.STOP_ALERT
+                Button(
+                    onClick = onClick, modifier = Modifier.height(48.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (isStop) AlertRed else Lemon)
+                ) {
+                    Text(action.label, color = if (isStop) Color.White else SlateInk,
+                        fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                }
             }
         }
     }
@@ -528,24 +504,6 @@ private fun DurationChip(minutes: Int, selected: Boolean, onClick: () -> Unit) {
             Text("$minutes 分钟", color = SlateInk, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
     }
-}
-
-private fun fractionFor(state: PomodoroUiState): Float {
-    val total = when (state.phase) {
-        PomodoroPhase.FOCUS -> state.focusMinutes * PomodoroRules.MINUTE_MILLIS
-        PomodoroPhase.BREAK -> state.breakMinutes * PomodoroRules.MINUTE_MILLIS
-        PomodoroPhase.WAITING -> return 0f
-        else -> return 1f
-    }
-    if (total <= 0L) return 1f
-    return (state.remainingMillis.toFloat() / total).coerceIn(0f, 1f)
-}
-
-private fun bandFor(state: PomodoroUiState, fraction: Float): PomodoroBand = when {
-    state.phase != PomodoroPhase.FOCUS -> PomodoroBand.OCEAN_BLUE
-    fraction > 0.5f -> PomodoroBand.CALM_GREEN
-    fraction > 0.25f -> PomodoroBand.WARM_GOLD
-    else -> PomodoroBand.ALERT_RED
 }
 
 private fun focusHint(band: PomodoroBand): String = when (band) {
