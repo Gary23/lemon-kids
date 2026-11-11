@@ -238,7 +238,7 @@ private fun CalendarMonthPanel(state: CalendarUiState, today: LocalDate, onSelec
                         val inMonth = YearMonth.from(date) == month
                         val summary = dayTaskSummary(state.tasksByDate[date.toString()].orEmpty())
                         DayCell(date, summary, today, date.toString() == state.selectedDate, inMonth,
-                            Modifier.weight(1f)) { onSelect(date.toString()) }
+                            state.pomodoroCountsByDate[date.toString()], Modifier.weight(1f)) { onSelect(date.toString()) }
                     }
                 }
             }
@@ -252,7 +252,7 @@ private fun CalendarMonthPanel(state: CalendarUiState, today: LocalDate, onSelec
 
 @Composable
 private fun DayCell(date: LocalDate, summary: DayTaskSummary, today: LocalDate, isSelected: Boolean,
-    inMonth: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    inMonth: Boolean, pomodoroCount: Int?, modifier: Modifier, onClick: () -> Unit) {
     val status = dayDisplayStatus(date, today, summary)
     val dotColor = when (status) {
         DayTaskStatus.COMPLETE -> FreshMint
@@ -265,10 +265,11 @@ private fun DayCell(date: LocalDate, summary: DayTaskSummary, today: LocalDate, 
         DayTaskStatus.EMPTY -> "未来或休息"
     }
     val stars = if (summary.completed > 0) "+${summary.earnedStars}⭐" else "--"
-    val base = modifier.height(65.dp).clip(RoundedCornerShape(13.dp))
+    val tomatoLabel = pomodoroCount?.takeIf { it > 0 }?.let { if (it > 99) "99+" else it.toString() }
+    val base = modifier.height(72.dp).clip(RoundedCornerShape(13.dp))
         .background(if (isSelected) Lemon else CalendarTile)
         .then(if (isSelected) Modifier.border(1.dp, Color(0xFFEAB308), RoundedCornerShape(13.dp)) else Modifier)
-        .semantics { contentDescription = "${date.monthValue}月${date.dayOfMonth}日，$label，得星${if (summary.completed > 0) summary.earnedStars else 0}，${if (date == today) "今天，" else ""}${if (isSelected) "已选中" else "未选中"}" }
+        .semantics { contentDescription = "${date.monthValue}月${date.dayOfMonth}日，$label，得星${if (summary.completed > 0) summary.earnedStars else 0}，${if (pomodoroCount != null && pomodoroCount > 0) "番茄$pomodoroCount 个，" else ""}${if (date == today) "今天，" else ""}${if (isSelected) "已选中" else "未选中"}" }
     Column(
         modifier = if (inMonth) base.clickable(role = Role.Button, onClick = onClick).padding(7.dp)
             else base.padding(7.dp),
@@ -280,10 +281,22 @@ private fun DayCell(date: LocalDate, summary: DayTaskSummary, today: LocalDate, 
                 color = if (!inMonth) SlateMuted.copy(alpha = 0.45f) else if (date == today && !isSelected) Strawberry else SlateInk)
             if (inMonth) Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))
         }
-        if (inMonth) Text(stars,
-            Modifier.fillMaxWidth(), textAlign = TextAlign.End, fontSize = 10.sp,
-            fontWeight = FontWeight.Bold, color = if (isSelected) SlateInk else SlateMuted,
-            maxLines = 1)
+        if (inMonth) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            if (tomatoLabel != null) {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text("🍅", fontSize = 9.sp)
+                    Text(tomatoLabel, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                        color = if (isSelected) SlateInk else Strawberry, maxLines = 1)
+                }
+            } else {
+                Spacer(Modifier.width(1.dp))
+            }
+            Text(stars, textAlign = TextAlign.End, fontSize = 10.sp,
+                fontWeight = FontWeight.Bold, color = if (isSelected) SlateInk else SlateMuted,
+                maxLines = 1)
+        }
     }
 }
 
@@ -306,6 +319,14 @@ private fun SelectedDayHeader(state: CalendarUiState) {
                     Text("已完成 ${summary.completed} / ${summary.total}", Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                         fontSize = 12.sp, color = Color(0xFF166534), fontWeight = FontWeight.Bold)
                 }
+            }
+            val tomatoCount = state.pomodoroCountsByDate[state.selectedDate]
+            Surface(shape = CircleShape, color = StrawberrySoft) {
+                Text(
+                    "🍅 当日番茄 ${tomatoCount?.let { "$it 个" } ?: "暂无"}",
+                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    fontSize = 12.sp, color = Color(0xFF9F1239), fontWeight = FontWeight.Bold
+                )
             }
             Box(Modifier.fillMaxWidth().height(10.dp).clip(CircleShape).background(CalendarTile)) {
                 if (summary.total > 0) Box(Modifier.fillMaxWidth(summary.completed.toFloat() / summary.total)

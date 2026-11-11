@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>柠檬任务 · 番茄钟</title>
+<style>
+:root{--ink:#243d44;--muted:#6b7e83;--yellow:#ffe36a;--mint:#dff4e9;--green:#28775d;--blue:#edf4ff;--line:#e8eeea;--red:#dc705d;--paper:#fbfcf7}
+*{box-sizing:border-box}
+body{margin:0;font-family:ui-rounded,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--paper);font-size:15px}
+button{font:inherit;color:inherit;border:0;cursor:pointer;background:none}
+button:focus-visible,select:focus-visible{outline:3px solid #438775;outline-offset:3px}
+button:disabled{cursor:not-allowed;opacity:.45}
+h1,h2,h3,p{margin:0}
+h1{font-size:28px;letter-spacing:-1px}
+h2{font-size:21px}
+h3{font-size:17px}
+small,.muted{color:var(--muted)}
+small{font-size:12px;line-height:1.6}
+.app{min-width:940px;min-height:100vh}
+.sidebar{width:184px;position:fixed;inset:0 auto 0 0;border-right:1px solid var(--line);background:#fffef9;display:flex;flex-direction:column;padding:32px 16px;z-index:1}
+.brand{font-size:22px;font-weight:850;display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.brand-icon{font-size:31px}
+.brand-note{font-size:10px;letter-spacing:3px;color:#9a9b7d;padding-left:44px}
+.nav{display:grid;gap:13px;margin-top:52px}
+.nav button{height:55px;border-radius:17px;display:flex;gap:12px;align-items:center;text-align:left;padding:0 17px;font-weight:700}
+.nav button.active{background:var(--yellow);box-shadow:0 5px 14px #f2d76630}
+.nav button span{font-size:20px}
+.kid{margin-top:auto;border-top:1px solid var(--line);padding-top:22px;display:flex;gap:11px;align-items:center}
+.avatar{background:var(--mint);border-radius:50%;padding:11px;font-size:22px}
+.main{margin-left:184px;padding:32px 32px 90px;max-width:1600px}
+.topline{display:flex;justify-content:space-between;align-items:center;margin-bottom:25px}
+.eyebrow{font-size:11px;letter-spacing:2px;color:var(--green);font-weight:750;margin-bottom:8px}
+.badge{display:inline-block;padding:7px 12px;border-radius:30px;background:var(--mint);font-size:12px;color:var(--green);font-weight:650}
+.hero{background:var(--blue);border:1px solid #e0eafa;border-radius:28px;padding:25px;display:flex;align-items:center;gap:19px}
+.mini-ring{width:78px;height:78px;background:conic-gradient(#67b992 33%,#fff 0);border-radius:50%;display:grid;place-items:center;flex-shrink:0}
+.mini-ring div{width:64px;height:64px;background:var(--blue);border-radius:50%;display:grid;place-content:center;text-align:center;font-weight:800}
+.hero-copy{flex:1}
+.hero-copy h2{margin-bottom:9px}
+.entry{background:white;border:1px solid #e5e9d6;border-radius:22px;padding:15px 18px;display:flex;align-items:center;gap:13px;min-width:181px;text-align:left;box-shadow:0 5px 0 #dfe8ed55}
+.entry-icon{font-size:33px}
+.entry strong{display:block;font-size:18px}
+.entry small{display:block;margin-top:5px}
+.task-columns{display:grid;grid-template-columns:1.25fr .75fr;gap:23px;margin-top:30px}
+.section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:17px}
+.section-title h2:before{content:"";display:inline-block;width:7px;height:21px;background:var(--yellow);border-radius:6px;vertical-align:middle;margin-right:10px}
+.done .section-title h2:before{background:#9fd8bd}
+.task{border:1px solid var(--line);border-left:6px solid #c9e5f8;background:white;border-radius:19px;padding:20px;margin-bottom:13px;display:flex;gap:15px;align-items:center}
+.task:nth-of-type(3){border-left-color:#eadbfa}
+.task-icon{width:46px;height:46px;background:var(--blue);border-radius:14px;display:grid;place-items:center;font-size:25px}
+.task-copy{flex:1}
+.task-copy h3{margin-bottom:7px}
+.task-copy p{font-size:13px;color:var(--muted);margin-top:9px}
+.chip{font-size:11px;padding:4px 8px;background:var(--blue);border-radius:6px;margin-right:7px}
+.checkin{color:#937100;font-weight:750;white-space:nowrap}
+.done .task{border-left:1px solid var(--line);background:#f4fbf7}
+.encourage{background:#fff8d8;border-radius:21px;padding:24px;margin-top:20px;line-height:1.9}
+.page[hidden],[hidden]{display:none!important}
+.calendar-layout{display:grid;grid-template-columns:minmax(450px,1.35fr) minmax(240px,.85fr);gap:22px}
+.panel{background:white;border:1px solid var(--line);border-radius:25px;padding:22px}
+.month-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.plain{border:1px solid var(--line);background:white;border-radius:12px;min-height:42px;padding:10px 15px}
+.month-bar .plain{padding:8px 12px}
+.week,.days{display:grid;grid-template-columns:repeat(7,1fr);gap:7px}
+.week{font-size:12px;color:var(--muted);text-align:center;margin-bottom:12px}
+.day{height:73px;border-radius:13px;background:var(--blue);position:relative;text-align:left;padding:9px;font-size:14px;font-weight:750;border:2px solid transparent}
+.day.selected{background:#fff1ab;border-color:#e7c641}
+.day.other{opacity:.35}
+.dot{position:absolute;top:11px;right:9px;width:7px;height:7px;border-radius:50%;background:#cad6dd}
+.dot.complete{background:#62b48b}
+.dot.partial{background:#e4bc33}
+.tomato-count{position:absolute;bottom:9px;left:7px;display:flex;align-items:center;gap:3px;font-size:10px;font-weight:650}
+.tomato-count .tiny-tomato{font-size:12px;width:12px;height:12px;line-height:12px}
+.stars{position:absolute;bottom:9px;right:7px;font-size:10px;font-weight:500}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:17px;font-size:11px;color:var(--muted)}
+.detail-harvest{display:flex;gap:15px;align-items:center;background:#fff3e9;border-radius:17px;padding:18px;margin:20px 0}
+.detail-harvest b{font-size:27px}
+.detail-harvest span{font-size:30px}
+.empty-page{text-align:center;padding:100px 20px}
+.empty-page .symbol{font-size:65px;margin-bottom:20px}
+.empty-page p{margin:18px 0 25px;color:var(--muted)}
+
+.overlay{position:fixed;inset:0;background:#203e4655;backdrop-filter:blur(5px);z-index:10;display:grid;place-items:center}
+.modal{width:94vw;height:92vh;background:#fff;border-radius:32px;box-shadow:0 30px 100px #183d4335;padding:28px 34px;display:flex;flex-direction:column;overflow:auto}
+.modal-header{display:flex;align-items:center;gap:17px;padding-bottom:20px;border-bottom:1px solid var(--line)}
+.modal-title{flex:1}
+.modal-title h1{font-size:25px}
+.modal-title p{font-size:12px;color:var(--muted);margin-top:7px}
+.harvest{background:#fff7e8;padding:11px 17px;border-radius:16px;font-size:14px}
+.harvest b{font-size:22px;color:#b75a44;margin:0 3px}
+.sync{font-size:12px;color:var(--green);margin-top:4px;text-align:right}
+.close{font-size:25px;width:44px;height:44px;border-radius:50%;background:#f3f6f3;margin-left:10px}
+.modal-body{display:flex;flex-direction:column;flex:1;min-height:340px;margin:18px 0;position:relative}
+.clock-side{background:#f8fbf8;border:1px solid #edf3ed;border-radius:26px;display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;padding:18px;position:relative;min-height:340px}
+.state-pill{font-size:12px;font-weight:700;letter-spacing:1px;background:var(--mint);color:var(--green);padding:7px 16px;border-radius:30px}
+.ring{width:clamp(220px,38vh,420px);height:clamp(220px,38vh,420px);flex-shrink:0;position:relative;margin:12px 0}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
+.ring-track,.ring-progress{fill:none;stroke-width:14}
+.ring-track{stroke:#e5ede7}
+.ring-progress{stroke:var(--ring-color,#20b271);transition:stroke .25s ease;stroke-linecap:round}
+.ring-inner{position:absolute;inset:18px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.time{color:var(--ring-color,#20b271);transition:color .25s ease;font-size:clamp(52px,8vh,86px);font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-2px}
+.clock-caption{font-size:16px;color:var(--muted);margin-bottom:10px;font-weight:650}
+.clock-side h2{font-size:20px;margin:5px 0 9px}
+.clock-side>p{font-size:12px;color:var(--muted);text-align:center;line-height:1.6}
+.clock-actions{display:flex;gap:10px;margin-top:18px}
+.primary{background:var(--yellow);border:1px solid #f1d15c;border-radius:14px;padding:13px 22px;min-height:46px;font-weight:750;box-shadow:0 4px 0 #e2c44c33}
+.danger{color:#b16452;background:#fff7f3;border:1px solid #f0ddd5;border-radius:14px;padding:12px 17px}
+.settings{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;justify-content:center;gap:22px;background:#fffef9;border:1px solid #e5ece6;border-radius:26px;padding:24px max(28px,calc((100% - 600px)/2));overflow:auto}
+.settings-header{display:flex;align-items:center;justify-content:space-between;gap:18px}
+.settings-header p{font-size:12px;color:var(--muted);margin-top:8px}
+.settings-toggle{border:1px solid #dfe8df;border-radius:13px;padding:12px 18px;background:#f6faf5;min-height:46px;font-weight:650}
+.settings-done{align-self:flex-end}
+.reminder{flex-shrink:0;margin-bottom:14px}
+.reminder-layout{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.reminder-layout .reminder-buttons{margin-top:0;flex-shrink:0}
+
+.setting-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.setting-heading small{font-size:11px}
+.options{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+.option{border:1px solid #e5ebe7;background:white;border-radius:14px;min-height:47px;font-size:19px;font-weight:700}
+.option span{font-size:11px;color:var(--muted);margin-left:3px;font-weight:400}
+.option.selected{background:#fff4ba;border:2px solid #e6cb57}
+.break-options .option.selected{background:var(--mint);border-color:#8bc6a9}
+.lock-note{font-size:11px;color:var(--muted);margin-top:9px}
+.reminder{padding:16px;border:1px solid #e3eae5;border-radius:18px;background:#fafcfb}
+.reminder.active{background:#fff6e5;border-color:#f0ce80}
+.reminder h3{font-size:14px;margin-bottom:6px}
+.reminder p{font-size:12px;color:var(--muted);line-height:1.7}
+.reminder-buttons{display:flex;gap:9px;margin-top:11px}
+.reminder-buttons button{background:white;border:1px solid #e0e5dc;border-radius:10px;font-size:12px;padding:9px 12px}
+.rules{font-size:11px;color:var(--muted);line-height:1.8}
+.rules b{color:#9c7a29}
+.confirm-overlay{z-index:20}
+.confirm-box{width:430px;background:white;border-radius:26px;padding:30px;box-shadow:0 25px 90px #173d3940}
+.confirm-box p{line-height:1.8;color:var(--muted);font-size:14px;margin:16px 0 23px}
+.confirm-actions{display:flex;gap:12px;justify-content:flex-end}
+.toast{position:fixed;bottom:65px;left:50%;transform:translateX(-50%);background:#294c40;color:white;border-radius:13px;padding:13px 23px;z-index:30;font-size:13px;box-shadow:0 8px 30px #233e4320}
+.notice-bar{font-size:11px;background:#f5faf6;padding:10px 14px;border-radius:12px;margin-top:17px;color:var(--muted)}
+@media(prefers-reduced-motion:reduce){.ring-progress,.time{transition:none}}
+@media(max-height:740px){.modal{padding:16px 24px}
+.modal-header{padding-bottom:10px}
+.modal-body{margin:10px 0;min-height:300px}
+.clock-side{padding:12px;min-height:300px}
+.ring{width:clamp(170px,31vh,240px);height:clamp(170px,31vh,240px);margin:8px 0}
+.time{color:var(--ring-color,#20b271);transition:color .25s ease;font-size:clamp(42px,7vh,60px)}
+.clock-caption{font-size:14px;margin-bottom:5px}
+.clock-side h2{font-size:17px;margin:2px 0 4px}
+.clock-actions{margin-top:10px}
+.settings{justify-content:flex-start;gap:16px;padding-top:18px;padding-bottom:18px}
+.reminder{padding:10px 14px;margin-bottom:10px}
+.modal-title p{margin-top:4px}
+}
+@media(max-width:1000px){.main{padding:25px 22px 85px}
+.hero{padding:20px;gap:14px}
+.hero-copy h2{font-size:20px}
+.modal{padding-left:20px;padding-right:20px}
+.modal-header{gap:10px}.harvest{padding:9px 12px}
+.calendar-layout{grid-template-columns:1.35fr .8fr;gap:15px}
+.panel{padding:17px}
+.day{height:70px;padding:7px}
+.task{padding:16px}
+.entry{min-width:166px;padding:13px}
+}
+
+</style>
+</head>
+<body>
+<div class="app" id="app">
+<aside class="sidebar">
+<div class="brand">
+<span class="brand-icon">🍋</span>柠檬任务</div>
+<div class="brand-note">一点点 · 更棒了</div>
+<nav class="nav" aria-label="主导航">
+<button class="active" data-page="home">
+<span>▦</span>今日任务</button>
+<button data-page="calendar">
+<span>▤</span>任务日历</button>
+<button data-page="reward">
+<span>♧</span>奖励兑换</button>
+<button data-page="profile">
+<span>☀</span>我的成长</button>
+</nav>
+<div class="kid">
+<div class="avatar">🐻</div>
+<div>
+<b>柠檬同学</b>
+<br>
+<small>Lv.8 · 每天进步一点</small>
+</div>
+</div>
+</aside>
+<main class="main">
+<section class="page" id="home">
+<header class="topline">
+<div>
+<div class="eyebrow">MY LITTLE STEPS</div>
+<h1>今日任务</h1>
+</div>
+<span class="badge">11 月 11 日 · 星期三</span>
+</header>
+<div class="hero">
+<div class="mini-ring">
+<div>33%<small>2 / 6</small>
+</div>
+</div>
+<div class="hero-copy">
+<h2>今日已完成 2/6 项</h2>
+<p class="muted">再完成 4 个任务，就能点亮更多星星！</p>
+</div>
+<button class="entry" id="entry" aria-haspopup="dialog">
+<span class="entry-icon">🍅</span>
+<span>
+<strong>番茄钟 <span style="font-size:15px">↗</span>
+</strong>
+<small id="entry-sub">今日 🍅 3 个</small>
+<small id="entry-state" hidden>
+</small>
+</span>
+</button>
+</div>
+<div class="task-columns">
+<div>
+<div class="section-title">
+<h2>待完成任务</h2>
+<small>4 项</small>
+</div>
+<article class="task">
+<div class="task-icon">📖</div>
+<div class="task-copy">
+<h3>读一本喜欢的书</h3>
+<span class="chip">阅读</span>
+<small>+3 积分</small>
+<p>和故事里的朋友，一起去冒险</p>
+</div>
+<button class="checkin">打卡</button>
+</article>
+<article class="task">
+<div class="task-icon">✏️</div>
+<div class="task-copy">
+<h3>完成数学练习</h3>
+<span class="chip">数学</span>
+<small>+3 积分</small>
+<p>认真想一想，再写下答案</p>
+</div>
+<button class="checkin">打卡</button>
+</article>
+<article class="task">
+<div class="task-icon">🎨</div>
+<div class="task-copy">
+<h3>画下今天的小发现</h3>
+<span class="chip">创意</span>
+<small>+2 积分</small>
+</div>
+<button class="checkin">打卡</button>
+</article>
+<article class="task">
+<div class="task-icon">🌱</div>
+<div class="task-copy">
+<h3>整理我的小书桌</h3>
+<span class="chip">生活</span>
+<small>+1 积分</small>
+</div>
+<button class="checkin">打卡</button>
+</article>
+</div>
+<div class="done">
+<div class="section-title">
+<h2>今天已完成</h2>
+<small>2 项</small>
+</div>
+<article class="task">
+<div class="task-icon">✓</div>
+<div class="task-copy">
+<h3>晨间英语朗读</h3>
+<p>获得 2 颗星星 ⭐</p>
+</div>
+</article>
+<article class="task">
+<div class="task-icon">✓</div>
+<div class="task-copy">
+<h3>给小植物浇水</h3>
+<p>获得 1 颗星星 ⭐</p>
+</div>
+</article>
+<div class="encourage">
+<span style="font-size:30px">🍅</span>
+<h3>一次只专心做一件事</h3>
+<small>试试番茄钟吧！<br>专注一小会儿，再好好休息。</small>
+</div>
+</div>
+</div>
+</section>
+<section class="page" id="calendar" hidden>
+<header class="topline">
+<div>
+<div class="eyebrow">GROW A LITTLE EVERY DAY</div>
+<h1>任务日历</h1>
+</div>
+<span class="badge">每一次专注，都值得记下来</span>
+</header>
+<div class="calendar-layout">
+<div class="panel">
+<div class="month-bar">
+<button class="plain" id="prev-month" aria-label="上个月">‹</button>
+<h2 id="month-label">2026 年 11 月</h2>
+<button class="plain" id="next-month" aria-label="下个月">›</button>
+<button class="plain" id="today">今天</button>
+</div>
+<div class="week">
+<span>周日</span>
+<span>周一</span>
+<span>周二</span>
+<span>周三</span>
+<span>周四</span>
+<span>周五</span>
+<span>周六</span>
+</div>
+<div class="days" id="days">
+</div>
+<div class="legend">
+<span>🟢 全部完成</span>
+<span>🟡 部分打卡</span>
+<span>● 未来 / 休息</span>
+</div>
+<div class="notice-bar">左下 🍅 专注收获 · 右下 ⭐ 任务得星<br>番茄数为 0 时不显示；两类记录互不换算。</div>
+</div>
+<aside>
+<div class="panel">
+<small>这一天的成长</small>
+<h2 id="date-title" style="margin-top:9px">
+</h2>
+<div class="detail-harvest">
+<span>🍅</span>
+<div>
+<b id="day-count">3</b> 个番茄<br>
+<small>完成专注的次数</small>
+</div>
+</div>
+<p id="day-summary" class="muted">
+</p>
+<div id="day-tasks">
+</div>
+</div>
+<div class="encourage">
+<h3>慢慢来，也很棒！</h3>
+<small>番茄记下的是认真投入的时光，<br>不是和别人比赛的分数。</small>
+</div>
+</aside>
+</div>
+</section>
+<section class="page" id="reward" hidden>
+<div class="empty-page">
+<div class="symbol">⭐</div>
+<h1>奖励兑换</h1>
+
+<button class="primary" data-back>回到今日任务</button>
+</div>
+</section>
+<section class="page" id="profile" hidden>
+<div class="empty-page">
+<div class="symbol">🌱</div>
+<h1>我的成长</h1>
+
+<button class="primary" data-back>回到今日任务</button>
+</div>
+</section>
+</main>
+</div>
+<div class="overlay" id="overlay" hidden>
+<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+<header class="modal-header">
+<span style="font-size:37px">🍅</span>
+<div class="modal-title">
+<h1 id="modal-title">我的番茄钟</h1>
+<p>专心一会儿，给自己一个小小的收获。</p>
+</div>
+<div>
+<div class="harvest">今日收获 <b id="harvest-count">3</b> 个 🍅</div>
+</div>
+<button class="settings-toggle" id="open-settings" aria-controls="settings-panel" aria-expanded="false">⚙ 时长设置</button>
+<button class="close" id="close-modal" aria-label="收起番茄钟，不结束本轮">×</button>
+</header>
+<div class="modal-body">
+<div class="clock-side" id="clock-area">
+<span class="state-pill" id="state-pill">准备好，就开始吧</span>
+<div class="ring" id="ring">
+<svg viewBox="0 0 240 240" aria-hidden="true"><circle class="ring-track" cx="120" cy="120" r="110"/><circle class="ring-progress" id="ring-progress" cx="120" cy="120" r="110" pathLength="100" stroke-dasharray="100 100" stroke-dashoffset="0"/></svg>
+<div class="ring-inner">
+<div class="clock-caption" id="clock-caption">任务时间</div>
+<div class="time" id="time">25:00</div>
+</div>
+</div>
+<h2 id="clock-title">种下一颗专注的小番茄</h2>
+<p id="clock-description">先选好时间，然后专心做一件喜欢的事。</p>
+<div class="clock-actions">
+<button class="primary" id="start">开始专注</button>
+<button class="danger" id="end" hidden>结束本轮</button>
+</div>
+</div>
+<section class="settings" id="settings-panel" role="region" aria-labelledby="settings-title" hidden>
+<div class="settings-header"><div><h2 id="settings-title">设置你的专注节奏</h2><p>选好时间，完成设置后回到倒计时。</p></div></div>
+<div><div class="setting-heading"><h3>任务时长</h3><small>分钟</small></div><div class="options" id="focus-options"></div></div>
+<div><div class="setting-heading"><h3>休息时长</h3><small>分钟</small></div><div class="options break-options" id="break-options"></div><div class="lock-note" id="lock-note">默认 25 分钟任务 + 5 分钟休息。</div></div>
+<div class="rules"><b>每完成一次专注，收获 1 个番茄。</b><br>专注结束自动休息；休息结束后手动开始下一轮。</div>
+<button class="primary settings-done" id="finish-settings">完成设置</button>
+</section>
+</div>
+<div class="reminder" id="reminder" aria-live="polite"><div class="reminder-layout"><div>
+<h3 id="reminder-title">到点提醒</h3>
+<p id="reminder-text">专注结束自动休息；休息结束后手动开始下一轮。</p>
+</div><div class="reminder-buttons"><button id="stop-reminder" disabled>停止响铃和震动</button></div></div></div>
+
+</section>
+</div>
+<div class="overlay confirm-overlay" id="confirm" hidden>
+<section class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+<div style="font-size:35px;margin-bottom:15px">🌱</div>
+<h2 id="confirm-title">要结束这一轮吗？</h2>
+<p id="confirm-text">
+</p>
+<div class="confirm-actions">
+<button class="plain" id="cancel-end">继续这一轮</button>
+<button class="danger" id="confirm-end">确认结束</button>
+</div>
+</section>
+</div>
+<div class="toast" id="toast" role="status" hidden>
+</div>
+<script>
+'use strict';
+
+const $=id=>document.getElementById(id);
+
+const state={phase:'setup',focus:25,rest:5,remaining:1500,count:3,sound:false,vibration:false,year:2026,month:10,selected:'2026-11-11'};
+
+let returnFocus=null,toastTimer;
+
+const isRunning=()=>['focus','focusAlert','rest'].includes(state.phase);
+
+const fmt=s=>{const value=Math.max(0,Math.ceil(s));return String(Math.floor(value/60)).padStart(2,'0')+':'+String(value%60).padStart(2,'0')};
+let lastFrame=performance.now();
+
+
+function notify(text){$('toast').textContent=text;
+$('toast').hidden=false;
+clearTimeout(toastTimer);
+toastTimer=setTimeout(()=>$('toast').hidden=true,3200)}
+function navigate(page){document.querySelectorAll('.page').forEach(e=>e.hidden=e.id!==page);
+document.querySelectorAll('[data-page]').forEach(e=>e.classList.toggle('active',e.dataset.page===page));
+if(page==='calendar')renderCalendar()}
+function openModal(){returnFocus=document.activeElement;
+$('overlay').hidden=false;
+$('app').inert=true;
+render();
+$('close-modal').focus()}
+function closeModal(){if(state.sound||state.vibration){notify('请先点击“停止响铃和震动”，再收起番茄钟。');
+return}closeSettings();
+$('overlay').hidden=true;
+$('app').inert=false;
+if(returnFocus)returnFocus.focus()}
+function options(id,values,key){$(id).innerHTML=values.map(n=>'<button class="option" data-key="'+key+'" data-minutes="'+n+'" aria-pressed="false">'+n+'<span>分</span></button>').join('');
+$(id).addEventListener('click',e=>{const b=e.target.closest('button');
+if(!b||isRunning()||$('settings-panel').hidden)return;
+state[key]=Number(b.dataset.minutes);
+if(state.phase==='setup')state.remaining=state.focus*60;
+render()})}
+options('focus-options',[10,15,20,25,30,35,40],'focus');
+options('break-options',[3,5,10,15],'rest');
+
+function start(){if(!['setup','waiting'].includes(state.phase)||!$('settings-panel').hidden)return;
+lastFrame=performance.now();
+state.phase='focus';
+state.remaining=state.focus*60;
+state.sound=false;
+state.vibration=false;
+render()}
+function finishPhase(){if(state.phase==='focus'){state.count++;
+state.phase='focusAlert';
+state.remaining=state.rest*60;
+state.sound=true;
+state.vibration=true;
+notify('专注完成！🍅 +1，休息已自动开始。')}else if(['focusAlert','rest'].includes(state.phase)){state.phase='waiting';
+if(!$('confirm').hidden){$('confirm').hidden=true;document.querySelector('.modal').inert=false;}
+state.remaining=0;
+state.sound=true;
+state.vibration=true;
+notify('休息结束啦！准备好后，手动开始下一轮。')}render()}
+function advance(seconds){
+ if(!isRunning()||seconds<=0)return;
+ let elapsed=seconds;
+ while(isRunning()&&elapsed>=state.remaining){
+  elapsed-=state.remaining;
+  finishPhase();
+ }
+ if(isRunning())state.remaining=Math.max(0,state.remaining-elapsed);
+ renderClock();
+}
+function openSettings(){
+ if(isRunning()||state.sound||state.vibration)return;
+ $('settings-panel').hidden=false;
+ $('clock-area').inert=true;
+ $('open-settings').setAttribute('aria-expanded','true');
+ $('finish-settings').focus();
+}
+function closeSettings(){
+ $('settings-panel').hidden=true;
+ $('clock-area').inert=false;
+ $('open-settings').setAttribute('aria-expanded','false');
+ $('open-settings').focus();
+}
+function renderClock(){
+ const rest=['focusAlert','rest'].includes(state.phase),waiting=state.phase==='waiting';
+ const display=fmt(state.remaining);
+ if($('time').textContent!==display)$('time').textContent=display;
+ $('clock-caption').textContent=rest||waiting?'休息时间':'任务时间';
+ const fraction=waiting?0:Math.max(0,Math.min(1,state.remaining/((rest?state.rest:state.focus)*60)));
+ const color=rest||waiting?'#1a8fd1':fraction>.5?'#20b271':fraction>.25?'#d9a400':'#f2564f';
+ $('ring').style.setProperty('--ring-color',color);
+ if(state.phase==='focus')$('clock-description').textContent=fraction>.5?'保持节奏，专心做好眼前的事。':fraction>.25?'时间已过半，抓紧完成吧。':'剩余时间不多了，专心完成最后一步。';
+ $('ring-progress').setAttribute('stroke-dashoffset',String(100*(1-fraction)));
+ $('entry-state').textContent=state.phase==='focus'?'专注中 '+display:rest?'休息中 '+display:'休息结束 · 等待开始';
+}
+function stopReminder(){state.sound=false;
+state.vibration=false;
+if(state.phase==='focusAlert')state.phase='rest';
+render()}
+function requestEnd(){if(!isRunning())return;
+$('confirm-text').textContent=state.phase==='focus'?'这次专注还没有完成，结束后不会增加番茄。今天已收获的 '+state.count+' 个番茄会保留。':'本轮专注已经完成，收获的番茄会保留。结束本轮将停止剩余休息和提醒，不会自动开始下一轮。';
+$('confirm').hidden=false;
+document.querySelector('.modal').inert=true;
+$('cancel-end').focus()}
+function closeConfirm(){$('confirm').hidden=true;
+document.querySelector('.modal').inert=false;
+$('end').focus()}
+function endRound(){if(!isRunning())return;
+closeConfirm();
+state.phase='setup';
+state.remaining=state.focus*60;
+state.sound=false;
+state.vibration=false;
+render();
+$('start').focus();
+notify('本轮已结束，已收获的番茄保留。')}
+function render(){const phase=state.phase,rest=['focusAlert','rest'].includes(phase);
+const waiting=phase==='waiting';
+const labels={setup:['准备好，就开始吧','种下一颗专注的小番茄','先选好时间，然后专心做一件喜欢的事。'],focus:['专注中 · 你正在慢慢变棒','现在，只做这一件事','不着急，一点一点完成就很好。'],focusAlert:['专注完成 · 休息已自动开始','太棒啦！收获 1 个番茄','休息已开始计时；点击停止按钮，同时停止响铃和震动。'],rest:['休息中 · 给小脑袋充充电','站起来，伸个懒腰吧','看看远处，喝口水，让眼睛也休息一下。'],waiting:['休息结束 · 等待你准备好','下一颗番茄，由你开始','不会自动开始下一轮，准备好了再按下面的按钮。']}[phase];
+$('state-pill').textContent=labels[0];
+$('clock-title').textContent=labels[1];
+$('clock-description').textContent=labels[2];
+renderClock();
+$('start').hidden=isRunning();
+$('start').disabled=false;
+$('start').textContent=waiting?'下一轮':'开始专注';
+$('end').hidden=!isRunning();
+$('open-settings').disabled=isRunning()||state.sound||state.vibration;
+$('open-settings').title=isRunning()?'本轮运行中，时长设置已锁定':'设置任务时间和休息时间';
+$('harvest-count').textContent=state.count;
+$('entry-sub').textContent='今日 🍅 '+state.count+' 个';
+$('entry-state').hidden=phase==='setup';
+$('entry-state').textContent=phase==='focus'?'专注中 '+fmt(state.remaining):rest?'休息中 '+fmt(state.remaining):'休息结束 · 等待开始';
+document.querySelectorAll('.option').forEach(b=>{b.disabled=isRunning();
+const selected=state[b.dataset.key]===Number(b.dataset.minutes);
+b.classList.toggle('selected',selected);
+b.setAttribute('aria-pressed',String(selected))});
+$('lock-note').textContent=isRunning()?'🔒 本轮运行中，时长已锁定；结束本轮后可重新选择。':waiting?'可以为下一轮重新选择时长；仅手动开始。':'默认 25 分钟专注 + 5 分钟休息，可在开始前选择。';
+const alert=state.sound||state.vibration;
+$('reminder').classList.toggle('active',alert);
+$('reminder-title').textContent=alert?(waiting?'☀️ 休息结束提醒':'🎉 专注结束提醒'):'🔔 到点提醒';
+$('reminder-text').textContent=alert?'响铃：'+(state.sound?'提醒中':'已停止')+' · 震动：'+(state.vibration?'提醒中':'已停止')+(rest?'。休息仍在倒计时。':'。可停止提醒稍后开始，或点击“下一轮”停止提醒并开始专注。'):rest?'两种提醒均已停止，休息继续倒计时。':waiting?'提醒已停止，仍等待你手动开始下一轮。':'专注结束自动进入休息；休息结束后等待手动开始。';
+$('reminder').hidden=!alert;
+$('stop-reminder').disabled=!alert;
+$('stop-reminder').textContent=alert?'停止响铃和震动':'响铃和震动已停止';
+if(!$('calendar').hidden)renderCalendar()}
+function dateKey(y,m,d){return y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+function dayData(key){if(key==='2026-11-11')return{tomatoes:state.count,stars:3,total:6,done:2};
+const samples={1:[2,4,3,3],2:[1,2,2,2],3:[0,3,3,2],4:[3,5,4,4],5:[2,4,3,3],6:[4,6,4,4],7:[0,0,0,0],8:[2,3,3,2],9:[3,5,4,4],10:[1,2,3,1]};
+const d=Number(key.slice(-2)),s=key.startsWith('2026-11-')?samples[d]:null;
+return s?{tomatoes:s[0],stars:s[1],total:s[2],done:s[3]}:{tomatoes:0,stars:0,total:0,done:0}}
+function renderCalendar(){const y=state.year,m=state.month,offset=new Date(y,m,1).getDay(),days=new Date(y,m+1,0).getDate(),cells=Math.ceil((offset+days)/7)*7;
+$('month-label').textContent=y+' 年 '+(m+1)+' 月';
+let html='';
+for(let i=0;
+i<cells;
+i++){const date=new Date(y,m,i-offset+1),key=dateKey(date.getFullYear(),date.getMonth(),date.getDate()),inMonth=date.getMonth()===m,data=dayData(key);
+html+='<button class="day '+(inMonth?'':'other ')+(key===state.selected?'selected':'')+'" data-date="'+key+'" '+(!inMonth?'disabled':'')+' aria-label="'+key+'，番茄'+data.tomatoes+'个，得星'+data.stars+'颗" aria-pressed="'+(key===state.selected)+'">'+date.getDate()+(inMonth?'<span class="dot '+(data.total?(data.done===data.total?'complete':'partial'):'')+'"></span>'+(data.tomatoes?'<span class="tomato-count"><span class="tiny-tomato">🍅</span>'+data.tomatoes+'</span>':'')+'<span class="stars">'+(data.stars?'+'+data.stars+'⭐':'—')+'</span>':'')+'</button>'}$('days').innerHTML=html;
+const parts=state.selected.split('-').map(Number),date=new Date(parts[0],parts[1]-1,parts[2]),data=dayData(state.selected);
+$('date-title').textContent=parts[1]+' 月 '+parts[2]+' 日 · '+['周日','周一','周二','周三','周四','周五','周六'][date.getDay()];
+$('day-count').textContent=data.tomatoes;
+$('day-summary').textContent=data.total?'完成 '+data.done+' / '+data.total+' 项任务 · 获得 '+data.stars+' 颗星星':'这一天暂无任务与专注记录';
+$('day-tasks').innerHTML=data.total?'<div class="notice-bar">📖 阅读与学习计划</div>':''}
+function shiftMonth(delta){const d=new Date(state.year,state.month+delta,1);
+state.year=d.getFullYear();
+state.month=d.getMonth();
+state.selected=dateKey(state.year,state.month,1);
+renderCalendar()}
+$('open-settings').onclick=openSettings;
+$('finish-settings').onclick=closeSettings;
+$('entry').onclick=openModal;
+$('close-modal').onclick=closeModal;
+$('start').onclick=start;
+$('end').onclick=requestEnd;
+$('cancel-end').onclick=closeConfirm;
+$('confirm-end').onclick=endRound;
+$('stop-reminder').onclick=stopReminder;
+$('prev-month').onclick=()=>shiftMonth(-1);
+$('next-month').onclick=()=>shiftMonth(1);
+$('today').onclick=()=>{state.year=2026;
+state.month=10;
+state.selected='2026-11-11';
+renderCalendar()};
+$('days').onclick=e=>{const b=e.target.closest('[data-date]');
+if(b&&!b.disabled){state.selected=b.dataset.date;
+renderCalendar()}};
+document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>navigate(b.dataset.page));
+document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>navigate('home'));
+
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('confirm').hidden)closeConfirm();
+else if(!$('settings-panel').hidden)closeSettings();
+else if(!$('overlay').hidden)closeModal()}if(e.key==='Tab'&&!$('overlay').hidden){const root=!$('confirm').hidden?$('confirm'):!$('settings-panel').hidden?$('settings-panel'):$('overlay'),buttons=Array.from(root.querySelectorAll('button:not([disabled])')).filter(b=>!b.hidden&&b.offsetParent!==null),first=buttons[0],last=buttons[buttons.length-1];
+if(e.shiftKey&&document.activeElement===first){e.preventDefault();
+last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();
+first.focus()}}});
+
+// 仅前台交互演示：无持久化、无网络、无通知、无声音与设备震动 API。
+function animationFrame(now){
+ const elapsed=Math.max(0,now-lastFrame)/1000;
+ lastFrame=now;
+ advance(elapsed);
+ requestAnimationFrame(animationFrame);
+}
+requestAnimationFrame(animationFrame);
+
+render();
+renderCalendar();
+
+</script>
+</body>
+</html>

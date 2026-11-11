@@ -6,6 +6,7 @@ import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.RewardRepository
 import com.lemonkids.shared.repository.TaskRepository
+import com.lemonkids.kidtask.feature.pomodoro.PomodoroManager
 import com.lemonkids.kidtask.ui.components.TaskUiItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,8 @@ data class CalendarUiState(
     val month: Int = LocalDate.now().monthValue,
     val selectedDate: String = LocalDate.now().toString(),
     val tasksByDate: Map<String, List<TaskUiItem>> = emptyMap(),
+    /** 只包含已经取得权威数据或本机待同步记录的日期；缺失表示未知，不能当作 0。 */
+    val pomodoroCountsByDate: Map<String, Int> = emptyMap(),
     val isLoading: Boolean = false,
     val confirmDialogTaskId: String? = null,
     val undoDialogTaskId: String? = null
@@ -76,7 +79,8 @@ data class CalendarDemoUiState(
 class CalendarViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val authRepository: AuthRepository,
-    private val rewardRepository: RewardRepository
+    private val rewardRepository: RewardRepository,
+    private val pomodoroManager: PomodoroManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CalendarUiState(isLoading = true))
@@ -84,6 +88,7 @@ class CalendarViewModel @Inject constructor(
 
     init {
         loadTasks()
+        observePomodoro()
     }
 
     private fun loadTasks() {
@@ -104,6 +109,21 @@ class CalendarViewModel @Inject constructor(
         }
     }
 
+    private fun observePomodoro() {
+        viewModelScope.launch {
+            val userId = authRepository.currentUserId ?: return@launch
+            pomodoroManager.bind(userId)
+            pomodoroManager.state.collect { state ->
+                _uiState.value = _uiState.value.copy(pomodoroCountsByDate = state.countsByDate)
+            }
+        }
+    }
+
+    private fun refreshPomodoroMonth() {
+        val month = YearMonth.of(_uiState.value.year, _uiState.value.month)
+        pomodoroManager.refreshCounts(month.atDay(1).minusDays(7), month.atEndOfMonth().plusDays(7))
+    }
+
     fun selectDate(date: String) {
         val selected = runCatching { LocalDate.parse(date) }.getOrNull() ?: return
         _uiState.value = _uiState.value.withSelectedDate(selected)
@@ -114,9 +134,13 @@ class CalendarViewModel @Inject constructor(
         val target = YearMonth.of(current.year, current.month).plusMonths(delta.toLong())
         val selected = selectedDateForMonth(target, LocalDate.now())
         _uiState.value = current.withSelectedDate(selected)
+        refreshPomodoroMonth()
     }
 
-    fun goToToday() = selectDate(LocalDate.now().toString())
+    fun goToToday() {
+        selectDate(LocalDate.now().toString())
+        refreshPomodoroMonth()
+    }
 
     // ==================== 完成任务 ====================
 
