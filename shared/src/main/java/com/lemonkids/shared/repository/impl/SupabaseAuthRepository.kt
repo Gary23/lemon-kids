@@ -1,6 +1,8 @@
 package com.lemonkids.shared.repository.impl
 
 import android.util.Log
+import com.lemonkids.shared.auth.TaskSessionGuard
+import kotlinx.coroutines.CancellationException
 import com.lemonkids.shared.model.User
 import com.lemonkids.shared.model.UserRole
 import com.lemonkids.shared.di.SupabaseEnvironment
@@ -42,7 +44,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 @Singleton
 class SupabaseAuthRepository @Inject constructor(
-    private val supabase: SupabaseClient
+    private val supabase: SupabaseClient,
+    private val taskSessionGuard: TaskSessionGuard
 ) : AuthRepository {
 
     private val auth get() = supabase.pluginManager.getPlugin(Auth)
@@ -83,7 +86,9 @@ class SupabaseAuthRepository @Inject constructor(
             // 不要在每次进程启动时无条件刷新。一个孩子可能绑定多台 Pad，强制刷新会
             // 轮换 refresh token；而仍有效的 access token 本可立即用于本次后台对账。
             // 仅在 access token 已过期时才刷新。
-            if (session.expiresAt.toEpochMilliseconds() <= System.currentTimeMillis()) {
+            if (taskSessionGuard.enabled) {
+                taskSessionGuard.ensureReady()
+            } else if (session.expiresAt.toEpochMilliseconds() <= System.currentTimeMillis()) {
                 Log.i(TAG, "已保存的 access token 过期，开始刷新")
                 auth.refreshCurrentSession()
             } else {
@@ -94,14 +99,17 @@ class SupabaseAuthRepository @Inject constructor(
             val uid = auth.currentUserOrNull()?.id
                 ?: auth.currentSessionOrNull()?.user?.id
                 ?: throw IllegalStateException("已恢复会话但未能获取用户信息")
-            loadCurrentUser(uid)
+            taskSessionGuard.execute(uid) { loadCurrentUser(uid) }
         }
-    }
+    }.onFailure { if (it is CancellationException) throw it }
 
     private suspend fun loadCurrentUser(uid: String): User {
         val user = postgrest.from("users").select {
             filter { eq("uid", uid) }
         }.decodeSingle<User>()
+        if (taskSessionGuard.enabled && auth.currentUserOrNull()?.id != uid) {
+            throw CancellationException("登录账号已变化，忽略旧用户资料")
+        }
         _currentUser.value = user
         return user
     }

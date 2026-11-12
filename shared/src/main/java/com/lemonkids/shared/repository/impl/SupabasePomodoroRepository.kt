@@ -1,6 +1,7 @@
 package com.lemonkids.shared.repository.impl
 
 import com.lemonkids.shared.model.PomodoroDailyCount
+import com.lemonkids.shared.auth.TaskSessionGuard
 import com.lemonkids.shared.repository.PomodoroRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
@@ -29,45 +30,50 @@ internal data class RecordedPomodoroSession(
 
 @Singleton
 class SupabasePomodoroRepository @Inject constructor(
-    private val supabase: SupabaseClient
+    private val supabase: SupabaseClient,
+    private val sessionGuard: TaskSessionGuard
 ) : PomodoroRepository {
 
     private val postgrest get() = supabase.pluginManager.getPlugin(Postgrest)
 
     override suspend fun recordCompletion(
+        expectedChildId: String,
         sessionId: String,
         focusMinutes: Int,
         breakMinutes: Int,
         startedAt: String,
         completedAt: String
     ): Result<Unit> = runCatching {
-        postgrest.rpc(
-            function = "record_pomodoro_completion",
-            parameters = completionParameters(sessionId, focusMinutes, breakMinutes, startedAt, completedAt)
-        )
-        Unit
+        val parameters = completionParameters(sessionId, focusMinutes, breakMinutes, startedAt, completedAt)
+        sessionGuard.execute(expectedChildId) {
+            postgrest.rpc(function = "record_pomodoro_completion", parameters = parameters)
+            Unit
+        }
     }.onFailure { error ->
         // 账户切换/释放运行时的取消必须向上传播，不能继续处理旧账户待上传队列。
         if (error is CancellationException) throw error
     }
 
-    override suspend fun getDailyCounts(fromDate: String, toDate: String): Result<List<PomodoroDailyCount>> =
+    override suspend fun getDailyCounts(expectedChildId: String, fromDate: String, toDate: String): Result<List<PomodoroDailyCount>> =
         runCatching {
-            postgrest.rpc(
-                function = "get_pomodoro_daily_counts",
-                parameters = dailyCountParameters(fromDate, toDate)
-            ).decodeList<PomodoroDailyCount>()
+            val parameters = dailyCountParameters(fromDate, toDate)
+            sessionGuard.execute(expectedChildId) {
+                postgrest.rpc(function = "get_pomodoro_daily_counts", parameters = parameters)
+                    .decodeList<PomodoroDailyCount>()
+            }
         }.onFailure { error ->
             if (error is CancellationException) throw error
         }
 
-    override suspend fun getRecordedSessionIds(sessionIds: List<String>): Result<Set<String>> =
+    override suspend fun getRecordedSessionIds(expectedChildId: String, sessionIds: List<String>): Result<Set<String>> =
         runCatching {
             queryRecordedSessionIds(sessionIds) { batch ->
                 // 原迁移已授予 authenticated SELECT，RLS仅允许本孩子/本家庭记录。
-                postgrest.from("pomodoro_completions").select(columns = Columns.list("session_id")) {
-                    filter { isIn("session_id", batch) }
-                }.decodeList<RecordedPomodoroSession>()
+                sessionGuard.execute(expectedChildId) {
+                    postgrest.from("pomodoro_completions").select(columns = Columns.list("session_id")) {
+                        filter { isIn("session_id", batch) }
+                    }.decodeList<RecordedPomodoroSession>()
+                }
             }
         }.onFailure { error ->
             if (error is CancellationException) throw error

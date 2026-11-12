@@ -19,7 +19,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -83,6 +87,9 @@ class HomeViewModel @Inject constructor(
     private var initialLoadTimedOut = false
     /** 等待仓库返回新快照期间保留本地状态，避免旧的轮询结果把卡片改回去。 */
     private val optimisticTaskStatuses = mutableMapOf<String, TaskStatus>()
+    private val taskActions = TaskActionRunner()
+    private var taskChildId: String? = null
+    private var latestTaskStatuses: Map<String, TaskStatus> = emptyMap()
     private val orderStore = HomeTaskOrderStore(appContext)
     private val orderWriteMutex = Mutex()
     private var orderWriteRevision = 0L
@@ -97,6 +104,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val userId = authRepository.currentUserId ?: return@launch
             val user = authRepository.observeCurrentUser().first() ?: return@launch
+            taskChildId = userId
             loadOrderFor(userId, LocalDate.now().toString())
 
             user.familyId?.takeIf { it.isNotBlank() }?.let { familyId ->
@@ -119,6 +127,8 @@ class HomeViewModel @Inject constructor(
             launch {
                 // 观察所有任务（非删除），在内存中分类过滤
                 taskRepository.observeChildTasks(userId).collect { tasks ->
+                    if (!isCurrentTaskUser(userId)) return@collect
+                    latestTaskStatuses = tasks.associate { it.id to it.status }
                     TaskReminderScheduler.schedule(appContext, tasks)
                     val today = LocalDate.now()
                     val todayStr = today.toString()
@@ -178,7 +188,8 @@ class HomeViewModel @Inject constructor(
                         celebrateShownToday = false
                         lastCelebrateDate = todayStr
                     }
-                    val shouldCelebrate = allDone && !celebrateShownToday && _uiState.value.todayTasks.isNotEmpty()
+                    val shouldCelebrate = allDone && _uiState.value.syncingTaskIds.isEmpty() &&
+                        !celebrateShownToday && _uiState.value.todayTasks.isNotEmpty()
                     if (shouldCelebrate) celebrateShownToday = true
 
                     _uiState.value = _uiState.value.copy(
@@ -242,85 +253,93 @@ class HomeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(confirmDialogTaskId = taskId)
     }
 
-    fun confirmTaskDone(taskId: String) {
-        viewModelScope.launch {
-            val oldPoints = _uiState.value.points
-            val taskPoints = findTaskById(taskId)?.rewardPoints ?: 0
-            val userId = authRepository.currentUserId ?: authRepository.observeCurrentUser().first()?.uid
-                ?: return@launch
-            applyOptimisticStatus(taskId, TaskStatus.VERIFIED)
-            _uiState.value = _uiState.value.copy(
-                confirmDialogTaskId = null,
-                syncingTaskIds = _uiState.value.syncingTaskIds + taskId,
-                points = oldPoints + taskPoints,
-                previousPoints = oldPoints,
-                earnedPoints = taskPoints,
-                showPointsAnimation = true
-            )
-            taskRepository.completeTask(taskId, userId).fold(
-                onSuccess = {
-                    removeCompletedFromOrder(taskId)
-                    _uiState.value = _uiState.value.copy(
-                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId
-                    )
-                },
-                onFailure = {
-                    optimisticTaskStatuses.remove(taskId)
-                    updateTaskStatusInUi(taskId, TaskStatus.PENDING)
-                    _uiState.value = _uiState.value.copy(
-                        points = oldPoints,
-                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId
-                    )
-                }
-            )
-        }
-    }
+    fun confirmTaskDone(taskId: String) = performTaskAction(taskId, completing = true)
 
     fun markTaskUndo(taskId: String) {
         if (taskId in _uiState.value.syncingTaskIds) return
         _uiState.value = _uiState.value.copy(undoDialogTaskId = taskId)
     }
 
-    fun confirmTaskUndo(taskId: String) {
-        viewModelScope.launch {
-            val taskPoints = findTaskById(taskId)?.rewardPoints ?: 0
-            val oldPoints = _uiState.value.points
-            if (_uiState.value.isPointsLoaded && oldPoints < taskPoints) {
-                _uiState.value = _uiState.value.copy(
-                    undoDialogTaskId = null,
-                    actionError = "积分已用于兑换，当前余额不足以撤销这项任务"
-                )
-                rewardRepository.requestPointsRefresh()
-                return@launch
-            }
-            val userId = authRepository.currentUserId ?: authRepository.observeCurrentUser().first()?.uid
-                ?: return@launch
-            applyOptimisticStatus(taskId, TaskStatus.PENDING)
+    fun confirmTaskUndo(taskId: String) = performTaskAction(taskId, completing = false)
+
+    private fun performTaskAction(taskId: String, completing: Boolean) {
+        val task = findTaskById(taskId) ?: return
+        if (taskId in _uiState.value.syncingTaskIds) return
+        if (completing == (task.status == "DONE" || task.status == "VERIFIED")) return
+        if (!completing && _uiState.value.isPointsLoaded && _uiState.value.points < task.rewardPoints) {
             _uiState.value = _uiState.value.copy(
                 undoDialogTaskId = null,
-                syncingTaskIds = _uiState.value.syncingTaskIds + taskId,
-                points = (oldPoints - taskPoints).coerceAtLeast(0)
+                actionError = "积分已用于兑换，当前余额不足以撤销这项任务"
             )
-            taskRepository.undoCompleteTask(taskId, userId, taskPoints).fold(
-                onSuccess = {
-                    appendUndoneToOrder(taskId)
-                    _uiState.value = _uiState.value.copy(
-                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId
-                    )
-                },
-                onFailure = { error ->
+            rewardRepository.requestPointsRefresh()
+            return
+        }
+        if (!taskActions.tryStart(taskId)) return
+        _uiState.value = _uiState.value.copy(
+            confirmDialogTaskId = null,
+            undoDialogTaskId = null,
+            actionError = null,
+            syncingTaskIds = _uiState.value.syncingTaskIds + taskId
+        )
+        // 立即进入 try/finally，即使 ViewModel 恰在取消中，也能释放入口占位。
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            val originalStatus = TaskStatus.entries.firstOrNull { it.name == task.status } ?: TaskStatus.PENDING
+            var operationUserId: String? = null
+            suspend fun restoreTaskIfCurrent() {
+                if (operationUserId?.let { isCurrentTaskUser(it) } == true) {
                     optimisticTaskStatuses.remove(taskId)
-                    updateTaskStatusInUi(taskId, TaskStatus.VERIFIED)
-                    _uiState.value = _uiState.value.copy(
-                        points = oldPoints,
-                        syncingTaskIds = _uiState.value.syncingTaskIds - taskId,
-                        actionError = error.message ?: "撤销失败，请刷新后重试"
-                    )
-                    rewardRepository.requestPointsRefresh()
+                    updateTaskStatusInUi(taskId, latestTaskStatuses[taskId] ?: originalStatus)
+                }
+            }
+            taskActions.execute(
+                taskId = taskId,
+                request = {
+                    val userId = authRepository.currentUserId
+                        ?: authRepository.observeCurrentUser().first()?.uid
+                        ?: throw IllegalStateException("No current task user")
+                    check(taskChildId == null || taskChildId == userId) { "Task account changed" }
+                    operationUserId = userId
+                    applyOptimisticStatus(taskId, if (completing) TaskStatus.VERIFIED else TaskStatus.PENDING)
+                    if (completing) taskRepository.completeTask(taskId, userId)
+                    else taskRepository.undoCompleteTask(taskId, userId, task.rewardPoints)
+                },
+                onSuccess = {
+                    if (operationUserId?.let { isCurrentTaskUser(it) } == true) {
+                        if (completing) {
+                            removeCompletedFromOrder(taskId)
+                            _uiState.value = _uiState.value.copy(
+                                previousPoints = _uiState.value.points,
+                                earnedPoints = task.rewardPoints,
+                                showPointsAnimation = true
+                            )
+                        } else appendUndoneToOrder(taskId)
+                        // 总积分只接受权威积分流，不用每次操作的旧快照覆盖并发结果。
+                        rewardRepository.requestPointsRefresh()
+                    }
+                },
+                onFailure = {
+                    restoreTaskIfCurrent()
+                    if (operationUserId == null || operationUserId?.let { isCurrentTaskUser(it) } == true) {
+                        _uiState.value = _uiState.value.copy(actionError = taskActionFailureMessage(completing))
+                        rewardRepository.requestPointsRefresh()
+                        // 只读刷新核验响应不确定的结果；绝不在这里重放完成/撤销请求。
+                        launch {
+                            try { taskRepository.refreshTasks() }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { /* 操作错误已展示，保留原任务等待下次刷新。 */ }
+                        }
+                    }
+                },
+                onCancelled = { restoreTaskIfCurrent() },
+                onFinished = {
+                    _uiState.value = _uiState.value.copy(syncingTaskIds = _uiState.value.syncingTaskIds - taskId)
                 }
             )
         }
     }
+
+    private suspend fun isCurrentTaskUser(userId: String): Boolean =
+        (authRepository.currentUserId ?: authRepository.observeCurrentUser().first()?.uid) == userId
 
     fun dismissConfirmDialog() { _uiState.value = _uiState.value.copy(confirmDialogTaskId = null) }
     fun dismissActionError() { _uiState.value = _uiState.value.copy(actionError = null) }
@@ -444,6 +463,45 @@ class HomeViewModel @Inject constructor(
         sourceCategoryId = sourceCategoryId
     )
 }
+
+/** 两个任务页面共用的写入入口：不重试写操作，取消不转成业务失败。 */
+internal class TaskActionRunner {
+    private val runningTaskIds = mutableSetOf<String>()
+
+    fun tryStart(taskId: String): Boolean = runningTaskIds.add(taskId)
+
+    suspend fun execute(
+        taskId: String,
+        request: suspend () -> Result<Unit>,
+        onSuccess: suspend () -> Unit,
+        onFailure: suspend (Throwable) -> Unit,
+        onCancelled: suspend () -> Unit = {},
+        onFinished: () -> Unit
+    ) {
+        try {
+            coroutineContext.ensureActive()
+            val result = try {
+                request().also { it.exceptionOrNull()?.let { error -> if (error is CancellationException) throw error } }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Result.failure(error)
+            }
+            coroutineContext.ensureActive()
+            result.fold(onSuccess = { onSuccess() }, onFailure = { onFailure(it) })
+        } catch (cancelled: CancellationException) {
+            try { onCancelled() } finally { throw cancelled }
+        } finally {
+            runningTaskIds.remove(taskId)
+            onFinished()
+        }
+    }
+}
+
+/** 不向孩子展示数据库响应、请求头或用户标识；先刷新核验，再由用户决定重试。 */
+internal fun taskActionFailureMessage(completing: Boolean): String =
+    if (completing) "任务完成结果未能确认，请检查网络或恢复登录后刷新查看，再决定是否重试。"
+    else "任务撤销结果未能确认，请检查网络或恢复登录后刷新查看；若积分已用于兑换，余额不足时无法撤销。"
 
 private val taskSort = compareBy<TaskUiItem> {
     when (it.status) { "PENDING" -> 0; "DONE", "VERIFIED" -> 1; else -> 2 }

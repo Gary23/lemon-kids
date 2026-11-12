@@ -239,6 +239,7 @@ class PomodoroManager @Inject constructor(
                 coroutineContext.ensureActive()
                 if (generation != bindingGeneration || childId != child) return@launch
                 val result = repository.recordCompletion(
+                    expectedChildId = child,
                     sessionId = completion.sessionId,
                     focusMinutes = completion.focusMinutes,
                     breakMinutes = completion.breakMinutes,
@@ -260,7 +261,7 @@ class PomodoroManager @Inject constructor(
             val unconfirmed = pending.filter { it.sessionId !in accepted }
             if (unconfirmed.isNotEmpty() && !stopUploads) {
                 // 上传可能已落库但响应丢失：只读确认同一 sessionId 后再合并聚合。
-                val recorded = repository.getRecordedSessionIds(unconfirmed.map { it.sessionId })
+                val recorded = repository.getRecordedSessionIds(child, unconfirmed.map { it.sessionId })
                 coroutineContext.ensureActive()
                 if (generation != bindingGeneration || childId != child) return@launch
                 recorded.onSuccess { accepted += it }.onFailure {
@@ -276,7 +277,7 @@ class PomodoroManager @Inject constructor(
             for ((from, to) in ranges) {
                 coroutineContext.ensureActive()
                 if (generation != bindingGeneration || childId != child) return@launch
-                val counts = repository.getDailyCounts(from.toString(), to.toString())
+                val counts = repository.getDailyCounts(child, from.toString(), to.toString())
                 coroutineContext.ensureActive()
                 if (generation != bindingGeneration || childId != child) return@launch
                 counts.fold(

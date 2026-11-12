@@ -184,7 +184,7 @@ private fun TaskSessionRecoveryDialog(
             shadowElevation = 20.dp
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()).padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
