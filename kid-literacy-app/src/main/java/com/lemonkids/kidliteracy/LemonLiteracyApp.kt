@@ -66,8 +66,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -152,8 +152,9 @@ import com.lemonkids.kidliteracy.feature.home.DailyLiteracyTaskSnapshotStore
 import com.lemonkids.kidliteracy.feature.home.homeHeading
 import com.lemonkids.kidliteracy.feature.home.homeDateLabel
 import com.lemonkids.kidliteracy.feature.recognized.RecognizedCharactersViewModel
-import com.lemonkids.kidliteracy.feature.help.HelpedContent
+import com.lemonkids.kidliteracy.feature.help.HelpedCharacterGroup
 import com.lemonkids.kidliteracy.feature.help.HelpedCharactersViewModel
+import com.lemonkids.kidliteracy.feature.help.toHelpedCharacterGroups
 import com.lemonkids.kidliteracy.feature.parentpass.ParentPassRecord
 import com.lemonkids.kidliteracy.feature.parentpass.ParentPassStarSnapshot
 import com.lemonkids.kidliteracy.feature.parentpass.ParentPassStarState
@@ -2741,7 +2742,7 @@ private fun ProfileScreen(
                     Color(0xFFFAFFEF), Color(0xFFF1FFDE), Color(0xFFD8F7A3), onPending),
                 GardenMenu("字库", "收集我的汉字", R.drawable.garden_entry_books, Sky,
                     Color(0xFFF0FBFF), Color(0xFFE7F6FF), Color(0xFFBBE6FF), onLibrary),
-                GardenMenu("帮助过的内容", "我请求朗读过的词和句", R.drawable.garden_entry_megaphone, Color(0xFF996000),
+                GardenMenu("帮助过的内容", "我请求朗读过的字", R.drawable.garden_entry_megaphone, Color(0xFF996000),
                     Color(0xFFFFFAE9), Color(0xFFFFF7DF), Color(0xFFFFE89D), onHelped),
                 GardenMenu("通过记录", "查看学习通过记录", R.drawable.garden_entry_clipboard, Color(0xFF6330B6),
                     Color(0xFFF7F2FF), Color(0xFFF0EBFF), Color(0xFFDECDFF), onParentPasses),
@@ -3065,131 +3066,84 @@ private fun HelpedCharactersScreen(
     viewModel: HelpedCharactersViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
-    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    var pendingExportContent by remember { mutableStateOf<String?>(null) }
-    var exportMessage by remember { mutableStateOf<String?>(null) }
-    var selectedHelp by remember { mutableStateOf<HelpedContent?>(null) }
-    var checkingHelpId by remember { mutableStateOf<String?>(null) }
+    var selectedGroup by remember { mutableStateOf<HelpedCharacterGroup?>(null) }
+    var checkingGroupKey by remember { mutableStateOf<String?>(null) }
     var checkError by remember { mutableStateOf<String?>(null) }
     var alreadyRecognizedCharacter by remember { mutableStateOf<String?>(null) }
-    var savedHelpId by remember { mutableStateOf<String?>(null) }
-    val createDocumentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/plain")
-    ) { uri ->
-        val content = pendingExportContent
-        pendingExportContent = null
-        if (uri == null || content == null) return@rememberLauncherForActivityResult
-        coroutineScope.launch {
-            val errorMessage = runCatching {
-                withContext(Dispatchers.IO) {
-                    requireNotNull(context.contentResolver.openOutputStream(uri))
-                        .bufferedWriter(Charsets.UTF_8)
-                        .use { it.write(content) }
-                }
-            }.exceptionOrNull()?.message
-            exportMessage = errorMessage?.let { "保存下载文件失败：$it" } ?: "已下载 TXT 文档"
-        }
-    }
+    var savedGroupKey by remember { mutableStateOf<String?>(null) }
+    val groups = remember(state.contents) { state.contents.toHelpedCharacterGroups() }
+    val knownCharacterCount = groups.count { !it.isUnknownTarget }
+    val unknownRecordCount = groups.count { it.isUnknownTarget }
     LaunchedEffect(userId) { viewModel.load(userId) }
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-    LazyColumn(Modifier.fillMaxHeight().widthIn(max = 720.dp * LocalGardenLayoutScale.current), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
-            BackHeader("帮助过的内容", "这些词和句请求朗读过", onBack) {
-                Button(onClick = {
-                    pendingExportContent = state.contents.toHelpedContentsTxt()
-                    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-                    createDocumentLauncher.launch("帮助过的内容_$timestamp.txt")
-                }, enabled = state.contents.isNotEmpty(), colors = ButtonDefaults.buttonColors(containerColor = Leaf)) {
-                    Icon(Icons.Default.Download, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("下载 TXT", fontSize = 14.sp)
-                }
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        val contentWidth = maxWidth.coerceAtMost(790.dp * LocalGardenLayoutScale.current)
+        val columns = if (contentWidth / LocalDensity.current.fontScale.coerceAtLeast(1f) >= 720.dp) 3
+            else if (contentWidth >= 470.dp) 2 else 1
+        LazyVerticalGrid(columns = GridCells.Fixed(columns),
+            modifier = Modifier.width(contentWidth).fillMaxHeight(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                BackHeader("帮助过的内容", "这些字请求朗读过", onBack, count = knownCharacterCount)
             }
-        }
-        item {
-            Column {
-                exportMessage?.let { Text(it, color = Ink) }
-                state.deleteErrorMessage?.let { Text(it, color = EvaluationErrorRed) }
-                checkError?.let { Text(it, color = EvaluationErrorRed) }
-            }
-        }
-        when {
-            state.isLoading -> item { LoadingContent() }
-            state.errorMessage != null -> item {
-                GardenPanel {
-                    Text(state.errorMessage!!, color = EvaluationErrorRed)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        Button(onClick = { viewModel.load(userId) }) { Text("重新加载") }
-                    }
-                }
-            }
-            state.contents.isEmpty() -> item { EmptyContent("还没有请求过帮助", "长按学习内容可以听正确读音", "📖") }
-            else -> {
-                    items(state.contents, key = { it.id }) { item ->
-                        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = WheatLight)) {
-                            Column(
-                                modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    GardenArt(R.drawable.garden_entry_megaphone, Modifier.size(58.dp * LocalGardenLayoutScale.current))
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                        Text(item.highlightedTargetText(), fontSize = 24.sp * LocalGardenLayoutScale.current, fontWeight = FontWeight.ExtraBold, color = Ink)
-                                        if (item.highlightedCharacterIndex() == null) Text("旧记录无法定位目标字，可保留或删除", color = EvaluationErrorRed)
-                                        Text(if (item.targetType == "sentence") "请求朗读过的句子" else "请求朗读过的词", fontSize = 16.sp, color = Color(0xFF7D898C))
-                                    }
-                                }
-                                val targetCharacter = item.requestedCharacter?.takeIf { character ->
-                                    character.length == 1 && character[0].isChineseCharacter() &&
-                                        item.highlightedCharacterIndex() != null
-                                }
-                                FlowRow(Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-                                    onClick = {
-                                        if (checkingHelpId != null) return@Button
-                                        checkError = null
-                                        checkingHelpId = item.id
-                                        coroutineScope.launch {
-                                            readingViewModel.checkHelpedCharacter(item.id)
-                                                .onSuccess { recognized ->
-                                                    if (recognized) alreadyRecognizedCharacter = targetCharacter
-                                                    else selectedHelp = item
-                                                }
-                                                .onFailure { error ->
-                                                    checkError = error.message ?: "检查已认识状态失败，请重试"
-                                                }
-                                            checkingHelpId = null
-                                        }
-                                    },
-                                    enabled = targetCharacter != null && checkingHelpId == null && item.id !in state.deletingContentIds
-                                ) {
-                                    if (checkingHelpId == item.id) {
-                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Leaf, strokeWidth = 2.dp)
-                                    } else Text("加入已认识")
-                                }
-                                Button(
-                                    colors = ButtonDefaults.buttonColors(containerColor = Coral),
-                                    onClick = { viewModel.delete(userId, item.id) },
-                                    enabled = item.id !in state.deletingContentIds
-                                ) {
-                                    if (item.id in state.deletingContentIds) {
-                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Coral, strokeWidth = 2.dp)
-                                    } else {
-                                        Icon(Icons.Filled.Delete, contentDescription = null, tint = Color.White)
-                                        Spacer(Modifier.width(3.dp))
-                                        Text("删除")
-                                    }
-                                }
-                                }
-                            }
+            if (state.deleteErrorMessage != null || checkError != null || unknownRecordCount > 0) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        state.deleteErrorMessage?.let { Text(it, color = EvaluationErrorRed) }
+                        checkError?.let { Text(it, color = EvaluationErrorRed) }
+                        if (unknownRecordCount > 0) {
+                            Text("另有 $unknownRecordCount 条记录无法定位目标字", color = Color(0xFF687D9F), fontSize = 13.sp)
                         }
                     }
+                }
+            }
+            when {
+                state.isLoading -> item(span = { GridItemSpan(maxLineSpan) }) { LoadingContent() }
+                state.errorMessage != null -> item(span = { GridItemSpan(maxLineSpan) }) {
+                    GardenPanel {
+                        Text(state.errorMessage!!, color = EvaluationErrorRed)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            Button(onClick = { viewModel.load(userId) }) { Text("重新加载") }
+                        }
+                    }
+                }
+                groups.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                    EmptyContent("还没有请求过帮助", "长按学习内容可以听正确读音", "📖")
+                }
+                else -> items(groups, key = { it.key }) { group ->
+                    HelpedCharacterCard(
+                        group = group,
+                        isChecking = checkingGroupKey == group.key,
+                        isDeleting = group.recordIds.any { it in state.deletingContentIds },
+                        buttonsEnabled = checkingGroupKey == null,
+                        onRecognize = {
+                            val character = group.character
+                            if (character != null && checkingGroupKey == null &&
+                                group.recordIds.none { it in state.deletingContentIds }
+                            ) {
+                                checkError = null
+                                checkingGroupKey = group.key
+                                coroutineScope.launch {
+                                    readingViewModel.checkHelpedCharacter(group.recordIds.first())
+                                        .onSuccess { recognized ->
+                                            if (recognized) alreadyRecognizedCharacter = character
+                                            else selectedGroup = group
+                                        }
+                                        .onFailure { error ->
+                                            checkError = error.message ?: "检查已认识状态失败，请重试"
+                                        }
+                                    checkingGroupKey = null
+                                }
+                            }
+                        },
+                        onDelete = {
+                            if (checkingGroupKey == null) viewModel.delete(userId, group.recordIds)
+                        }
+                    )
+                }
             }
         }
-    }
     }
     alreadyRecognizedCharacter?.let { character ->
         Dialog(onDismissRequest = { alreadyRecognizedCharacter = null }) {
@@ -3206,29 +3160,29 @@ private fun HelpedCharactersScreen(
             }
         }
     }
-    selectedHelp?.let { help ->
-        val character = help.requestedCharacter.orEmpty()
+    selectedGroup?.let { group ->
+        val character = group.character.orEmpty()
         GenerateLiteracyTasksDialog(
-            onDismiss = { selectedHelp = null },
-            onPreview = { readingViewModel.previewHelpedCharacter(help.id) },
+            onDismiss = { selectedGroup = null },
+            onPreview = { readingViewModel.previewHelpedCharacter(group.recordIds.first()) },
             onSave = { _, _, tasks ->
-                val savedResult = if (savedHelpId == help.id) Result.success(SavedLiteracyTasks(
+                val savedResult = if (savedGroupKey == group.key) Result.success(SavedLiteracyTasks(
                     createdCharacters = listOf(character),
                     knownCharacters = emptyList(),
                     skippedExistingCharacters = emptyList(),
                     skippedRecognizedCharacters = emptyList()
-                )) else readingViewModel.saveHelpedCharacter(help.id, character, tasks)
-                savedResult.onSuccess { savedHelpId = help.id }
+                )) else readingViewModel.saveHelpedCharacter(group.recordIds.first(), character, tasks)
+                savedResult.onSuccess { savedGroupKey = group.key }
                     .onFailure { error ->
                         if (error.message?.contains("已在已认识的字中，无需重复添加") == true) {
-                            selectedHelp = null
+                            selectedGroup = null
                             alreadyRecognizedCharacter = character
                         }
                     }.mapCatching { saved ->
-                    viewModel.deleteAfterRecognized(userId, help.id).getOrElse { error ->
+                    viewModel.deleteAfterRecognized(userId, group.recordIds).getOrElse { error ->
                         throw IllegalStateException("已加入已认识，帮助记录删除失败，可重试：${error.message.orEmpty()}", error)
                     }
-                    savedHelpId = null
+                    savedGroupKey = null
                     onRecognized(character)
                     saved
                 }
@@ -3238,9 +3192,45 @@ private fun HelpedCharactersScreen(
     }
 }
 
-private fun List<HelpedContent>.toHelpedContentsTxt(): String {
-    // 与列表逐项保持一致：红色高亮的字只是词、句里的定位信息，不单独导出。
-    return joinToString(separator = "\n") { it.targetText }
+@Composable
+private fun HelpedCharacterCard(
+    group: HelpedCharacterGroup,
+    isChecking: Boolean,
+    isDeleting: Boolean,
+    buttonsEnabled: Boolean,
+    onRecognize: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = LeafLight,
+        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White), shadowElevation = 3.dp) {
+        Column(Modifier.padding(12.dp * LocalGardenLayoutScale.current), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GardenCharacterTile(group.character ?: "？", Modifier.size(64.dp * LocalGardenLayoutScale.current),
+                    fontSize = 42.sp * LocalGardenLayoutScale.current)
+                Text(
+                    if (group.isUnknownTarget) "目标字未知\n请删除后重新求助"
+                    else "求助于\n${group.requestedAt.take(10).ifBlank { "未知日期" }}",
+                    color = Color(0xFF687D9F), fontSize = 13.sp
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Button(onClick = onRecognize,
+                    enabled = group.character != null && buttonsEnabled && !isDeleting,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Leaf),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                    if (isChecking) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White)
+                    else Text("加入已认识", fontSize = 14.sp)
+                }
+                Button(onClick = onDelete, enabled = buttonsEnabled && !isDeleting, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Sky),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                    if (isDeleting) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White)
+                    else Text("删除", fontSize = 14.sp)
+                }
+            }
+        }
+    }
 }
 
 /** 仅在点击“通过”前调用，确保审计记录保留的是补星之前的真实状态。 */
@@ -3513,23 +3503,6 @@ private fun String.toInstantOrNull(): Instant? {
     val normalized = trim().replace(' ', 'T')
     return runCatching { Instant.parse(normalized) }.getOrNull()
         ?: runCatching { OffsetDateTime.parse(normalized).toInstant() }.getOrNull()
-}
-
-private fun HelpedContent.highlightedCharacterIndex(): Int? {
-    val character = requestedCharacter?.takeIf { it.length == 1 && it[0].isChineseCharacter() } ?: return null
-    characterIndex?.takeIf { targetText.getOrNull(it)?.toString() == character }?.let { return it }
-    // 旧版词组求助保存的是整组索引；只在单次出现时才能安全定位到当前词。
-    return targetText.indexOf(character).takeIf { it >= 0 && targetText.lastIndexOf(character) == it }
-}
-
-private fun HelpedContent.highlightedTargetText() = buildAnnotatedString {
-    append(targetText)
-    val highlightStart = highlightedCharacterIndex() ?: return@buildAnnotatedString
-    addStyle(
-        style = SpanStyle(color = EvaluationErrorRed, fontWeight = FontWeight.ExtraBold),
-        start = highlightStart,
-        end = highlightStart + 1
-    )
 }
 
 private data class GardenMenu(
