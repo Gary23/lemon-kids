@@ -25,6 +25,7 @@ fun PomodoroHost(
     content: @Composable (PomodoroUiState, () -> Unit) -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val recoveryRequired by viewModel.requiresSessionRecovery.collectAsStateWithLifecycle()
     var display by rememberSaveable { mutableStateOf(PomodoroDisplay.HIDDEN) }
     var displayGeneration by rememberSaveable { mutableStateOf(state.bindingGeneration) }
     LaunchedEffect(state.isBound, state.sessionId, state.bindingGeneration) {
@@ -44,7 +45,9 @@ fun PomodoroHost(
                     .windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp)
             )
         }
-        if (display == PomodoroDisplay.LARGE && state.isBound) {
+        // The login recovery dialog belongs to the root content. Temporarily remove the
+        // business Dialog above it without changing the timer or the saved display mode.
+        if (display == PomodoroDisplay.LARGE && state.isBound && !recoveryRequired) {
             PomodoroOverlay(
                 state = state,
                 onClose = { display = PomodoroDisplayRules.afterClose(state) },

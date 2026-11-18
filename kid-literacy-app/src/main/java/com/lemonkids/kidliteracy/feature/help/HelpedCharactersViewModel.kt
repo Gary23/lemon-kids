@@ -50,12 +50,8 @@ class HelpedCharactersViewModel @Inject constructor(
                     order("created_at", Order.DESCENDING)
                 }.decodeList<HelpedContent>()
             }.onSuccess { contents ->
-                _uiState.value = HelpedCharactersUiState(
-                    // 唯一约束兜底；历史数据也在界面上防御性去重。
-                    contents = contents.distinctBy {
-                        listOf(it.targetType, it.targetText, it.requestedCharacter, it.characterIndex)
-                    }
-                )
+                // 保留全部原始记录 ID；同字记录在界面合并展示，删除时一并清理。
+                _uiState.value = HelpedCharactersUiState(contents = contents)
             }.onFailure { error ->
                 _uiState.value = HelpedCharactersUiState(
                     errorMessage = error.message ?: "帮助内容加载失败，请稍后重试"
@@ -64,46 +60,70 @@ class HelpedCharactersViewModel @Inject constructor(
         }
     }
 
-    /** 仅删除当前孩子自己的这条求助记录；成功后立即更新列表。 */
-    fun delete(userId: String, contentId: String) {
-        if (userId.isBlank() || contentId.isBlank()) return
+    /** 删除当前孩子这些求助记录；逐条删除，部分失败时保留未删除记录供重试。 */
+    fun delete(userId: String, contentIds: List<String>) {
+        val ids = contentIds.distinct().filter { it.isNotBlank() }
+        if (userId.isBlank() || ids.isEmpty()) return
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
-                deletingContentIds = _uiState.value.deletingContentIds + contentId,
+                deletingContentIds = _uiState.value.deletingContentIds + ids,
                 deleteErrorMessage = null
             )
-            runCatching {
-                postgrest.from("child_literacy_character_help_requests").delete {
-                    filter {
-                        eq("id", contentId)
-                        eq("child_id", userId)
+            val failedIds = mutableListOf<String>()
+            var lastError: Throwable? = null
+            ids.forEach { contentId ->
+                runCatching { deleteRow(userId, contentId) }
+                    .onSuccess { removeContents(setOf(contentId)) }
+                    .onFailure {
+                        failedIds += contentId
+                        lastError = it
                     }
-                }
-            }.onSuccess {
-                _uiState.value = _uiState.value.copy(
-                    contents = _uiState.value.contents.filterNot { it.id == contentId },
-                    deletingContentIds = _uiState.value.deletingContentIds - contentId
-                )
-            }.onFailure { error ->
-                _uiState.value = _uiState.value.copy(
-                    deletingContentIds = _uiState.value.deletingContentIds - contentId,
-                    deleteErrorMessage = error.message ?: "删除失败，请稍后重试"
-                )
             }
+            _uiState.value = _uiState.value.copy(
+                deletingContentIds = _uiState.value.deletingContentIds - ids.toSet(),
+                deleteErrorMessage = lastError?.let {
+                    "${failedIds.size} 条帮助记录删除失败，请重试（${it.message ?: "网络异常"}）"
+                }
+            )
         }
     }
 
-    suspend fun deleteAfterRecognized(userId: String, contentId: String): Result<Unit> = runCatching {
-        require(userId.isNotBlank() && contentId.isNotBlank())
+    suspend fun deleteAfterRecognized(userId: String, contentIds: List<String>): Result<Unit> {
+        val ids = contentIds.distinct().filter { it.isNotBlank() }
+        return runCatching {
+            require(userId.isNotBlank() && ids.isNotEmpty())
+            val failedIds = mutableListOf<String>()
+            var lastError: Throwable? = null
+            ids.forEach { contentId ->
+                runCatching { deleteRow(userId, contentId) }
+                    .onSuccess { removeContents(setOf(contentId)) }
+                    .onFailure {
+                        failedIds += contentId
+                        lastError = it
+                    }
+            }
+            if (failedIds.isNotEmpty()) {
+                throw IllegalStateException(
+                    "${failedIds.size} 条帮助记录清理失败，可重试（${lastError?.message ?: "网络异常"}）",
+                    lastError
+                )
+            }
+            _uiState.value = _uiState.value.copy(deleteErrorMessage = null)
+        }
+    }
+
+    private suspend fun deleteRow(userId: String, contentId: String) {
         postgrest.from("child_literacy_character_help_requests").delete {
             filter {
                 eq("id", contentId)
                 eq("child_id", userId)
             }
         }
+    }
+
+    private fun removeContents(ids: Set<String>) {
         _uiState.value = _uiState.value.copy(
-            contents = _uiState.value.contents.filterNot { it.id == contentId },
-            deleteErrorMessage = null
+            contents = _uiState.value.contents.filterNot { it.id in ids }
         )
     }
 }

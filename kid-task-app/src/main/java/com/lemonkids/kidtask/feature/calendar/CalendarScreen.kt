@@ -29,6 +29,8 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -135,6 +137,14 @@ fun CalendarScreen(viewModel: CalendarViewModel = hiltViewModel()) {
             }
             uiState.undoDialogTaskId?.let { taskId ->
                 UndoConfirmDialog(onClose = viewModel::dismissUndoDialog, onConfirm = { viewModel.confirmTaskUndo(taskId) })
+            }
+            uiState.actionError?.let { error ->
+                AlertDialog(
+                    onDismissRequest = viewModel::dismissActionError,
+                    title = { Text("操作失败") },
+                    text = { Text(error) },
+                    confirmButton = { TextButton(onClick = viewModel::dismissActionError) { Text("知道了") } }
+                )
             }
             if (uiState.isLoading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

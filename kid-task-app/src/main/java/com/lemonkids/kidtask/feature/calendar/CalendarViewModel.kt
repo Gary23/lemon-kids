@@ -6,9 +6,13 @@ import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.RewardRepository
 import com.lemonkids.shared.repository.TaskRepository
+import com.lemonkids.kidtask.feature.home.TaskActionRunner
+import com.lemonkids.kidtask.feature.home.taskActionFailureMessage
 import com.lemonkids.kidtask.feature.pomodoro.PomodoroManager
 import com.lemonkids.kidtask.ui.components.TaskUiItem
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,7 +31,9 @@ data class CalendarUiState(
     val pomodoroCountsByDate: Map<String, Int> = emptyMap(),
     val isLoading: Boolean = false,
     val confirmDialogTaskId: String? = null,
-    val undoDialogTaskId: String? = null
+    val undoDialogTaskId: String? = null,
+    val syncingTaskIds: Set<String> = emptySet(),
+    val actionError: String? = null
 ) {
     val selectedSummary: DayTaskSummary get() = dayTaskSummary(tasksByDate[selectedDate].orEmpty())
 }
@@ -85,6 +91,8 @@ class CalendarViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(CalendarUiState(isLoading = true))
     val uiState: StateFlow<CalendarUiState> = _uiState.asStateFlow()
+    private val taskActions = TaskActionRunner()
+    private var taskChildId: String? = null
 
     init {
         loadTasks()
@@ -94,7 +102,9 @@ class CalendarViewModel @Inject constructor(
     private fun loadTasks() {
         viewModelScope.launch {
             val userId = authRepository.currentUserId ?: return@launch
+            taskChildId = userId
             taskRepository.observeChildTasks(userId).collect { tasks ->
+                if (!isCurrentTaskUser(userId)) return@collect
                 val grouped = tasks
                     .filter { !it.dueDate.isNullOrEmpty() }
                     .groupBy { it.dueDate }
@@ -145,44 +155,81 @@ class CalendarViewModel @Inject constructor(
     // ==================== 完成任务 ====================
 
     fun markTaskDone(taskId: String) {
+        if (taskId in _uiState.value.syncingTaskIds) return
         _uiState.value = _uiState.value.copy(confirmDialogTaskId = taskId)
     }
 
-    fun confirmTaskDone(taskId: String) {
-        viewModelScope.launch {
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            taskRepository.completeTask(taskId, user.uid).fold(
-                onSuccess = {
-                    _uiState.value = _uiState.value.copy(confirmDialogTaskId = null)
-                },
-                onFailure = {
-                    _uiState.value = _uiState.value.copy(confirmDialogTaskId = null)
-                }
-            )
-        }
-    }
+    fun confirmTaskDone(taskId: String) = performTaskAction(taskId, completing = true)
 
     fun markTaskUndo(taskId: String) {
+        if (taskId in _uiState.value.syncingTaskIds) return
         _uiState.value = _uiState.value.copy(undoDialogTaskId = taskId)
     }
 
-    fun confirmTaskUndo(taskId: String) {
-        viewModelScope.launch {
-            val taskPoints = findTaskById(taskId)?.rewardPoints ?: 0
-            val user = authRepository.observeCurrentUser().first() ?: return@launch
-            taskRepository.undoCompleteTask(taskId, user.uid, taskPoints).fold(
+    fun confirmTaskUndo(taskId: String) = performTaskAction(taskId, completing = false)
+
+    private fun performTaskAction(taskId: String, completing: Boolean) {
+        val task = findTaskById(taskId) ?: return
+        if (taskId in _uiState.value.syncingTaskIds) return
+        if (completing == (task.status == "DONE" || task.status == "VERIFIED")) return
+        if (!taskActions.tryStart(taskId)) return
+        _uiState.value = _uiState.value.copy(
+            confirmDialogTaskId = null,
+            undoDialogTaskId = null,
+            actionError = null,
+            syncingTaskIds = _uiState.value.syncingTaskIds + taskId
+        )
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            var operationUserId: String? = null
+            taskActions.execute(
+                taskId = taskId,
+                request = {
+                    val userId = authRepository.currentUserId
+                        ?: authRepository.observeCurrentUser().first()?.uid
+                        ?: throw IllegalStateException("No current task user")
+                    check(taskChildId == null || taskChildId == userId) { "Task account changed" }
+                    operationUserId = userId
+                    if (completing) taskRepository.completeTask(taskId, userId)
+                    else taskRepository.undoCompleteTask(taskId, userId, task.rewardPoints)
+                },
                 onSuccess = {
-                    _uiState.value = _uiState.value.copy(undoDialogTaskId = null)
+                    if (operationUserId?.let { isCurrentTaskUser(it) } == true) {
+                        _uiState.value = _uiState.value.copy(
+                            tasksByDate = _uiState.value.tasksByDate.mapValues { (_, tasks) ->
+                                tasks.map { item ->
+                                    if (item.id == taskId) item.copy(status = if (completing) "VERIFIED" else "PENDING")
+                                    else item
+                                }
+                            }
+                        )
+                        rewardRepository.requestPointsRefresh()
+                    }
                 },
                 onFailure = {
-                    _uiState.value = _uiState.value.copy(undoDialogTaskId = null)
+                    if (operationUserId == null || operationUserId?.let { isCurrentTaskUser(it) } == true) {
+                        _uiState.value = _uiState.value.copy(actionError = taskActionFailureMessage(completing))
+                        rewardRepository.requestPointsRefresh()
+                        // 响应不确定时只读核验，不盲目重试写操作。
+                        launch {
+                            try { taskRepository.refreshTasks() }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { /* 保留失败提示，等待下次刷新。 */ }
+                        }
+                    }
+                },
+                onFinished = {
+                    _uiState.value = _uiState.value.copy(syncingTaskIds = _uiState.value.syncingTaskIds - taskId)
                 }
             )
         }
     }
 
+    private suspend fun isCurrentTaskUser(userId: String): Boolean =
+        (authRepository.currentUserId ?: authRepository.observeCurrentUser().first()?.uid) == userId
+
     fun dismissConfirmDialog() { _uiState.value = _uiState.value.copy(confirmDialogTaskId = null) }
     fun dismissUndoDialog() { _uiState.value = _uiState.value.copy(undoDialogTaskId = null) }
+    fun dismissActionError() { _uiState.value = _uiState.value.copy(actionError = null) }
 
     /** 在所有日期任务中查找指定 ID 的任务 */
     private fun findTaskById(taskId: String): TaskUiItem? =

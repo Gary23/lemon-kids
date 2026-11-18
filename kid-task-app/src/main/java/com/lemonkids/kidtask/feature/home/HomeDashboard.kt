@@ -66,7 +66,8 @@ fun HomeDashboard(
     onSpeak: (TaskUiItem) -> Unit,
     onMarkDone: (String) -> Unit,
     onUndo: (String) -> Unit,
-    onPendingOrderChanged: (List<String>) -> Unit = {}
+    onPendingOrderChanged: (List<String>) -> Unit = {},
+    onRetryCategories: () -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
     Column(
@@ -79,6 +80,10 @@ fun HomeDashboard(
                 CircularProgressIndicator(color = Lemon)
             }
         } else {
+            if (state.categoriesLoadFailed) {
+                CategoriesLoadFailedBanner(onRetry = onRetryCategories)
+            }
+
             val layout = buildHomeTaskLayout(state.todayTasks, state.categories.map { it.name }, state.pendingOrderIds)
             ProgressHero(state.todayTasks.size, layout, pomodoro, onPomodoroClick)
 
@@ -111,6 +116,41 @@ fun HomeDashboard(
             }
         }
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+/** 分类读取失败只影响分组展示，不能挡住任务操作，因此放在内容顶部并提供重试入口。 */
+@Composable
+private fun CategoriesLoadFailedBanner(onRetry: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = StrawberrySoft,
+        border = BorderStroke(1.dp, Strawberry)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "分类暂时无法加载，任务仍可正常使用",
+                modifier = Modifier.weight(1f),
+                color = SlateInk,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "重试",
+                modifier = Modifier
+                    .clickable(role = Role.Button, onClick = onRetry)
+                    .semantics { contentDescription = "重新加载任务分类" }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                color = Strawberry,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 

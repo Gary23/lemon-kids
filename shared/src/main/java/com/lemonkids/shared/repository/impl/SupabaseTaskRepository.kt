@@ -1,6 +1,8 @@
 package com.lemonkids.shared.repository.impl
 
 import android.util.Log
+import com.lemonkids.shared.auth.TaskSessionGuard
+import kotlinx.coroutines.CancellationException
 import com.lemonkids.shared.model.Task
 import com.lemonkids.shared.model.TaskRecurrenceType
 import com.lemonkids.shared.model.GrowthDomain
@@ -27,7 +29,8 @@ import javax.inject.Singleton
 
 @Singleton
 class SupabaseTaskRepository @Inject constructor(
-    private val supabase: SupabaseClient
+    private val supabase: SupabaseClient,
+    private val sessionGuard: TaskSessionGuard
 ) : TaskRepository {
 
     companion object {
@@ -71,9 +74,16 @@ class SupabaseTaskRepository @Inject constructor(
         // 应用长时间后台后 access token 可能已过期；先完成 SDK 初始化并刷新 token，
         // 再通知所有正在观察任务的页面立即重试，避免只能等下一次一分钟轮询。
         runCatching {
-            auth.awaitInitialization()
-            if (auth.currentSessionOrNull() != null) auth.refreshCurrentSession()
-        }.onFailure { Log.w(TAG, "前台刷新任务会话失败", it) }
+            if (sessionGuard.enabled) {
+                sessionGuard.ensureReady()
+            } else {
+                auth.awaitInitialization()
+                if (auth.currentSessionOrNull() != null) auth.refreshCurrentSession()
+            }
+        }.onFailure {
+            if (it is CancellationException) throw it
+            Log.w(TAG, "前台刷新任务会话失败 (${it.javaClass.simpleName})")
+        }
         taskRefreshEvents.tryEmit(Unit)
     }
 
@@ -82,13 +92,16 @@ class SupabaseTaskRepository @Inject constructor(
             val fetchMutex = Mutex()
             suspend fun fetch() {
                 fetchMutex.withLock { try {
-                    if (!isSessionValid()) return
-                    val tasks = postgrest.from("tasks").select {
-                        filter { eq("child_id", childId); eq("due_date", date) }
-                    }.decodeList<Task>()
+                    if (!sessionGuard.enabled && !isSessionValid()) return
+                    val tasks = sessionGuard.execute(childId) {
+                        postgrest.from("tasks").select {
+                            filter { eq("child_id", childId); eq("due_date", date) }
+                        }.decodeList<Task>()
+                    }
                     trySend(tasks.filter { it.deletedAt == null })
                 } catch (error: Exception) {
-                    Log.w(TAG, "读取当日任务失败 childId=$childId", error)
+                    if (error is CancellationException) throw error
+                    Log.w(TAG, "读取当日任务失败 (${error.javaClass.simpleName})")
                 } }
             }
             fetch()
@@ -104,14 +117,17 @@ class SupabaseTaskRepository @Inject constructor(
         val fetchMutex = Mutex()
         suspend fun fetch() {
             fetchMutex.withLock { try {
-                if (!isSessionValid()) return
-                val tasks = postgrest.from("tasks").select {
-                    filter { eq("child_id", childId) }
-                }.decodeList<Task>()
+                if (!sessionGuard.enabled && !isSessionValid()) return
+                val tasks = sessionGuard.execute(childId) {
+                    postgrest.from("tasks").select {
+                        filter { eq("child_id", childId) }
+                    }.decodeList<Task>()
+                }
                 trySend(tasks.filter { it.deletedAt == null })
                 } catch (error: Exception) {
+                    if (error is CancellationException) throw error
                     // 保留上一次已展示的数据，下一次轮询或写入信号会重试。
-                    Log.w(TAG, "读取孩子任务失败 childId=$childId", error)
+                    Log.w(TAG, "读取孩子任务失败 (${error.javaClass.simpleName})")
                 } }
         }
         fetch()
@@ -131,6 +147,7 @@ class SupabaseTaskRepository @Inject constructor(
                     }.decodeList<Task>()
                     trySend(tasks.filter { it.deletedAt != null })
                 } catch (error: Exception) {
+                    if (error is CancellationException) throw error
                     Log.w(TAG, "读取回收站任务失败 familyId=$familyId", error)
                 } }
             }
@@ -143,9 +160,11 @@ class SupabaseTaskRepository @Inject constructor(
     override suspend fun getMonthTasks(childId: String, year: Int, month: Int): List<Task> {
         val startDate = "%04d-%02d-01".format(year, month)
         val endDate = "%04d-%02d-31".format(year, month)
-        val tasks = postgrest.from("tasks").select {
-            filter { eq("child_id", childId); gte("due_date", startDate); lte("due_date", endDate) }
-        }.decodeList<Task>()
+        val tasks = sessionGuard.execute(childId) {
+            postgrest.from("tasks").select {
+                filter { eq("child_id", childId); gte("due_date", startDate); lte("due_date", endDate) }
+            }.decodeList<Task>()
+        }
         return tasks.filter { it.deletedAt == null }
     }
 
@@ -249,20 +268,30 @@ class SupabaseTaskRepository @Inject constructor(
 
     override suspend fun completeTask(taskId: String, childId: String): Result<Unit> =
         runCatching {
-            postgrest.rpc(
-                function = "complete_task",
-                parameters = mapOf("p_task_id" to taskId, "p_child_id" to childId)
-            )
-            Unit
+            sessionGuard.execute(childId) {
+                postgrest.rpc(
+                    function = "complete_task",
+                    parameters = mapOf("p_task_id" to taskId, "p_child_id" to childId)
+                )
+                Unit
+            }
+        }.onFailure {
+            if (it is CancellationException) throw it
+            Log.w(TAG, "完成任务失败 (${it.javaClass.simpleName})")
         }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun undoCompleteTask(taskId: String, childId: String, rewardPoints: Int): Result<Unit> =
         runCatching {
-            postgrest.rpc(
-                function = "undo_task_completion",
-                parameters = mapOf("p_task_id" to taskId, "p_child_id" to childId)
-            )
-            Unit
+            sessionGuard.execute(childId) {
+                postgrest.rpc(
+                    function = "undo_task_completion",
+                    parameters = mapOf("p_task_id" to taskId, "p_child_id" to childId)
+                )
+                Unit
+            }
+        }.onFailure {
+            if (it is CancellationException) throw it
+            Log.w(TAG, "撤销任务失败 (${it.javaClass.simpleName})")
         }.onSuccess { taskRefreshEvents.tryEmit(Unit) }
 
     override suspend fun verifyTask(taskId: String): Result<Unit> = runCatching {

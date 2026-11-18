@@ -10,6 +10,8 @@ import com.lemonkids.shared.model.User
 import com.lemonkids.shared.model.UserRole
 import com.lemonkids.shared.auth.SessionRecoveryCoordinator
 import com.lemonkids.shared.auth.ChildBindingStore
+import com.lemonkids.shared.auth.TaskSessionUnavailableException
+import kotlinx.coroutines.CancellationException
 import com.lemonkids.shared.repository.AuthRepository
 import com.lemonkids.shared.repository.AlreadyBoundException
 import com.lemonkids.shared.repository.BindingCodeInfo
@@ -106,11 +108,14 @@ class AuthViewModel @Inject constructor(
                 onFailure = { error ->
                     // 认字、任务端已保存本地绑定码时，刷新失败不再无限停留在启动加载页。
                     // 根层恢复弹层会让孩子/家长明确选择重试或静默重新登录。
-                    if (supportsBindingCodeRecovery && authRepository.hasAuthSession) {
+                    if (isTaskApp && error is CancellationException) throw error
+                    if (supportsBindingCodeRecovery && (authRepository.hasAuthSession ||
+                            (isTaskApp && taskRecoveryMustRemainVisible(sessionRecoveryCoordinator.required.value, error)))) {
                         firstCheckDone = true
                         _uiState.value = _uiState.value.copy(
                             isFirstCheckComplete = false,
                             isLoading = false,
+                            requiresSessionRecovery = true,
                             sessionRecoveryMessage = "登录凭证刷新失败，请恢复登录后继续。"
                         )
                         sessionRecoveryCoordinator.requireRecovery()
@@ -662,6 +667,10 @@ class AuthViewModel @Inject constructor(
         }
     }
 }
+
+/** SDK may delete the expired session while refreshing; do not reset the recovery dialog. */
+internal fun taskRecoveryMustRemainVisible(recoveryRequired: Boolean, error: Throwable): Boolean =
+    recoveryRequired || error is TaskSessionUnavailableException
 
 private const val LITERACY_BINDING_PREFERENCES = "literacy_binding"
 private const val BINDING_CODE_KEY = ChildBindingStore.CODE_KEY

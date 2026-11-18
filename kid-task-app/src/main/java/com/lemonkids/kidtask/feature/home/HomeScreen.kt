@@ -91,7 +91,8 @@ fun HomeScreen(
                 onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
                 onMarkDone = viewModel::markTaskDone,
                 onUndo = viewModel::markTaskUndo,
-                onPendingOrderChanged = viewModel::savePendingOrder
+                onPendingOrderChanged = viewModel::savePendingOrder,
+                onRetryCategories = viewModel::retryCategories
             )
 
             // 积分飞入动画
@@ -107,18 +108,18 @@ fun HomeScreen(
             }
 
             // 确认完成弹窗
-            if (uiState.confirmDialogTaskId != null) {
+            uiState.confirmDialogTaskId?.let { taskId ->
                 TaskConfirmDialog(
                     onClose = { viewModel.dismissConfirmDialog() },
-                    onConfirm = { viewModel.confirmTaskDone(uiState.confirmDialogTaskId!!) }
+                    onConfirm = { viewModel.confirmTaskDone(taskId) }
                 )
             }
 
             // 撤销确认弹窗
-            if (uiState.undoDialogTaskId != null) {
+            uiState.undoDialogTaskId?.let { taskId ->
                 UndoConfirmDialog(
                     onClose = { viewModel.dismissUndoDialog() },
-                    onConfirm = { viewModel.confirmTaskUndo(uiState.undoDialogTaskId!!) }
+                    onConfirm = { viewModel.confirmTaskUndo(taskId) }
                 )
             }
 
