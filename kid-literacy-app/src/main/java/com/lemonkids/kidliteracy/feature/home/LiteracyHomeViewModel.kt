@@ -41,10 +41,12 @@ data class LiteracyCharacterGroup(
     /**
      * 已认识字复习时主字需要读对的次数。
      *
-     * 首页按展示分组从近到远读 3、2、1 次；相邻日期可合并为同一展示组，
+     * 首页按展示分组从近到远读 2、2、1 次；相邻日期可合并为同一展示组，
      * 待认识字仍固定沿用自身的三次规则。
      */
-    val recognizedCharacterRequiredReadings: Int = 3,
+    val recognizedCharacterRequiredReadings: Int = if (type == LiteracyGroupType.KNOWN) {
+        if (groupNumber <= 2) 2 else 1
+    } else 3,
     /** 当日任务完成后仍保留在原任务中的完成态。 */
     val completedCharacterIds: Set<String> = emptySet()
 ) {
@@ -257,8 +259,7 @@ private fun List<RecognizedCharacter>.toKnownGroups(): List<LiteracyCharacterGro
             groupNumber = index + 1,
             recognizedDates = group.dates,
             characters = group.characters.map { it.character },
-            recognizedCharacters = group.characters,
-            recognizedCharacterRequiredReadings = (3 - index).coerceAtLeast(1)
+            recognizedCharacters = group.characters
         )
     }
 }

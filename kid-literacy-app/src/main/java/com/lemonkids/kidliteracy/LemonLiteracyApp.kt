@@ -251,9 +251,9 @@ private data class LearningContent(
     val learned: Boolean get() = correctReadings >= requiredReadings
 }
 
-private enum class RecordingState { PREPARING, READY, RECORDING, EVALUATING, FINISHED, ERROR }
+internal enum class RecordingState { PREPARING, READY, RECORDING, EVALUATING, FINISHED, ERROR }
 
-private data class EvaluationSummary(
+internal data class EvaluationSummary(
     /** 仅用于当前弹层渲染的错字位置；弹层销毁后不会被保存。 */
     val wrongCharacterIndexes: Set<Int> = emptySet(),
     val targetType: String,
@@ -261,12 +261,12 @@ private data class EvaluationSummary(
     val wrongCharacterCount: Int = wrongCharacterIndexes.size
 )
 
-private const val ACTION_LITERACY_READING_CONTENT_CLICKED =
+internal const val ACTION_LITERACY_READING_CONTENT_CLICKED =
     "com.lemonkids.kidliteracy.action.READING_CONTENT_CLICKED"
-private const val EXTRA_READING_TARGET_TYPE = "reading_target_type"
-private const val EXTRA_READING_CONTENT = "reading_content"
-private const val EXTRA_READING_CLICKED_CHARACTER = "reading_clicked_character"
-private const val EXTRA_READING_CHARACTER_INDEX = "reading_character_index"
+internal const val EXTRA_READING_TARGET_TYPE = "reading_target_type"
+internal const val EXTRA_READING_CONTENT = "reading_content"
+internal const val EXTRA_READING_CLICKED_CHARACTER = "reading_clicked_character"
+internal const val EXTRA_READING_CHARACTER_INDEX = "reading_character_index"
 
 @Composable
 fun LemonLiteracyApp(authViewModel: AuthViewModel = hiltViewModel()) {
@@ -483,7 +483,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
                 .firstOrNull { it.id == target.literacyCharacterId }
                 ?.let(::completeCharacterIfReady)
         }
-        return updatedCorrectReadings
+        return updatedCorrectReadings.coerceAtMost(target.requiredCorrectReadings())
     }
 
     suspend fun passCharacter(card: LiteracyCard): Result<Unit> {
@@ -491,7 +491,7 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
         return readingEvaluationViewModel.recordParentPass(
             literacyCharacterId = card.literacyCharacterId,
             contentSource = card.contentSource,
-            starSnapshot = card.parentPassStarSnapshot()
+            starSnapshot = card.parentPassStarSnapshot(practiceProgressStore.snapshot())
         ).onSuccess {
             practiceProgressStore.markAllCorrectReadings(card.practiceTargets())
             practiceProgress = practiceProgressStore.snapshot()
@@ -1312,7 +1312,8 @@ private fun learningContent(
     completed: Boolean
 ) = LearningContent(
     target = target,
-    correctReadings = if (completed) target.requiredCorrectReadings() else practiceProgress[target.practiceProgressKey()] ?: 0,
+    correctReadings = if (completed) target.requiredCorrectReadings() else
+        (practiceProgress[target.practiceProgressKey()] ?: 0).coerceIn(0, target.requiredCorrectReadings()),
     requiredReadings = target.requiredCorrectReadings()
 )
 
@@ -1537,9 +1538,9 @@ private fun CharacterStudyDialog(
             passErrorMessage?.let { Text(it, color = Coral, fontSize = 13.sp) }
             Button(
                 onClick = {
-                    if (!isPassing && !card.completed) showPassConfirmation = true
+                    if (!isPassing && !card.completed && !isActivePracticeLocked()) showPassConfirmation = true
                 },
-                enabled = !isPassing && !card.completed,
+                enabled = !isPassing && !card.completed && !isActivePracticeLocked(),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).background(Leaf, CircleShape),
                 colors = ButtonDefaults.buttonColors(containerColor = Leaf),
                 shape = CircleShape
@@ -1569,22 +1570,18 @@ private fun CharacterStudyDialog(
                             onCorrectReadings = onCorrectReadings
                         )
                     }
-                    StudySectionHeader("词", "一词一行，逐个练习")
-                    card.terms.forEach { content ->
-                        key(content.target.practiceProgressKey()) {
-                            StudyPracticeItem(
-                                content = content,
-                                activeTarget = activeTarget,
-                                otherRecordingActive = isActivePracticeLocked(),
-                                onStart = { start(content) },
-                                onDismiss = { activeTarget = null; activeRecordingState = null },
-                                onReadingStateChanged = { activeRecordingState = it },
-                                onSpeak = onSpeak,
-                                onStopPlayback = onStopPlayback,
-                                onCharacterAudioPointRead = onCharacterAudioPointRead,
-                                onCorrectReadings = onCorrectReadings
-                            )
-                        }
+                    if (card.terms.isNotEmpty()) {
+                        StudySectionHeader("词", "一起读，只补没读对的词")
+                        GroupedWordPractice(
+                            items = card.terms.map { it.target to it.correctReadings },
+                            active = card.terms.any { it.target.practiceProgressKey() == activeTarget?.practiceProgressKey() },
+                            otherRecordingActive = isActivePracticeLocked(),
+                            onStart = { card.terms.firstOrNull { !it.learned }?.let(::start) },
+                            onReadingStateChanged = { activeRecordingState = it },
+                            onSpeak = onSpeak,
+                            onStopPlayback = onStopPlayback,
+                            onCorrectReadings = onCorrectReadings
+                        )
                     }
                     if (card.sentences.isNotEmpty()) {
                         StudySectionHeader("句", "读一读完整的句子")
@@ -1731,7 +1728,7 @@ private fun StudyContentRow(
         stars = { StudyStarRail(content.correctReadings, content.requiredReadings) },
         dots = {},
         reading = {
-            DialogReadingContent(target = content.target, enabled = true, studyInline = true, pointReadCharacterIndex = pointReadCharacterIndex,
+            DialogReadingContent(target = content.target, enabled = !otherRecordingActive, studyInline = true, pointReadCharacterIndex = pointReadCharacterIndex,
                 onPressChanged = { isContentPressed = it },
                     onLongPress = { character, characterIndex ->
                         val target = content.target
@@ -2354,7 +2351,7 @@ private fun PracticeProgressRating(
 }
 
 @Composable
-private fun DialogReadingContent(
+internal fun DialogReadingContent(
     target: ReadingTarget,
     enabled: Boolean,
     studyInline: Boolean = false,
@@ -2494,7 +2491,6 @@ internal fun DialogCharacterText(
                 target.getOrNull(index)?.isChineseCharacter() == true &&
                     currentLayout.getBoundingBox(index).contains(position)
             }
-            ?: rawCharacterIndex
     }
     // 句子将文本块置于内容区中央，但固定一个略小于内容区的阅读宽度，
     // 让换行后的每一行从同一条左边线开始，读起来更自然。
@@ -3234,19 +3230,20 @@ private fun HelpedCharacterCard(
 }
 
 /** 仅在点击“通过”前调用，确保审计记录保留的是补星之前的真实状态。 */
-private fun LiteracyCard.parentPassStarSnapshot() = ParentPassStarSnapshot(
-    character = character.toParentPassStarState(),
-    words = terms.map(LearningContent::toParentPassStarState),
-    sentences = sentences.map(LearningContent::toParentPassStarState)
+private fun LiteracyCard.parentPassStarSnapshot(progress: Map<String, Int>) = ParentPassStarSnapshot(
+    character = character.toParentPassStarState(progress),
+    words = terms.map { it.toParentPassStarState(progress) },
+    sentences = sentences.map { it.toParentPassStarState(progress) }
 )
 
 private fun LiteracyCard.practiceTargets(): List<ReadingTarget> =
     listOf(character.target) + terms.map { it.target } + sentences.map { it.target }
 
-private fun LearningContent.toParentPassStarState() = ParentPassStarState(
+private fun LearningContent.toParentPassStarState(progress: Map<String, Int>) = ParentPassStarState(
     text = text,
     earned = correctReadings,
-    required = requiredReadings
+    required = requiredReadings,
+    storedEarned = maxOf(correctReadings, progress[target.practiceProgressKey()] ?: 0).coerceIn(0, 3)
 )
 
 @Composable
@@ -3492,7 +3489,7 @@ private fun ParentPassRecord.snapshotProgressEntries(): List<Pair<ReadingTarget,
             } else ReadingContentSource.TASK,
             characterRequiredReadings = state.required.takeIf { type == "character" }
         )
-        add(target to state.earned)
+        add(target to state.progressReadings())
     }
     addEntry("character", 0, starSnapshot.character)
     starSnapshot.words.forEachIndexed { index, state -> addEntry("word", index, state) }

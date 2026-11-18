@@ -1253,8 +1253,8 @@ async function shouldRecordHelpRequest(childId, character) {
 }
 
 /**
- * 审计快照只记录客户端当天的本地星级，但文本、数组长度和数值范围必须与服务端
- * 当前教学内容相符，避免客户端将其它字的状态伪装到本次“通过”记录中。
+ * 审计快照保留当天展示星级和可选真实历史次数，但文本、数组长度和数值范围必须
+ * 与服务端当前教学内容相符，避免客户端将其它字的状态伪装到本次“通过”记录中。
  */
 function normalizeParentPassStarSnapshot(value, character, contentSource = 'task') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -1268,7 +1268,14 @@ function normalizeParentPassStarSnapshot(value, character, contentSource = 'task
         state.earned < 0 || state.required < 1 || state.earned > state.required || state.required > 3) {
       throw new HttpError(400, `${label}星级快照数值不合法`);
     }
-    return { text: expectedText, earned: state.earned, required: state.required };
+    if (state.storedEarned !== undefined &&
+        (!Number.isInteger(state.storedEarned) || state.storedEarned < state.earned || state.storedEarned > 3)) {
+      throw new HttpError(400, `${label}星级快照历史次数不合法`);
+    }
+    return {
+      text: expectedText, earned: state.earned, required: state.required,
+      ...(state.storedEarned !== undefined ? { storedEarned: state.storedEarned } : {})
+    };
   };
   const normalizeExamples = (states, examples, label, allowOmitted = false) => {
     // 星级快照描述的是弹层中实际展示的教学项。部分历史任务和已认识字
@@ -1304,6 +1311,20 @@ async function recordParentPass(childId, body) {
   // 以主字加载方式校验 ID 归属；词句文本只以服务端主表为准。
   const target = await loadTarget(childId, body.literacyCharacterId, 'character', undefined, undefined, body.contentSource);
   const snapshot = normalizeParentPassStarSnapshot(body.starSnapshot, target.character, target.contentSource);
+  // 只在补满前合并真实历史次数，并将它保存在审计快照中。撤销时不能再与
+  // 当前进度取最大值，否则这次“通过”补出的星级将永远无法回退。
+  const progress = await loadPracticeProgress(childId);
+  const entries = parentPassProgressEntries(childId, target, snapshot, false);
+  const states = [snapshot.character, ...snapshot.words, ...snapshot.sentences];
+  states.forEach((state, index) => {
+    const entry = entries[index];
+    const matching = progress.filter((row) =>
+      row.contentSource === entry.contentSource && row.literacyCharacterId === entry.literacyCharacterId &&
+      row.targetType === entry.targetType && row.itemOrder === entry.itemOrder &&
+      Number.isInteger(row.correctReadings) && row.correctReadings >= 0 && row.correctReadings <= 3
+    );
+    state.storedEarned = Math.max(state.storedEarned ?? state.earned, ...matching.map((row) => row.correctReadings));
+  });
   await supabase('literacy_parent_pass_records', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
@@ -1321,9 +1342,11 @@ async function recordParentPass(childId, body) {
   await replacePracticeProgress(parentPassProgressEntries(childId, target, snapshot, true));
 }
 
-/** 将已校验的审计快照映射为当天进度表的精确行；true 表示补满，false 表示恢复 earned。 */
+/** 将已校验的审计快照映射为当天进度表的精确行；旧快照缺失 storedEarned 时回退 earned。 */
 function parentPassProgressEntries(childId, target, snapshot, fillToRequired) {
-  const count = (state) => fillToRequired ? state.required : state.earned;
+  const count = (state) => fillToRequired
+    ? Math.max(state.required, state.storedEarned ?? state.earned)
+    : (state.storedEarned ?? state.earned);
   const entries = [{
     childId,
     contentSource: target.contentSource,
