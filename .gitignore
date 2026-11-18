@@ -46,3 +46,7 @@ pnpm-debug.log*
 .snowflake/
 supabase/.temp/
 .v0-trash/
+
+# 本机取证与验收证据（截图、logcat、崩溃收件箱等，只留在本地，不纳入版本控制）
+/.local-diagnostics/
+/output/
