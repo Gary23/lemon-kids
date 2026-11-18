@@ -1,6 +1,7 @@
 package com.lemonkids.kidtask.feature.home
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lemonkids.shared.model.Category
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.launch
@@ -53,6 +55,8 @@ data class HomeUiState(
     val isLoading: Boolean = false,
     /** 首屏任务和分类均已取得首次结果（或加载超时），才能渲染分类列表。 */
     val isInitialDataReady: Boolean = false,
+    /** 分类读取失败：保留已有分类继续使用，同时提示可重试，不退出首页。 */
+    val categoriesLoadFailed: Boolean = false,
     /** 已本地反馈、正在同步到服务端的任务；不再用全屏加载遮挡列表。 */
     val syncingTaskIds: Set<String> = emptySet(),
     val confirmDialogTaskId: String? = null,
@@ -85,6 +89,8 @@ class HomeViewModel @Inject constructor(
     private var initialTasksLoaded = false
     private var initialCategoriesLoaded = false
     private var initialLoadTimedOut = false
+    private var categoriesFamilyId: String? = null
+    private var categoriesJob: Job? = null
     /** 等待仓库返回新快照期间保留本地状态，避免旧的轮询结果把卡片改回去。 */
     private val optimisticTaskStatuses = mutableMapOf<String, TaskStatus>()
     private val taskActions = TaskActionRunner()
@@ -108,17 +114,7 @@ class HomeViewModel @Inject constructor(
             loadOrderFor(userId, LocalDate.now().toString())
 
             user.familyId?.takeIf { it.isNotBlank() }?.let { familyId ->
-                launch {
-                    categoryRepository.observeCategories(familyId).collect { categories ->
-                        initialCategoriesLoaded = true
-                        val isInitialDataReady = initialTasksLoaded || initialLoadTimedOut
-                        _uiState.value = _uiState.value.copy(
-                            categories = categories.filter { it.name.isNotBlank() },
-                            isLoading = !isInitialDataReady,
-                            isInitialDataReady = isInitialDataReady
-                        )
-                    }
-                }
+                startCategories(familyId)
             } ?: run {
                 // 未加入家庭的账号没有分类数据源，不应让首屏一直等待。
                 initialCategoriesLoaded = true
@@ -242,6 +238,49 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 分类是首页的辅助数据：读取失败只提示并退避重试，保留已展示的分类和任务，
+     * 绝不让一次请求超时终止页面或进程。
+     */
+    private fun startCategories(familyId: String) {
+        categoriesFamilyId = familyId
+        categoriesJob?.cancel()
+        categoriesJob = viewModelScope.launch {
+            categoryRepository.observeCategories(familyId).collectKeepingLastValue(
+                onValue = { categories ->
+                    initialCategoriesLoaded = true
+                    val isInitialDataReady = initialTasksLoaded || initialLoadTimedOut
+                    _uiState.value = _uiState.value.copy(
+                        categories = categories.filter { it.name.isNotBlank() },
+                        categoriesLoadFailed = false,
+                        isLoading = !isInitialDataReady,
+                        isInitialDataReady = isInitialDataReady
+                    )
+                },
+                onRecovered = {
+                    _uiState.value = _uiState.value.copy(categoriesLoadFailed = false)
+                },
+                onFailure = { error, _ ->
+                    Log.w(TAG, "分类读取失败，保留已展示内容 (${error.javaClass.simpleName})")
+                    // 失败也代表分类已给出首次结论，避免首屏继续等满 8 秒。
+                    initialCategoriesLoaded = true
+                    val isInitialDataReady = initialTasksLoaded || initialLoadTimedOut
+                    _uiState.value = _uiState.value.copy(
+                        categoriesLoadFailed = true,
+                        isLoading = !isInitialDataReady,
+                        isInitialDataReady = isInitialDataReady
+                    )
+                }
+            )
+        }
+    }
+
+    /** 用户点击“重试”或回到前台时重新订阅分类；先取消旧订阅，避免并发重复请求。 */
+    fun retryCategories() {
+        val familyId = categoriesFamilyId ?: return
+        startCategories(familyId)
+    }
+
     /** 在所有任务列表中查找指定 ID 的任务 */
     private fun findTaskById(taskId: String): TaskUiItem? =
         _uiState.value.todayTasks.find { it.id == taskId }
@@ -356,6 +395,7 @@ class HomeViewModel @Inject constructor(
             }
             taskRepository.refreshTasks()
             rewardRepository.requestPointsRefresh()
+            if (_uiState.value.categoriesLoadFailed) retryCategories()
             kotlinx.coroutines.delay(8_000)
             if (_uiState.value.isLoading) {
                 _uiState.value = _uiState.value.copy(isLoading = false)
@@ -502,6 +542,8 @@ internal class TaskActionRunner {
 internal fun taskActionFailureMessage(completing: Boolean): String =
     if (completing) "任务完成结果未能确认，请检查网络或恢复登录后刷新查看，再决定是否重试。"
     else "任务撤销结果未能确认，请检查网络或恢复登录后刷新查看；若积分已用于兑换，余额不足时无法撤销。"
+
+private const val TAG = "HomeViewModel"
 
 private val taskSort = compareBy<TaskUiItem> {
     when (it.status) { "PENDING" -> 0; "DONE", "VERIFIED" -> 1; else -> 2 }

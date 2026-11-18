@@ -91,7 +91,8 @@ fun HomeScreen(
                 onSpeak = { task -> ttsManager.speak(task.id, task.title, task.description) },
                 onMarkDone = viewModel::markTaskDone,
                 onUndo = viewModel::markTaskUndo,
-                onPendingOrderChanged = viewModel::savePendingOrder
+                onPendingOrderChanged = viewModel::savePendingOrder,
+                onRetryCategories = viewModel::retryCategories
             )
 
             // 积分飞入动画
