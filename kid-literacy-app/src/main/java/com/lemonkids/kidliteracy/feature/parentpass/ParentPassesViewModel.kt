@@ -19,12 +19,8 @@ import javax.inject.Inject
 data class ParentPassStarState(
     val text: String,
     val earned: Int,
-    val required: Int,
-    /** 真实进度与展示门槛分离；旧记录缺失时按 earned 恢复。 */
-    val storedEarned: Int? = null
-) {
-    fun progressReadings(): Int = (storedEarned ?: earned).coerceIn(0, 3)
-}
+    val required: Int
+)
 
 @Serializable
 data class ParentPassStarSnapshot(

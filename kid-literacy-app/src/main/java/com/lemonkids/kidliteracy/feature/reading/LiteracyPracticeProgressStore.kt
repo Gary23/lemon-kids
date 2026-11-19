@@ -37,11 +37,8 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
     fun recordCorrectReadings(target: ReadingTarget, correctReadings: Int = 1): Int {
         clearExpiredEntries()
         val progressKey = target.practiceProgressKey()
-        val current = snapshot()[progressKey] ?: 0
-        val remaining = (target.requiredCorrectReadings() - current).coerceAtLeast(0)
-        val increment = correctReadings.coerceIn(0, remaining)
-        if (increment == 0) return current // 降低门槛不能反写较低的历史计数。
-        val nextCount = current + increment
+        val nextCount = ((snapshot()[progressKey] ?: 0) + correctReadings.coerceAtLeast(0))
+            .coerceAtMost(target.requiredCorrectReadings())
         preferences.edit()
             .putInt(entryPrefix() + encodeKey(progressKey), nextCount)
             // 上传失败时保留这一项。下次首页加载后会自动重试，不能让离线朗读丢失。
@@ -59,7 +56,7 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         targets.forEach { target ->
             val remoteCount = remoteProgress[target.practiceProgressSyncKey()] ?: return@forEach
             val progressKey = target.practiceProgressKey()
-            val merged = maxOf(local[progressKey] ?: 0, remoteCount.coerceIn(0, MAX_STORED_READINGS))
+            val merged = maxOf(local[progressKey] ?: 0, remoteCount.coerceAtMost(target.requiredCorrectReadings()))
             if (merged > (local[progressKey] ?: 0)) {
                 // 云端已确认的数据不能重新标记为待上传。
                 editor.putInt(entryPrefix() + encodeKey(progressKey), merged)
@@ -82,7 +79,7 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
             val progressKey = target.practiceProgressKey()
             editor.putInt(
                 entryPrefix() + encodeKey(progressKey),
-                resetCount.coerceIn(0, MAX_STORED_READINGS)
+                resetCount.coerceIn(0, target.requiredCorrectReadings())
             )
             editor.remove(pendingEntryPrefix() + encodeKey(progressKey))
         }
@@ -96,7 +93,7 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         val editor = preferences.edit()
         entries.forEach { (target, count) ->
             val progressKey = target.practiceProgressKey()
-            editor.putInt(entryPrefix() + encodeKey(progressKey), count.coerceIn(0, MAX_STORED_READINGS))
+            editor.putInt(entryPrefix() + encodeKey(progressKey), count.coerceIn(0, target.requiredCorrectReadings()))
             editor.remove(pendingEntryPrefix() + encodeKey(progressKey))
         }
         editor.apply()
@@ -143,8 +140,10 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         clearExpiredEntries()
         val editor = preferences.edit()
         targets.forEach { target ->
-            val key = entryPrefix() + encodeKey(target.practiceProgressKey())
-            editor.putInt(key, maxOf(preferences.getInt(key, 0), target.requiredCorrectReadings()))
+            editor.putInt(
+                entryPrefix() + encodeKey(target.practiceProgressKey()),
+                target.requiredCorrectReadings()
+            )
         }
         editor.apply()
     }
@@ -207,8 +206,6 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
         String(Base64.decode(value, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING), Charsets.UTF_8)
 
     private companion object {
-        // 云端进度协议接受 0..3；这是历史数据边界，不是当前学习项的达标门槛。
-        const val MAX_STORED_READINGS = 3
         const val PREFERENCES_NAME = "lemonkids_literacy_practice_progress"
         const val KEY_SEPARATOR = "\u001F"
         const val CHARACTER_POINT_READ_PREFIX = "character-point-read:"
@@ -218,13 +215,16 @@ class LiteracyPracticeProgressStore(context: Context, private val childId: Strin
 }
 
 /**
- * 待认识主字三次；已认识主字按展示组读二、二、一次。词、句均为一次。
+ * 待认识任务：主字三次、每个词两次、句子一次。
+ * 已认识字复习时主字按入库日期的分组读三、二或一次，每个词一次；复习页不展示句子。
  */
 fun ReadingTarget.requiredCorrectReadings(): Int = when {
     contentSource == ReadingContentSource.RECOGNIZED &&
         targetType == "character" &&
         characterRequiredReadings != null -> characterRequiredReadings
-    targetType == "word" || targetType == "sentence" -> 1
+    contentSource == ReadingContentSource.RECOGNIZED && targetType == "word" -> 1
+    targetType == "sentence" -> 1
+    contentSource == ReadingContentSource.TASK && targetType == "word" -> 2
     else -> 3
 }
 
