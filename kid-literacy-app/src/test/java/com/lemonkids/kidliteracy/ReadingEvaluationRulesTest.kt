@@ -1,5 +1,9 @@
 package com.lemonkids.kidliteracy
 
+import com.lemonkids.kidliteracy.feature.reading.ReadingContentSource
+import com.lemonkids.kidliteracy.feature.reading.ReadingTarget
+import com.lemonkids.kidliteracy.feature.reading.practiceProgressKey
+import com.lemonkids.kidliteracy.feature.reading.requiredCorrectReadings
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -8,6 +12,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReadingEvaluationRulesTest {
+    @Test fun practiceRequirementsUseOneCorrectReadingPerWordAndSentence() {
+        assertEquals(3, ReadingTarget("task", "character", "花").requiredCorrectReadings())
+        assertEquals(1, ReadingTarget("task", "word", "花朵").requiredCorrectReadings())
+        assertEquals(1, ReadingTarget("task", "sentence", "花开了。").requiredCorrectReadings())
+        assertEquals(1, ReadingTarget("known", "word", "花朵",
+            contentSource = ReadingContentSource.RECOGNIZED).requiredCorrectReadings())
+    }
+
+    @Test fun taskWordUsesNewThresholdForCurrentAndSavedProgress() {
+        val target = ReadingTarget("task", "word", "花朵")
+        val key = target.practiceProgressKey()
+
+        assertFalse(learningContent(target, emptyMap(), completed = false).learned)
+        assertTrue(learningContent(target, mapOf(key to 1), completed = false).learned)
+        val saved = learningContent(target, mapOf(key to 2), completed = false)
+        assertTrue(saved.learned)
+        assertEquals(1, saved.correctReadings)
+        assertEquals(1, saved.requiredReadings)
+    }
+
+    @Test fun recognizedCharacterPreservesPartialProgressAndCapsOldStars() {
+        val target = ReadingTarget("known", "character", "花",
+            contentSource = ReadingContentSource.RECOGNIZED, characterRequiredReadings = 2)
+        val key = target.practiceProgressKey()
+
+        val partial = learningContent(target, mapOf(key to 1), completed = false)
+        assertFalse(partial.learned)
+        assertEquals(1, partial.correctReadings)
+        assertEquals(1, partial.requiredReadings - partial.correctReadings)
+
+        val saved = learningContent(target, mapOf(key to 3), completed = false)
+        assertTrue(saved.learned)
+        assertEquals(2, saved.correctReadings)
+        assertEquals(2, saved.requiredReadings)
+    }
+
     private fun word(score: String? = null, tag: String? = "0", text: String = "花"): JsonObject {
         val fields = mutableListOf("\"Word\":\"$text\"")
         if (score != null) fields += "\"PronAccuracy\":\"$score\""

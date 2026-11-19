@@ -242,7 +242,7 @@ private data class LiteracyCard(
         get() = character.learned && terms.all { it.learned } && sentences.all { it.learned }
 }
 
-private data class LearningContent(
+internal data class LearningContent(
     val target: ReadingTarget,
     val correctReadings: Int,
     val requiredReadings: Int
@@ -738,15 +738,12 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
     recordingTarget?.let { target ->
         ReadingDialog(
             target = target,
-            correctReadingCount = if (target.contentSource == ReadingContentSource.TASK) {
-                if (isTaskCharacterCompleted(target.literacyCharacterId)) {
-                    target.requiredCorrectReadings()
-                } else {
-                    practiceProgress[target.practiceProgressKey()] ?: 0
-                }
-            } else {
-                practiceProgress[target.practiceProgressKey()] ?: 0
-            },
+            correctReadingCount = learningContent(
+                target,
+                practiceProgress,
+                completed = target.contentSource == ReadingContentSource.TASK &&
+                    isTaskCharacterCompleted(target.literacyCharacterId)
+            ).correctReadings,
             onDismiss = {
                 literacyAudioPlayer.stop()
                 tts.stop()
@@ -777,10 +774,15 @@ private fun LiteracyContent(childName: String, avatarUrl: String?, userId: Strin
         } else {
             group.learningCharacters
                 .firstOrNull { it.id == selection.characterId }
-                ?.toLiteracyCard(
-                    practiceProgress,
-                    selection.characterId in (completedTaskCharacterIds + group.completedCharacterIds)
-                )
+                ?.let { character ->
+                    val completed = isTaskCharacterCompleted(character.id) || character.id in group.completedCharacterIds
+                    val taskCard = character.toLiteracyCard(practiceProgress, completed)
+                    // 升级前保存的进度可能已经满足新门槛，打开学习卡时即可继续整字收录。
+                    LaunchedEffect(userId, character.id, taskCard.completed, completed) {
+                        if (taskCard.completed && !completed) completeCharacterIfReady(character)
+                    }
+                    taskCard
+                }
         }
         card?.let {
             CharacterStudyDialog(
@@ -1269,7 +1271,7 @@ private fun ChildLiteracyCharacter.toLiteracyCard(
 
 private fun RecognizedCharacter.toLiteracyCard(
     practiceProgress: Map<String, Int>,
-    characterRequiredReadings: Int = 3
+    characterRequiredReadings: Int
 ) = LiteracyCard(
     literacyCharacterId = id,
     word = character,
@@ -1303,18 +1305,22 @@ private fun RecognizedCharacter.toLiteracyCard(
 /** 已认识字复习只要求主字和词语满星，且使用其自身的一星词语规则。 */
 private fun RecognizedCharacter.isPracticeComplete(
     practiceProgress: Map<String, Int>,
-    characterRequiredReadings: Int = 3
+    characterRequiredReadings: Int
 ): Boolean = toLiteracyCard(practiceProgress, characterRequiredReadings).completed
 
-private fun learningContent(
+internal fun learningContent(
     target: ReadingTarget,
     practiceProgress: Map<String, Int>,
     completed: Boolean
-) = LearningContent(
-    target = target,
-    correctReadings = if (completed) target.requiredCorrectReadings() else practiceProgress[target.practiceProgressKey()] ?: 0,
-    requiredReadings = target.requiredCorrectReadings()
-)
+): LearningContent {
+    val requiredReadings = target.requiredCorrectReadings()
+    val correctReadings = if (completed) {
+        requiredReadings
+    } else {
+        (practiceProgress[target.practiceProgressKey()] ?: 0).coerceAtMost(requiredReadings)
+    }
+    return LearningContent(target, correctReadings, requiredReadings)
+}
 
 private fun ChildLiteracyCharacter.isPracticeComplete(practiceProgress: Map<String, Int>): Boolean =
     practiceTargets().all { target ->
