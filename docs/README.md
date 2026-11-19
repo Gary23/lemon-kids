@@ -11,10 +11,10 @@
 新需求的目录格式如下：
 
 ```text
-docs/YYYYMMDD-应用名称-需求简述/
+docs/mmddhhmm-应用名称-需求简述/
 ```
 
-日期使用需求开始当天的 `YYYYMMDD`；应用名称使用仓库目录名，例如 `parent-app`、`kid-task-app`、`kid-monitor-app`、`kid-literacy-app`、`family-video-app`、`ui-app`、`shared`、`supabase` 或 `evaluate-reading`；需求简述使用简短、小写、连字符分隔的英文或拼音标识。示例：`docs/20260920-parent-app-task-reminder/`。
+目录以需求开始时的北京时间（`Asia/Shanghai`）作为 8 位数字前缀，依次为月、日、24 小时制小时、分钟，各占两位，不足两位补零，不含年份。应用名称使用仓库目录名，例如 `parent-app`、`kid-task-app`、`kid-monitor-app`、`kid-literacy-app`、`family-video-app`、`ui-app`、`shared`、`supabase` 或 `evaluate-reading`；需求简述使用简短、小写、连字符分隔的英文或拼音标识。例如，11 月 19 日 09:29 开始的需求可命名为 `docs/11190929-parent-app-task-reminder/`。既有需求目录无需重命名。
 
 每个目录的主文档固定为：
 
